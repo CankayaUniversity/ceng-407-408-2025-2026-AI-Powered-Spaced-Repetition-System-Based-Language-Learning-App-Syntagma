@@ -305,31 +305,32 @@ function WordPopupInner({
       <AIPanel content={aiContent} loading={aiLoading !== null} error={aiError} />
 
       {/* Status row + Add Card button */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-        <div style={{ flex: 1 }}>
-          <StatusRow
-            currentStatus={currentStatus}
-            onStatusChange={handleStatusChange}
-          />
-        </div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px', borderTop: `1px solid ${C.surface1}`, paddingTop: '10px' }}>
         <button
           onClick={() => setShowCardCreator(v => !v)}
-          title="Create flashcard"
+          title="Create flashcard context"
           style={{
-            background: showCardCreator ? C.amber : C.surface0,
-            color: showCardCreator ? C.base : C.subtext,
-            border: `1px solid ${showCardCreator ? C.amber : C.surface1}`,
-            borderRadius: '4px',
-            padding: '4px 8px',
+            background: showCardCreator ? C.amber : C.blue,
+            color: C.base,
+            border: 'none',
+            borderRadius: '16px',
+            padding: '6px 14px',
             cursor: 'pointer',
-            fontSize: '14px',
-            lineHeight: 1,
-            flexShrink: 0,
+            fontSize: '12px',
+            fontWeight: 800,
+            textTransform: 'uppercase',
+            letterSpacing: '0.5px',
             transition: 'all 0.15s',
+            display: 'flex',
+            alignItems: 'center',
           }}
         >
-          📇
+          {showCardCreator ? 'CANCEL' : 'TRACK'}
         </button>
+        <StatusRow
+          currentStatus={currentStatus}
+          onStatusChange={handleStatusChange}
+        />
       </div>
 
       {/* Card creator */}

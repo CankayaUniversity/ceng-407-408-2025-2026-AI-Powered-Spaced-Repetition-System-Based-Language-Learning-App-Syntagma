@@ -24,6 +24,40 @@ const STATUS_CONFIG: Array<{
   { status: 'ignored', label: '–', color: C.subtext, description: 'Ignore' },
 ];
 
+function StatusIcon({ status, color }: { status: WordStatus; color: string }) {
+  if (status === 'unknown') {
+    return (
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="10"></circle>
+        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+        <line x1="12" y1="17" x2="12.01" y2="17"></line>
+      </svg>
+    );
+  } else if (status === 'learning') {
+    return (
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="10"></circle>
+        <polyline points="12 6 12 12 16 14"></polyline>
+      </svg>
+    );
+  } else if (status === 'known') {
+    return (
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+        <polyline points="22 4 12 14.01 9 11.01"></polyline>
+      </svg>
+    );
+  } else {
+    // ignored
+    return (
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="10"></circle>
+        <line x1="8" y1="12" x2="16" y2="12"></line>
+      </svg>
+    );
+  }
+}
+
 interface StatusRowProps {
   currentStatus: WordStatus;
   onStatusChange: (status: WordStatus) => void;
@@ -32,79 +66,46 @@ interface StatusRowProps {
 }
 
 export function StatusRow({ currentStatus, onStatusChange, bulkCount, onBulkMark }: StatusRowProps) {
+  const currentCfg = STATUS_CONFIG.find(cfg => cfg.status === currentStatus) || STATUS_CONFIG[0];
+
+  const handleCycle = () => {
+    const idx = STATUS_CONFIG.findIndex(cfg => cfg.status === currentStatus);
+    const nextIdx = (idx + 1) % STATUS_CONFIG.length;
+    onStatusChange(STATUS_CONFIG[nextIdx].status);
+  };
+
   return (
-    <div style={{ borderTop: `1px solid ${C.surface1}`, paddingTop: '8px' }}>
-      {/* Bulk mark banner */}
-      {bulkCount !== undefined && bulkCount > 1 && onBulkMark && (
-        <div style={{
-          background: C.surface0,
-          borderRadius: '4px',
-          padding: '4px 8px',
-          marginBottom: '6px',
-          fontSize: '11px',
-          color: C.subtext,
+    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+      <button
+        onClick={handleCycle}
+        title="Click to cycle status"
+        style={{
+          background: currentCfg.color,
+          color: C.base,
+          border: 'none',
+          borderRadius: '16px',
+          padding: '6px 12px',
+          cursor: 'pointer',
+          fontSize: '12px',
+          fontWeight: 800,
+          transition: 'all 0.15s',
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'space-between',
-        }}>
-          <span>{bulkCount} words selected</span>
-          <div style={{ display: 'flex', gap: '4px' }}>
-            {STATUS_CONFIG.map(cfg => (
-              <button
-                key={cfg.status}
-                onClick={() => onBulkMark(cfg.status)}
-                title={`Mark all as ${cfg.description}`}
-                style={{
-                  background: cfg.color,
-                  color: C.base,
-                  border: 'none',
-                  borderRadius: '3px',
-                  padding: '2px 6px',
-                  cursor: 'pointer',
-                  fontSize: '10px',
-                  fontWeight: 600,
-                }}
-              >
-                {cfg.description}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+          gap: '6px',
+          textTransform: 'uppercase',
+          letterSpacing: '0.5px'
+        }}
+      >
+        <StatusIcon status={currentStatus} color={C.base} />
+        {currentCfg.description}
+      </button>
 
-      {/* Status buttons */}
-      <div style={{
-        display: 'flex',
-        gap: '6px',
-        alignItems: 'center',
-      }}>
-        <span style={{ fontSize: '11px', color: C.subtext, marginRight: '2px' }}>Mark as:</span>
-        {STATUS_CONFIG.map(cfg => {
-          const isActive = currentStatus === cfg.status;
-          return (
-            <button
-              key={cfg.status}
-              onClick={() => onStatusChange(cfg.status)}
-              title={cfg.description}
-              style={{
-                background: isActive ? cfg.color : C.surface0,
-                color: isActive ? C.base : cfg.color,
-                border: `1px solid ${cfg.color}`,
-                borderRadius: '4px',
-                padding: '4px 10px',
-                cursor: 'pointer',
-                fontSize: '12px',
-                fontWeight: isActive ? 700 : 400,
-                transition: 'all 0.12s',
-                flex: 1,
-              }}
-            >
-              <span style={{ marginRight: '3px' }}>{cfg.label}</span>
-              {cfg.description}
-            </button>
-          );
-        })}
-      </div>
+      {/* Bulk mark banner (if applicable) */}
+      {bulkCount !== undefined && bulkCount > 1 && onBulkMark && (
+        <span style={{ fontSize: '11px', color: C.subtext }}>
+          ({bulkCount} selected)
+        </span>
+      )}
     </div>
   );
 }
