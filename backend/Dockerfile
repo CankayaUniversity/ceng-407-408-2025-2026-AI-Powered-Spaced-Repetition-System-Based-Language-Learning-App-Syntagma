@@ -2,7 +2,7 @@
 FROM gradle:8-jdk17-alpine AS builder
 
 WORKDIR /app
-
+ENV GRADLE_OPTS="-Dorg.gradle.jvmargs='-Xmx512m' -Dorg.gradle.daemon=false"
 # Copy gradle configuration
 COPY settings.gradle ./
 COPY build.gradle ./
