@@ -1,15 +1,15 @@
 import type { WordStatus } from '../../shared/types';
 
 const C = {
-  surface0: '#313244',
-  surface1: '#45475a',
-  text: '#cdd6f4',
-  subtext: '#a6adc8',
-  blue: '#cba6f7',
-  red: '#cba6f7',
-  amber: '#fab387',
-  green: '#a6e3a1',
-  base: '#1e1e2e',
+  surface0: '#FFFFFF',
+  surface1: '#E2DACE',
+  text: '#4A3B2C',
+  subtext: '#877666',
+  blue: '#98C1D9',
+  red: '#D97762',
+  amber: '#A07855',
+  green: '#A8B693',
+  base: '#F5F1E9',
 };
 
 const STATUS_CONFIG: Array<{

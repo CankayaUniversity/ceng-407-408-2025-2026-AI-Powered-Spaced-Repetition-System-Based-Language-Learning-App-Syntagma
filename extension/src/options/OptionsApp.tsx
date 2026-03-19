@@ -4,19 +4,19 @@ import { DEFAULT_SETTINGS } from '../shared/storage';
 import { sendMessage } from '../shared/messages';
 
 const C = {
-  base: '#1e1e2e',
-  mantle: '#181825',
-  surface0: '#313244',
-  surface1: '#45475a',
-  surface2: '#585b70',
-  text: '#cdd6f4',
-  subtext: '#a6adc8',
-  blue: '#cba6f7',
-  red: '#cba6f7',
-  amber: '#fab387',
-  green: '#a6e3a1',
-  mauve: '#cba6f7',
-  yellow: '#f9e2af',
+  base: '#F5F1E9',
+  mantle: '#ECE7DD',
+  surface0: '#FFFFFF',
+  surface1: '#E2DACE',
+  surface2: '#C9BEAD',
+  text: '#4A3B2C',
+  subtext: '#877666',
+  blue: '#98C1D9',
+  red: '#D97762',
+  amber: '#A07855',
+  green: '#A8B693',
+  mauve: '#A07855',
+  yellow: '#E6C280',
 };
 
 // ─── Shared UI primitives ────────────────────────────────────────────────────

@@ -21,22 +21,22 @@ span[data-syn] {
   vertical-align: baseline !important;
 }
 span[data-syn]:hover {
-  background-color: rgba(203,166,247,0.18) !important;
+  background-color: rgba(160,120,85,0.18) !important;
 }
 
 /* Unknown — red/pink underline */
 span[data-syn].syn-unknown {
-  border-bottom: 2px solid #f38ba8 !important;
+  border-bottom: 2px solid #D97762 !important;
   text-decoration-line: underline !important;
-  text-decoration-color: #f38ba8 !important;
+  text-decoration-color: #D97762 !important;
   text-decoration-thickness: 2px !important;
 }
 
 /* Learning — amber underline */
 span[data-syn].syn-learning {
-  border-bottom: 2px solid #fab387 !important;
+  border-bottom: 2px solid #A07855 !important;
   text-decoration-line: underline !important;
-  text-decoration-color: #fab387 !important;
+  text-decoration-color: #A07855 !important;
   text-decoration-thickness: 2px !important;
 }
 
@@ -57,7 +57,7 @@ span[data-syn].syn-ignored {
 span[data-syn] .syn-tr {
   display: none !important;
   font-size: 0.72em !important;
-  color: #89b4fa !important;
+  color: #98C1D9 !important;
   margin-left: 2px !important;
   font-style: italic !important;
   vertical-align: super !important;
