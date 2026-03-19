@@ -50,9 +50,16 @@ Thumbs.db
 # Environment variables
 .env
 
-# User requested to ignore this controller
-HelloController.java
+
 
 # Sensitive application configuration files (database passwords, etc.)
 application.properties
 application-*.properties
+
+# AI Generated Documentation and Task Files
+API_Documentation.md
+walkthrough.md
+task.md
+implementation_plan.md
+todo.md
+task
