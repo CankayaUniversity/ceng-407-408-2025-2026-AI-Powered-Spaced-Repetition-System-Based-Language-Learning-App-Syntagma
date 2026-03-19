@@ -1,23 +1,18 @@
 # Stage 1: Build the application
-FROM eclipse-temurin:17-jdk-alpine AS builder
+FROM gradle:8-jdk17-alpine AS builder
 
 WORKDIR /app
-
-# Copy the wrapper and gradle configuration
-COPY gradlew ./
-COPY gradle ./gradle
+ENV GRADLE_OPTS="-Dorg.gradle.jvmargs='-Xmx512m' -Dorg.gradle.daemon=false"
+# Copy gradle configuration
 COPY settings.gradle ./
 COPY build.gradle ./
 
-# Make the wrapper executable (Windows environments can sometimes lose the execution bit)
-RUN chmod +x gradlew
-
 # Download dependencies (this layer is cached unless dependencies change)
-RUN ./gradlew dependencies --no-daemon
+RUN gradle dependencies --no-daemon
 
 # Copy source code and build
 COPY src ./src
-RUN ./gradlew bootJar --no-daemon -x test
+RUN gradle bootJar --no-daemon -x test
 
 # Stage 2: Create the minimal runtime image
 FROM eclipse-temurin:17-jre-alpine
