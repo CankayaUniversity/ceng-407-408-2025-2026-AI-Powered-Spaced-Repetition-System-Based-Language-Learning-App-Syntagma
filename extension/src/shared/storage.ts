@@ -33,8 +33,9 @@ export const DEFAULT_SETTINGS: UserSettings = {
   forvoApiKey: null,
   ankiConnectUrl: 'http://localhost:8765',
   ankiDeckName: 'Syntagma',
-  apiBaseUrl: '',
+  apiBaseUrl: 'https://syntagma.omerhanyigit.online',
   authToken: null,
+  userId: null,
 };
 
 export async function getSettings(): Promise<UserSettings> {

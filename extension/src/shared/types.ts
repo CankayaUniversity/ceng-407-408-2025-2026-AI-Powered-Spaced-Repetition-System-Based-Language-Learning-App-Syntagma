@@ -86,6 +86,7 @@ export interface UserSettings {
   ankiDeckName: string;
   apiBaseUrl: string;
   authToken: string | null;
+  userId: number | null;
 }
 
 export interface SubtitleCue {

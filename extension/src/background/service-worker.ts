@@ -225,26 +225,21 @@ onMessage(async (msg, sender) => {
 
       // Sync to Spring Boot backend if configured
       const settings = await getSettings();
-      if (settings.apiBaseUrl) {
+      if (settings.apiBaseUrl && settings.userId) {
         try {
           const res = await fetch(`${settings.apiBaseUrl}/api/flashcards`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
+              'X-User-Id': String(settings.userId),
               ...(settings.authToken ? { 'Authorization': `Bearer ${settings.authToken}` } : {}),
             },
             body: JSON.stringify({
-              id: card.id,
               lemma: card.lemma,
-              surfaceForm: card.surfaceForm,
-              sentence: card.sentence,
-              sourceUrl: card.sourceUrl,
-              sourceTitle: card.sourceTitle,
-              trMeaning: card.trMeaning,
-              audioUrl: card.audioUrl ?? null,
-              deckName: card.deckName,
-              tags: card.tags,
-              createdAt: card.createdAt,
+              translation: card.trMeaning,
+              sourceSentence: card.sentence,
+              exampleSentence: card.sentence,
+              knowledgeStatus: 'LEARNING',
             }),
           });
           if (!res.ok) {
