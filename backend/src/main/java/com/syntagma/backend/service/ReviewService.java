@@ -1,0 +1,136 @@
+package com.syntagma.backend.service;
+
+import com.syntagma.backend.dto.request.ReviewSubmitRequest;
+import com.syntagma.backend.dto.response.*;
+import com.syntagma.backend.entity.Flashcard;
+import com.syntagma.backend.entity.ReviewLog;
+import com.syntagma.backend.entity.SrsState;
+import com.syntagma.backend.entity.User;
+import com.syntagma.backend.repository.*;
+import jakarta.persistence.EntityNotFoundException;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import java.time.LocalDateTime;
+import java.util.List;
+
+@Service
+@RequiredArgsConstructor
+public class ReviewService {
+
+    private final ReviewLogRepository reviewLogRepository;
+    private final FlashcardRepository flashcardRepository;
+    private final SrsStateRepository srsStateRepository;
+    private final UserRepository userRepository;
+    private final SrsService srsService;
+
+    @Transactional
+    public ReviewResultResponse submitReview(Long userId, ReviewSubmitRequest request) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new EntityNotFoundException("User not found: " + userId));
+        Flashcard flashcard = flashcardRepository.findById(request.flashcardId())
+                .orElseThrow(() -> new EntityNotFoundException("Flashcard not found: " + request.flashcardId()));
+
+        if (!flashcard.getUser().getUserId().equals(userId)) {
+            throw new EntityNotFoundException("Flashcard not found: " + request.flashcardId());
+        }
+
+        // Create review log
+        ReviewLog log = new ReviewLog();
+        log.setFlashcard(flashcard);
+        log.setUser(user);
+        log.setReviewedAt(LocalDateTime.now());
+        log.setResult(request.result());
+        log.setDevice(request.device());
+        log.setClientTimestamp(request.clientTimestamp());
+        ReviewLog savedLog = reviewLogRepository.save(log);
+
+        // Update SRS state
+        SrsState srsState = srsStateRepository.findById(flashcard.getFlashcardId())
+                .orElseGet(() -> {
+                    SrsState newState = new SrsState();
+                    newState.setFlashcard(flashcard);
+                    newState.setStability(1.0f);
+                    newState.setDifficulty(5.0f);
+                    newState.setRetrievable(1.0f);
+                    return newState;
+                });
+
+        // Simple SRS parameter update (placeholder for FSRS algorithm)
+        float resultFactor = request.result() / 5.0f;
+        srsState.setStability(srsState.getStability() * (1 + resultFactor));
+        srsState.setDifficulty(Math.max(1, srsState.getDifficulty() - (resultFactor - 0.5f)));
+        srsState.setRetrievable(Math.min(1.0f, resultFactor));
+        srsState.setLastReviewedAt(LocalDateTime.now());
+
+        long intervalDays = Math.max(1, Math.round(srsState.getStability()));
+        srsState.setNextReviewAt(LocalDateTime.now().plusDays(intervalDays));
+
+        SrsState savedSrs = srsStateRepository.save(srsState);
+
+        return new ReviewResultResponse(
+                savedLog.getReviewId(),
+                flashcard.getFlashcardId(),
+                savedLog.getResult(),
+                savedLog.getReviewedAt(),
+                srsService.toResponse(savedSrs)
+        );
+    }
+
+    public Page<ReviewLogResponse> getReviews(Long userId, Long flashcardId,
+                                               LocalDateTime startDate, LocalDateTime endDate,
+                                               Pageable pageable) {
+        if (flashcardId != null) {
+            return reviewLogRepository.findByUser_UserIdAndFlashcard_FlashcardId(userId, flashcardId, pageable)
+                    .map(this::toResponse);
+        }
+        if (startDate != null && endDate != null) {
+            return reviewLogRepository.findByUserIdAndDateRange(userId, startDate, endDate, pageable)
+                    .map(this::toResponse);
+        }
+        return reviewLogRepository.findByUser_UserId(userId, pageable).map(this::toResponse);
+    }
+
+    public ReviewStatsResponse getStats(Long userId, String period) {
+        long totalReviews = reviewLogRepository.countByUser_UserId(userId);
+        Double avgResult = reviewLogRepository.findAverageResultByUserId(userId);
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new EntityNotFoundException("User not found: " + userId));
+
+        int days = switch (period) {
+            case "day" -> 1;
+            case "month" -> 30;
+            default -> 7; // week
+        };
+
+        LocalDateTime since = LocalDateTime.now().minusDays(days);
+        List<Object[]> rawCounts = reviewLogRepository.countReviewsByDay(userId, since);
+        List<ReviewStatsResponse.DailyReviewCount> dailyCounts = rawCounts.stream()
+                .map(row -> new ReviewStatsResponse.DailyReviewCount(
+                        row[0].toString(),
+                        ((Number) row[1]).longValue()
+                ))
+                .toList();
+
+        return new ReviewStatsResponse(
+                totalReviews,
+                user.getStreakCount(),
+                avgResult != null ? avgResult : 0.0,
+                dailyCounts
+        );
+    }
+
+    private ReviewLogResponse toResponse(ReviewLog r) {
+        return new ReviewLogResponse(
+                r.getReviewId(),
+                r.getFlashcard().getFlashcardId(),
+                r.getUser().getUserId(),
+                r.getReviewedAt(),
+                r.getResult(),
+                r.getDevice(),
+                r.getClientTimestamp()
+        );
+    }
+}
