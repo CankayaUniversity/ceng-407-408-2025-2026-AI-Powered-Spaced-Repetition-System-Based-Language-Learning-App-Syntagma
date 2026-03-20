@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+out/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# VSCode — machine-specific, keep only launch.json
+.vscode/*
+!.vscode/launch.json
+
+# Java / Spring Boot
+*.class
+*.jar
+*.war
+target/
+
+# Test coverage
+coverage/
