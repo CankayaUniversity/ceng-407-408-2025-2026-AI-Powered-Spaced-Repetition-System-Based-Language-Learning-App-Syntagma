@@ -190,141 +190,123 @@ function GeneralTab({ settings, onUpdate }: { settings: UserSettings; onUpdate: 
           { value: 'dark', label: 'Dark' },
         ]}
       />
-
-      <SectionTitle>Syntagma Account</SectionTitle>
-      <TextInput
-        label="API Base URL"
-        value={settings.apiBaseUrl}
-        onChange={v => onUpdate({ apiBaseUrl: v })}
-        placeholder="https://syntagma.omerhanyigit.online"
-        description="Syntagma backend server. Cards will be synced here automatically."
-      />
-      <BackendLoginSection settings={settings} onUpdate={onUpdate} />
     </div>
   );
 }
 
-// ─── Backend Login Section ────────────────────────────────────────────────────
+// ─── Tab: AI Settings ────────────────────────────────────────────────────────
 
-function BackendLoginSection({ settings, onUpdate }: { settings: UserSettings; onUpdate: (p: Partial<UserSettings>) => void }) {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [status, setStatus] = useState<'idle' | 'loading' | 'error'>('idle');
-  const [errorMsg, setErrorMsg] = useState('');
+function AISettingsTab({ settings, onUpdate }: { settings: UserSettings; onUpdate: (p: Partial<UserSettings>) => void }) {
+  const [showKey, setShowKey] = useState(false);
 
-  const isLoggedIn = !!(settings.authToken && settings.userId);
-
-  const handleLogin = async () => {
-    if (!settings.apiBaseUrl || !email || !password) return;
-    setStatus('loading');
-    setErrorMsg('');
-    try {
-      const res = await fetch(`${settings.apiBaseUrl}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        setErrorMsg(`Login failed (${res.status}): ${text}`);
-        setStatus('error');
-        return;
-      }
-      const data = await res.json() as { data: { token: string; userId: number; email: string } };
-      onUpdate({ authToken: data.data.token, userId: data.data.userId });
-      setEmail('');
-      setPassword('');
-      setStatus('idle');
-    } catch (err) {
-      setErrorMsg(`Network error: ${(err as Error).message}`);
-      setStatus('error');
-    }
-  };
-
-  const handleLogout = () => {
-    onUpdate({ authToken: null, userId: null });
-  };
-
-  if (isLoggedIn) {
-    return (
+  return (
+    <div>
+      <SectionTitle>OpenRouter API</SectionTitle>
       <div style={{ padding: '10px 0', borderBottom: `1px solid ${C.surface1}` }}>
-        <div style={{ fontSize: '14px', color: C.text, marginBottom: '6px' }}>Account</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span style={{ fontSize: '13px', color: C.green }}>✓ Logged in (user #{settings.userId})</span>
-          <button
-            onClick={handleLogout}
+        <label style={{ display: 'block', fontSize: '14px', color: C.text, marginBottom: '6px' }}>
+          API Key
+        </label>
+        <div style={{ fontSize: '12px', color: C.subtext, marginBottom: '6px' }}>
+          Get a free key at{' '}
+          <a
+            href="https://openrouter.ai"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: C.blue }}
+          >
+            openrouter.ai
+          </a>
+          . The free tier includes Llama 3.3 70B.
+        </div>
+        <div style={{ display: 'flex', gap: '6px' }}>
+          <input
+            type={showKey ? 'text' : 'password'}
+            value={settings.aiApiKey ?? ''}
+            onChange={e => onUpdate({ aiApiKey: e.target.value || null })}
+            placeholder="sk-or-v1-..."
             style={{
-              background: C.surface1,
-              border: 'none',
+              flex: 1,
+              background: C.surface0,
+              border: `1px solid ${C.surface1}`,
               borderRadius: '6px',
-              padding: '6px 12px',
+              padding: '8px 10px',
               color: C.text,
+              fontSize: '13px',
+              outline: 'none',
+            }}
+          />
+          <button
+            onClick={() => setShowKey(v => !v)}
+            style={{
+              background: C.surface0,
+              border: `1px solid ${C.surface1}`,
+              borderRadius: '6px',
+              padding: '8px 10px',
+              color: C.subtext,
               cursor: 'pointer',
               fontSize: '12px',
             }}
           >
-            Log out
+            {showKey ? 'Hide' : 'Show'}
           </button>
         </div>
       </div>
-    );
-  }
 
-  return (
-    <div style={{ padding: '10px 0', borderBottom: `1px solid ${C.surface1}` }}>
-      <div style={{ fontSize: '14px', color: C.text, marginBottom: '6px' }}>Log in to sync flashcards</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-        <input
-          type="email"
-          value={email}
-          onChange={e => setEmail(e.target.value)}
-          placeholder="Email"
-          style={{
-            background: C.surface0,
-            border: `1px solid ${C.surface1}`,
-            borderRadius: '6px',
-            padding: '8px 10px',
-            color: C.text,
-            fontSize: '13px',
-            outline: 'none',
-          }}
-        />
-        <input
-          type="password"
-          value={password}
-          onChange={e => setPassword(e.target.value)}
-          placeholder="Password"
-          onKeyDown={e => e.key === 'Enter' && handleLogin()}
-          style={{
-            background: C.surface0,
-            border: `1px solid ${C.surface1}`,
-            borderRadius: '6px',
-            padding: '8px 10px',
-            color: C.text,
-            fontSize: '13px',
-            outline: 'none',
-          }}
-        />
-        {errorMsg && (
-          <div style={{ fontSize: '12px', color: C.red }}>{errorMsg}</div>
-        )}
-        <button
-          onClick={handleLogin}
-          disabled={status === 'loading' || !email || !password}
-          style={{
-            background: C.blue,
-            color: C.base,
-            border: 'none',
-            borderRadius: '6px',
-            padding: '8px 12px',
-            cursor: status === 'loading' ? 'default' : 'pointer',
-            fontSize: '13px',
-            fontWeight: 600,
-          }}
-        >
-          {status === 'loading' ? 'Logging in…' : 'Log in'}
-        </button>
-      </div>
+      <Select
+        label="AI Model"
+        value={settings.aiModel}
+        onChange={v => onUpdate({ aiModel: v })}
+        options={[
+          { value: 'meta-llama/llama-3.3-70b-instruct:free', label: 'Llama 3.3 70B (Free)' },
+          { value: 'meta-llama/llama-3.1-8b-instruct:free', label: 'Llama 3.1 8B (Free)' },
+          { value: 'google/gemma-2-9b-it:free', label: 'Gemma 2 9B (Free)' },
+          { value: 'openai/gpt-4o-mini', label: 'GPT-4o Mini (Paid)' },
+          { value: 'openai/gpt-4o', label: 'GPT-4o (Paid)' },
+          { value: 'anthropic/claude-3-haiku', label: 'Claude 3 Haiku (Paid)' },
+          { value: 'anthropic/claude-3.5-sonnet', label: 'Claude 3.5 Sonnet (Paid)' },
+        ]}
+      />
+
+      <SectionTitle>Audio (Forvo)</SectionTitle>
+      <TextInput
+        label="Forvo API Key (optional)"
+        value={settings.forvoApiKey ?? ''}
+        onChange={v => onUpdate({ forvoApiKey: v || null })}
+        type="password"
+        placeholder="Leave empty to use free TTS fallback"
+        description="For native speaker pronunciation audio"
+      />
+
+      <SectionTitle>Anki Connect</SectionTitle>
+      <TextInput
+        label="AnkiConnect URL"
+        value={settings.ankiConnectUrl}
+        onChange={v => onUpdate({ ankiConnectUrl: v })}
+        placeholder="http://localhost:8765"
+      />
+      <TextInput
+        label="Default Deck Name"
+        value={settings.ankiDeckName}
+        onChange={v => onUpdate({ ankiDeckName: v })}
+        placeholder="Syntagma"
+      />
+
+      <SectionTitle>Backend API (Spring Boot)</SectionTitle>
+      <TextInput
+        label="API Base URL"
+        value={settings.apiBaseUrl}
+        onChange={v => onUpdate({ apiBaseUrl: v })}
+        placeholder="http://localhost:8080"
+        description="Your Syntagma Spring Boot backend. Cards will be synced here automatically."
+      />
+      <TextInput
+        label="Auth Token (JWT)"
+        value={settings.authToken ?? ''}
+        onChange={v => onUpdate({ authToken: v || null })}
+        type="password"
+        placeholder="Leave empty if no auth required"
+        description="Bearer token sent in Authorization header with each API request."
+      />
     </div>
   );
 }
@@ -494,10 +476,11 @@ function WordBrowserTab() {
 
 // ─── Tab: Flashcards ─────────────────────────────────────────────────────────
 
-function FlashcardsTab() {
+function FlashcardsTab({ settings }: { settings: UserSettings }) {
   const [cards, setCards] = useState<FlashcardPayload[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
+  const [exportStatus, setExportStatus] = useState<'idle' | 'exporting' | 'done' | 'error'>('idle');
 
   useEffect(() => {
     chrome.storage.local.get('flashcards').then(result => {
@@ -518,6 +501,21 @@ function FlashcardsTab() {
   const selectAll = () => setSelected(new Set(cards.map(c => c.id)));
   const clearAll = () => setSelected(new Set());
 
+  const handleExportAnki = async () => {
+    const ids = selected.size > 0 ? [...selected] : cards.map(c => c.id);
+    if (ids.length === 0) return;
+
+    setExportStatus('exporting');
+    try {
+      await sendMessage({ type: 'EXPORT_TO_ANKI', payload: { cardIds: ids } });
+      setExportStatus('done');
+      setTimeout(() => setExportStatus('idle'), 2000);
+    } catch {
+      setExportStatus('error');
+      setTimeout(() => setExportStatus('idle'), 3000);
+    }
+  };
+
   const handleDeleteCard = async (id: string) => {
     const updated = cards.filter(c => c.id !== id);
     setCards(updated);
@@ -526,6 +524,11 @@ function FlashcardsTab() {
   };
 
   if (loading) return <div style={{ color: C.subtext, padding: '20px', textAlign: 'center' }}>Loading…</div>;
+
+  const exportLabel = exportStatus === 'exporting' ? 'Exporting…'
+    : exportStatus === 'done' ? 'Exported!'
+      : exportStatus === 'error' ? 'Error!'
+        : `Export to Anki (${selected.size > 0 ? selected.size : cards.length})`;
 
   return (
     <div>
@@ -539,6 +542,22 @@ function FlashcardsTab() {
         </button>
         <button onClick={clearAll} style={{ background: C.surface0, border: `1px solid ${C.surface1}`, borderRadius: '4px', padding: '4px 8px', color: C.text, cursor: 'pointer', fontSize: '12px' }}>
           None
+        </button>
+        <button
+          onClick={handleExportAnki}
+          disabled={exportStatus === 'exporting' || cards.length === 0}
+          style={{
+            background: exportStatus === 'done' ? C.green : exportStatus === 'error' ? C.red : C.blue,
+            color: C.base,
+            border: 'none',
+            borderRadius: '4px',
+            padding: '4px 12px',
+            cursor: 'pointer',
+            fontSize: '12px',
+            fontWeight: 600,
+          }}
+        >
+          {exportLabel}
         </button>
       </div>
 
@@ -615,16 +634,30 @@ function FlashcardsTab() {
         </div>
       )}
 
+      {/* AnkiConnect info */}
+      <div style={{
+        marginTop: '16px',
+        padding: '10px',
+        background: C.surface0,
+        borderRadius: '6px',
+        fontSize: '12px',
+        color: C.subtext,
+      }}>
+        AnkiConnect: <span style={{ color: C.text }}>{settings.ankiConnectUrl}</span>
+        <br />
+        Deck: <span style={{ color: C.text }}>{settings.ankiDeckName}</span>
+      </div>
     </div>
   );
 }
 
 // ─── Main OptionsApp ─────────────────────────────────────────────────────────
 
-type TabId = 'general' | 'words' | 'flashcards';
+type TabId = 'general' | 'ai' | 'words' | 'flashcards';
 
 const TABS: Array<{ id: TabId; label: string }> = [
   { id: 'general', label: 'General' },
+  { id: 'ai', label: 'AI Settings' },
   { id: 'words', label: 'Word Browser' },
   { id: 'flashcards', label: 'Flashcards' },
 ];
@@ -735,8 +768,9 @@ export function OptionsApp() {
         {/* Content */}
         <div style={{ maxWidth: '700px', margin: '0 auto', padding: '24px' }}>
           {activeTab === 'general' && <GeneralTab settings={settings} onUpdate={handleUpdate} />}
+          {activeTab === 'ai' && <AISettingsTab settings={settings} onUpdate={handleUpdate} />}
           {activeTab === 'words' && <WordBrowserTab />}
-          {activeTab === 'flashcards' && <FlashcardsTab />}
+          {activeTab === 'flashcards' && <FlashcardsTab settings={settings} />}
         </div>
       </div>
     </>
