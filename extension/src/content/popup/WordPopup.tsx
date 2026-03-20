@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { WordStatus, LexemeEntry, UserSettings } from '../../shared/types';
 import { sendMessage } from '../../shared/messages';
@@ -108,6 +108,20 @@ function WordPopupInner({
   const requestIdRef = useRef<string | null>(null);
 
   const freqEntry = lookupFrequency(lemma);
+
+  // Fetch dictionary translations from Background IndexedDB
+  const [translations, setTranslations] = useState<string[]>([]);
+
+  useEffect(() => {
+    sendMessage<{ translations: string[] }>({
+      type: 'LOOKUP_DICTIONARY',
+      payload: { word: lemma },
+    }).then(res => {
+      if (res && res.translations) {
+        setTranslations(res.translations);
+      }
+    }).catch(console.error);
+  }, [lemma]);
 
   // Calculate position
   useEffect(() => {
@@ -258,21 +272,41 @@ function WordPopupInner({
             </div>
           )}
         </div>
-        <button
-          onClick={onClose}
-          style={{
-            background: 'transparent',
-            border: 'none',
-            color: C.subtext,
-            cursor: 'pointer',
-            fontSize: '16px',
-            lineHeight: 1,
-            padding: '0 0 0 8px',
-            flexShrink: 0,
-          }}
-        >
-          ×
-        </button>
+        <div style={{ display: 'flex', gap: '6px' }}>
+          <button
+            onClick={() => setShowCardCreator(v => !v)}
+            title="Create flashcard"
+            style={{
+              width: '32px',
+              height: '32px',
+              borderRadius: '16px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: showCardCreator ? C.amber : C.mauve,
+              color: C.base,
+              border: 'none',
+              cursor: 'pointer',
+              padding: 0,
+              transition: 'all 0.15s',
+              flexShrink: 0,
+            }}
+          >
+            {showCardCreator ? (
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            ) : (
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+                <line x1="12" y1="18" x2="12" y2="12"></line>
+                <line x1="9" y1="15" x2="15" y2="15"></line>
+              </svg>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Sentence context */}
@@ -301,32 +335,27 @@ function WordPopupInner({
         aiLoading={aiLoading}
       />
 
+      {/* Dictionary Translations */}
+      {translations.length > 0 && (
+        <ul style={{
+          margin: '0 0 12px 24px',
+          padding: 0,
+          color: C.text,
+          fontSize: '14px',
+          fontWeight: 600,
+          lineHeight: 1.4,
+        }}>
+          {translations.map((tr: string, idx: number) => (
+            <li key={idx} style={{ paddingLeft: '4px', marginBottom: '4px' }}>{tr}</li>
+          ))}
+        </ul>
+      )}
+
       {/* AI output panel */}
       <AIPanel content={aiContent} loading={aiLoading !== null} error={aiError} />
 
-      {/* Status row + Add Card button */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px', borderTop: `1px solid ${C.surface1}`, paddingTop: '10px' }}>
-        <button
-          onClick={() => setShowCardCreator(v => !v)}
-          title="Create flashcard context"
-          style={{
-            background: showCardCreator ? C.amber : C.blue,
-            color: C.base,
-            border: 'none',
-            borderRadius: '16px',
-            padding: '6px 14px',
-            cursor: 'pointer',
-            fontSize: '12px',
-            fontWeight: 800,
-            textTransform: 'uppercase',
-            letterSpacing: '0.5px',
-            transition: 'all 0.15s',
-            display: 'flex',
-            alignItems: 'center',
-          }}
-        >
-          {showCardCreator ? 'CANCEL' : 'TRACK'}
-        </button>
+      {/* Status row */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', borderTop: `1px solid ${C.surface1}`, paddingTop: '10px' }}>
         <StatusRow
           currentStatus={currentStatus}
           onStatusChange={handleStatusChange}
@@ -340,6 +369,7 @@ function WordPopupInner({
           surface={surface}
           sentence={sentence}
           lexeme={lexeme}
+          translations={translations}
           onSaved={() => setShowCardCreator(false)}
           onCancel={() => setShowCardCreator(false)}
         />

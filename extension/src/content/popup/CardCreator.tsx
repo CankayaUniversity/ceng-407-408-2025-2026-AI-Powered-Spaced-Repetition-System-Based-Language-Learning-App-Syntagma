@@ -19,14 +19,15 @@ interface CardCreatorProps {
   surface: string;
   sentence: string;
   lexeme: LexemeEntry | null;
+  translations?: string[];
   onSaved: () => void;
   onCancel: () => void;
 }
 
-export function CardCreator({ lemma, surface, sentence, lexeme, onSaved, onCancel }: CardCreatorProps) {
+export function CardCreator({ lemma, surface, sentence, lexeme, translations, onSaved, onCancel }: CardCreatorProps) {
   const [front, setFront] = useState(surface);
   const [sentenceField, setSentenceField] = useState(sentence);
-  const [trMeaning, setTrMeaning] = useState(lexeme?.trMeaning ?? '');
+  const [trMeaning, setTrMeaning] = useState(lexeme?.trMeaning ?? (translations?.length ? translations.join(', ') : ''));
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 

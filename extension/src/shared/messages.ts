@@ -14,6 +14,7 @@ export type ExtensionMessage =
   | { type: 'TRANSLATE_SENTENCE_WITH_AI'; payload: { sentence: string; requestId: string } }
   | { type: 'FETCH_WORD_AUDIO'; payload: { word: string; accent: 'uk' | 'us' } }
   | { type: 'OPEN_EXTERNAL_DICTIONARY'; payload: { provider: 'tureng' | 'cambridge' | 'oxford' | 'merriam-webster'; word: string } }
+  | { type: 'LOOKUP_DICTIONARY'; payload: { word: string } }
   | { type: 'CREATE_FLASHCARD'; payload: FlashcardPayload }
   | { type: 'EXPORT_TO_ANKI'; payload: { cardIds: string[] } }
   | { type: 'GET_SETTINGS'; payload: null }

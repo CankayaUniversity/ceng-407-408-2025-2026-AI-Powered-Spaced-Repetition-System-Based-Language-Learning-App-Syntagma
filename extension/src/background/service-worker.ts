@@ -10,6 +10,10 @@ import {
 } from '../shared/storage';
 import { callAI } from '../shared/ai';
 import type { LexemeEntry } from '../shared/types';
+import { populateDictionary, lookupTranslation } from './dictionary-db';
+
+// Initialize the massive IndexedDB dictionary
+populateDictionary().catch(console.error);
 
 // Keep alive for MV3 service workers
 const keepAlive = () => setInterval(chrome.runtime.getPlatformInfo, 20e3);
@@ -200,6 +204,17 @@ onMessage(async (msg, sender) => {
         return { audioUrl };
       } catch {
         return { audioUrl: null };
+      }
+    }
+
+    case 'LOOKUP_DICTIONARY': {
+      const { word } = msg.payload;
+      try {
+        const translations = await lookupTranslation(word);
+        return { translations };
+      } catch (err) {
+        console.error('[Syntagma] LOOKUP_DICTIONARY error:', err);
+        return { translations: [] };
       }
     }
 
