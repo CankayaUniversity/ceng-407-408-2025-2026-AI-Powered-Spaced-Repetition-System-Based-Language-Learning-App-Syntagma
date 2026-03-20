@@ -315,29 +315,67 @@ function AISettingsTab({ settings, onUpdate }: { settings: UserSettings; onUpdat
 
 type StatusFilter = 'all' | 'unknown' | 'learning' | 'known' | 'ignored';
 
-function WordBrowserTab() {
-  const [lexemes, setLexemes] = useState<LexemeEntry[]>([]);
+interface WordKnowledgeEntry {
+  lemma: string;
+  status: string;
+  updatedAt: number;
+}
+
+function WordBrowserTab({ settings }: { settings: UserSettings }) {
+  const [words, setWords] = useState<WordKnowledgeEntry[]>([]);
   const [filter, setFilter] = useState<StatusFilter>('all');
   const [search, setSearch] = useState('');
-  const [sortBy, setSortBy] = useState<'rank' | 'lemma' | 'seenCount' | 'lastSeen'>('rank');
+  const [sortBy, setSortBy] = useState<'lemma' | 'status' | 'updatedAt'>('lemma');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    chrome.storage.local.get('lexemes').then(result => {
+  const BACKEND_URL = 'https://syntagma.omerhanyigit.online';
+  const DEFAULT_USER_ID = '3';
+
+  const apiBase = settings.apiBaseUrl || BACKEND_URL;
+  const userId = settings.authToken || DEFAULT_USER_ID;
+
+  const fetchWords = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const statusParam = filter !== 'all' ? `&status=${filter.toUpperCase()}` : '';
+      const res = await fetch(`${apiBase}/api/word-knowledge?size=200&sort=updatedAt,desc${statusParam}`, {
+        headers: { 'X-User-Id': userId },
+      });
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      const json = await res.json();
+      const content = json.data?.content ?? json.data ?? [];
+      const mapped: WordKnowledgeEntry[] = content.map((wk: any) => ({
+        lemma: wk.lemma ?? '',
+        status: (wk.status ?? 'UNKNOWN').toLowerCase(),
+        updatedAt: wk.updatedAt ? new Date(wk.updatedAt).getTime() : 0,
+      }));
+      setWords(mapped);
+    } catch (err) {
+      console.error('[Syntagma] Failed to fetch word knowledge:', err);
+      setError((err as Error).message);
+      // Fallback to local storage
+      const result = await chrome.storage.local.get('lexemes');
       const entries = Object.values(result.lexemes ?? {}) as LexemeEntry[];
-      setLexemes(entries);
+      setWords(entries.map(e => ({
+        lemma: e.lemma,
+        status: e.status,
+        updatedAt: e.lastSeenAt || 0,
+      })));
+    } finally {
       setLoading(false);
-    });
-  }, []);
+    }
+  }, [apiBase, userId, filter]);
 
-  const filtered = lexemes
-    .filter(e => filter === 'all' || e.status === filter)
+  useEffect(() => { fetchWords(); }, [fetchWords]);
+
+  const filtered = words
     .filter(e => !search || e.lemma.toLowerCase().includes(search.toLowerCase()))
     .sort((a, b) => {
-      if (sortBy === 'rank') return (a.frequencyRank ?? 99999) - (b.frequencyRank ?? 99999);
       if (sortBy === 'lemma') return a.lemma.localeCompare(b.lemma);
-      if (sortBy === 'seenCount') return b.seenCount - a.seenCount;
-      if (sortBy === 'lastSeen') return b.lastSeenAt - a.lastSeenAt;
+      if (sortBy === 'status') return a.status.localeCompare(b.status);
+      if (sortBy === 'updatedAt') return b.updatedAt - a.updatedAt;
       return 0;
     });
 
@@ -348,17 +386,31 @@ function WordBrowserTab() {
     return C.subtext;
   };
 
-  const bandColors: Record<string, string> = {
-    'very-common': C.green,
-    'common': C.blue,
-    'medium': C.amber,
-    'rare': C.subtext,
-  };
-
-  if (loading) return <div style={{ color: C.subtext, padding: '20px', textAlign: 'center' }}>Loading…</div>;
+  if (loading) return <div style={{ color: C.subtext, padding: '20px', textAlign: 'center' }}>Loading words from server…</div>;
 
   return (
     <div>
+      {/* Error banner */}
+      {error && (
+        <div style={{
+          background: C.red + '20',
+          border: `1px solid ${C.red}`,
+          borderRadius: '6px',
+          padding: '8px 12px',
+          marginBottom: '12px',
+          fontSize: '12px',
+          color: C.red,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}>
+          <span>⚠ Could not fetch from server ({error}). Showing local words.</span>
+          <button onClick={fetchWords} style={{ background: C.red, color: C.base, border: 'none', borderRadius: '4px', padding: '4px 8px', cursor: 'pointer', fontSize: '11px' }}>
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Controls */}
       <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
         <input
@@ -410,65 +462,84 @@ function WordBrowserTab() {
             outline: 'none',
           }}
         >
-          <option value="rank">Sort: Frequency</option>
           <option value="lemma">Sort: A-Z</option>
-          <option value="seenCount">Sort: Seen count</option>
-          <option value="lastSeen">Sort: Last seen</option>
+          <option value="status">Sort: Status</option>
+          <option value="updatedAt">Sort: Last updated</option>
         </select>
+        <button onClick={() => fetchWords()} style={{ background: C.surface0, border: `1px solid ${C.surface1}`, borderRadius: '4px', padding: '4px 8px', color: C.text, cursor: 'pointer', fontSize: '12px' }}>
+          ↻ Refresh
+        </button>
       </div>
 
       <div style={{ fontSize: '12px', color: C.subtext, marginBottom: '8px' }}>
-        {filtered.length} words · {lexemes.filter(e => e.status === 'known').length} known · {lexemes.filter(e => e.status === 'learning').length} learning
+        {filtered.length} words · {words.filter(e => e.status === 'known').length} known · {words.filter(e => e.status === 'learning').length} learning
+        {!error && <span style={{ color: C.green, marginLeft: '6px' }}>● Live</span>}
       </div>
 
       {/* Word table */}
-      <div style={{ overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-          <thead>
-            <tr style={{ borderBottom: `2px solid ${C.surface1}` }}>
-              {['Word', 'Status', 'Band', 'Rank', 'Seen', 'Turkish'].map(h => (
-                <th key={h} style={{ textAlign: 'left', padding: '6px 8px', color: C.subtext, fontWeight: 600 }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.slice(0, 200).map(entry => (
-              <tr key={entry.lemma} style={{ borderBottom: `1px solid ${C.surface0}` }}>
-                <td style={{ padding: '6px 8px', color: C.text, fontWeight: 500 }}>{entry.lemma}</td>
-                <td style={{ padding: '6px 8px' }}>
-                  <span style={{
-                    color: statusColor(entry.status),
-                    fontSize: '12px',
-                    textTransform: 'capitalize',
-                  }}>
-                    {entry.status}
-                  </span>
-                </td>
-                <td style={{ padding: '6px 8px' }}>
-                  {entry.frequencyBand && (
-                    <span style={{ color: bandColors[entry.frequencyBand] ?? C.subtext, fontSize: '11px' }}>
-                      {entry.frequencyBand}
-                    </span>
-                  )}
-                </td>
-                <td style={{ padding: '6px 8px', color: C.subtext, fontSize: '12px' }}>
-                  {entry.frequencyRank ?? '—'}
-                </td>
-                <td style={{ padding: '6px 8px', color: C.subtext, fontSize: '12px' }}>
-                  {entry.seenCount}
-                </td>
-                <td style={{ padding: '6px 8px', color: C.blue, fontSize: '12px', fontStyle: 'italic' }}>
-                  {entry.trMeaning ?? '—'}
-                </td>
+      {filtered.length === 0 ? (
+        <div style={{
+          textAlign: 'center',
+          padding: '40px 20px',
+          color: C.subtext,
+          fontSize: '13px',
+        }}>
+          No words tracked yet.
+          <br />
+          <span style={{ fontSize: '12px' }}>
+            Click on words while reading to mark them as known/learning.
+          </span>
+        </div>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+            <thead>
+              <tr style={{ borderBottom: `2px solid ${C.surface1}` }}>
+                {['Word', 'Status', 'Last Updated'].map(h => (
+                  <th key={h} style={{ textAlign: 'left', padding: '6px 8px', color: C.subtext, fontWeight: 600 }}>{h}</th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
-        {filtered.length > 200 && (
-          <div style={{ textAlign: 'center', padding: '8px', color: C.subtext, fontSize: '12px' }}>
-            Showing first 200 of {filtered.length}
-          </div>
-        )}
+            </thead>
+            <tbody>
+              {filtered.slice(0, 200).map(entry => (
+                <tr key={entry.lemma} style={{ borderBottom: `1px solid ${C.surface0}` }}>
+                  <td style={{ padding: '6px 8px', color: C.text, fontWeight: 500 }}>{entry.lemma}</td>
+                  <td style={{ padding: '6px 8px' }}>
+                    <span style={{
+                      color: statusColor(entry.status),
+                      fontSize: '12px',
+                      textTransform: 'capitalize',
+                    }}>
+                      {entry.status}
+                    </span>
+                  </td>
+                  <td style={{ padding: '6px 8px', color: C.subtext, fontSize: '12px' }}>
+                    {entry.updatedAt ? new Date(entry.updatedAt).toLocaleDateString() : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {filtered.length > 200 && (
+            <div style={{ textAlign: 'center', padding: '8px', color: C.subtext, fontSize: '12px' }}>
+              Showing first 200 of {filtered.length}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Server info */}
+      <div style={{
+        marginTop: '16px',
+        padding: '10px',
+        background: C.surface0,
+        borderRadius: '6px',
+        fontSize: '12px',
+        color: C.subtext,
+      }}>
+        Server: <span style={{ color: C.text }}>{apiBase}</span>
+        <br />
+        User ID: <span style={{ color: C.text }}>{userId}</span>
       </div>
     </div>
   );
@@ -480,14 +551,50 @@ function FlashcardsTab({ settings }: { settings: UserSettings }) {
   const [cards, setCards] = useState<FlashcardPayload[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [exportStatus, setExportStatus] = useState<'idle' | 'exporting' | 'done' | 'error'>('idle');
 
-  useEffect(() => {
-    chrome.storage.local.get('flashcards').then(result => {
+  const BACKEND_URL = 'https://syntagma.omerhanyigit.online';
+  const DEFAULT_USER_ID = '3';
+
+  const apiBase = settings.apiBaseUrl || BACKEND_URL;
+  const userId = settings.authToken || DEFAULT_USER_ID;
+
+  const fetchCards = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`${apiBase}/api/flashcards?size=100&sort=createdAt,desc`, {
+        headers: { 'X-User-Id': userId },
+      });
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      const json = await res.json();
+      const content = json.data?.content ?? json.data ?? [];
+      const mapped: FlashcardPayload[] = content.map((fc: any) => ({
+        id: String(fc.flashcardId),
+        lemma: fc.lemma ?? '',
+        surfaceForm: fc.lemma ?? '',
+        sentence: fc.sourceSentence ?? '',
+        sourceUrl: '',
+        sourceTitle: fc.exampleSentence ?? '',
+        trMeaning: fc.translation ?? '',
+        createdAt: new Date(fc.createdAt).getTime(),
+        deckName: 'Syntagma',
+        tags: ['syntagma'],
+      }));
+      setCards(mapped);
+    } catch (err) {
+      console.error('[Syntagma] Failed to fetch flashcards:', err);
+      setError((err as Error).message);
+      // Fallback to local storage
+      const result = await chrome.storage.local.get('flashcards');
       setCards((result.flashcards ?? []) as FlashcardPayload[]);
+    } finally {
       setLoading(false);
-    });
-  }, []);
+    }
+  }, [apiBase, userId]);
+
+  useEffect(() => { fetchCards(); }, [fetchCards]);
 
   const toggleSelect = (id: string) => {
     setSelected(prev => {
@@ -517,13 +624,21 @@ function FlashcardsTab({ settings }: { settings: UserSettings }) {
   };
 
   const handleDeleteCard = async (id: string) => {
-    const updated = cards.filter(c => c.id !== id);
-    setCards(updated);
-    await chrome.storage.local.set({ flashcards: updated });
+    // Delete from backend
+    try {
+      await fetch(`${apiBase}/api/flashcards/${id}`, {
+        method: 'DELETE',
+        headers: { 'X-User-Id': userId },
+      });
+    } catch (err) {
+      console.warn('[Syntagma] Backend delete failed:', err);
+    }
+    // Remove from local list
+    setCards(prev => prev.filter(c => c.id !== id));
     setSelected(prev => { const next = new Set(prev); next.delete(id); return next; });
   };
 
-  if (loading) return <div style={{ color: C.subtext, padding: '20px', textAlign: 'center' }}>Loading…</div>;
+  if (loading) return <div style={{ color: C.subtext, padding: '20px', textAlign: 'center' }}>Loading flashcards from server…</div>;
 
   const exportLabel = exportStatus === 'exporting' ? 'Exporting…'
     : exportStatus === 'done' ? 'Exported!'
@@ -532,11 +647,36 @@ function FlashcardsTab({ settings }: { settings: UserSettings }) {
 
   return (
     <div>
+      {/* Error banner */}
+      {error && (
+        <div style={{
+          background: C.red + '20',
+          border: `1px solid ${C.red}`,
+          borderRadius: '6px',
+          padding: '8px 12px',
+          marginBottom: '12px',
+          fontSize: '12px',
+          color: C.red,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}>
+          <span>⚠ Could not fetch from server ({error}). Showing local cards.</span>
+          <button onClick={fetchCards} style={{ background: C.red, color: C.base, border: 'none', borderRadius: '4px', padding: '4px 8px', cursor: 'pointer', fontSize: '11px' }}>
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Toolbar */}
       <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', alignItems: 'center' }}>
         <span style={{ fontSize: '13px', color: C.subtext, flex: 1 }}>
           {cards.length} cards · {selected.size} selected
+          {!error && <span style={{ color: C.green, marginLeft: '6px' }}>● Live</span>}
         </span>
+        <button onClick={() => fetchCards()} style={{ background: C.surface0, border: `1px solid ${C.surface1}`, borderRadius: '4px', padding: '4px 8px', color: C.text, cursor: 'pointer', fontSize: '12px' }}>
+          ↻ Refresh
+        </button>
         <button onClick={selectAll} style={{ background: C.surface0, border: `1px solid ${C.surface1}`, borderRadius: '4px', padding: '4px 8px', color: C.text, cursor: 'pointer', fontSize: '12px' }}>
           All
         </button>
@@ -571,7 +711,7 @@ function FlashcardsTab({ settings }: { settings: UserSettings }) {
           No flashcards yet.
           <br />
           <span style={{ fontSize: '12px' }}>
-            Right-click a word to create one.
+            Click the card icon on a word popup to create one.
           </span>
         </div>
       ) : (
@@ -601,9 +741,6 @@ function FlashcardsTab({ settings }: { settings: UserSettings }) {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
                   <span style={{ fontWeight: 700, color: C.text, fontSize: '14px' }}>{card.lemma}</span>
-                  {card.surfaceForm !== card.lemma && (
-                    <span style={{ fontSize: '12px', color: C.subtext }}>({card.surfaceForm})</span>
-                  )}
                   {card.trMeaning && (
                     <span style={{ fontSize: '12px', color: C.blue, fontStyle: 'italic' }}>{card.trMeaning}</span>
                   )}
@@ -634,7 +771,7 @@ function FlashcardsTab({ settings }: { settings: UserSettings }) {
         </div>
       )}
 
-      {/* AnkiConnect info */}
+      {/* Server info */}
       <div style={{
         marginTop: '16px',
         padding: '10px',
@@ -643,9 +780,9 @@ function FlashcardsTab({ settings }: { settings: UserSettings }) {
         fontSize: '12px',
         color: C.subtext,
       }}>
-        AnkiConnect: <span style={{ color: C.text }}>{settings.ankiConnectUrl}</span>
+        Server: <span style={{ color: C.text }}>{apiBase}</span>
         <br />
-        Deck: <span style={{ color: C.text }}>{settings.ankiDeckName}</span>
+        User ID: <span style={{ color: C.text }}>{userId}</span>
       </div>
     </div>
   );
@@ -769,7 +906,7 @@ export function OptionsApp() {
         <div style={{ maxWidth: '700px', margin: '0 auto', padding: '24px' }}>
           {activeTab === 'general' && <GeneralTab settings={settings} onUpdate={handleUpdate} />}
           {activeTab === 'ai' && <AISettingsTab settings={settings} onUpdate={handleUpdate} />}
-          {activeTab === 'words' && <WordBrowserTab />}
+          {activeTab === 'words' && <WordBrowserTab settings={settings} />}
           {activeTab === 'flashcards' && <FlashcardsTab settings={settings} />}
         </div>
       </div>
