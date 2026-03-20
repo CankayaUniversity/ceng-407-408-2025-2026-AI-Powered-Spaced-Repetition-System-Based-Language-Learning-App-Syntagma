@@ -53,6 +53,23 @@ onMessage(async (msg, sender) => {
     case 'SET_WORD_STATUS': {
       const { lemma, status } = msg.payload;
       await setLexemeStatus(lemma, status);
+
+      // Sync to backend
+      const BACKEND_URL = 'https://syntagma.omerhanyigit.online';
+      const DEFAULT_USER_ID = '3';
+      const s = await getSettings();
+      const apiBase = s.apiBaseUrl || BACKEND_URL;
+      const uid = s.authToken || DEFAULT_USER_ID;
+      try {
+        await fetch(`${apiBase}/api/word-knowledge/${encodeURIComponent(lemma)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'X-User-Id': uid },
+          body: JSON.stringify({ status: status.toUpperCase() }),
+        });
+      } catch (err) {
+        console.warn('[Syntagma] Word knowledge sync error:', err);
+      }
+
       // Broadcast status change to all tabs
       const tabs = await chrome.tabs.query({});
       for (const tab of tabs) {
@@ -69,6 +86,25 @@ onMessage(async (msg, sender) => {
     case 'BULK_SET_WORD_STATUS': {
       const { lemmas, status } = msg.payload;
       await bulkSetLexemeStatus(lemmas, status);
+
+      // Sync to backend
+      const BACKEND_URL2 = 'https://syntagma.omerhanyigit.online';
+      const DEFAULT_UID2 = '3';
+      const s2 = await getSettings();
+      const apiBase2 = s2.apiBaseUrl || BACKEND_URL2;
+      const uid2 = s2.authToken || DEFAULT_UID2;
+      try {
+        await fetch(`${apiBase2}/api/word-knowledge/batch`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-User-Id': uid2 },
+          body: JSON.stringify({
+            entries: lemmas.map((l: string) => ({ lemma: l, status: status.toUpperCase() })),
+          }),
+        });
+      } catch (err) {
+        console.warn('[Syntagma] Bulk word knowledge sync error:', err);
+      }
+
       const tabs = await chrome.tabs.query({});
       for (const tab of tabs) {
         if (tab.id) {
@@ -220,40 +256,41 @@ onMessage(async (msg, sender) => {
 
     case 'CREATE_FLASHCARD': {
       const card = msg.payload;
+      console.log('[Syntagma] CREATE_FLASHCARD received:', card.lemma);
       // Save locally first
       await saveFlashcard(card);
+      console.log('[Syntagma] Saved locally.');
 
-      // Sync to Spring Boot backend if configured
+      // Sync to Spring Boot backend
+      const BACKEND_URL = 'https://syntagma.omerhanyigit.online';
+      const DEFAULT_USER_ID = '3'; // Default test user
+
       const settings = await getSettings();
-      if (settings.apiBaseUrl) {
-        try {
-          const res = await fetch(`${settings.apiBaseUrl}/api/flashcards`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(settings.authToken ? { 'Authorization': `Bearer ${settings.authToken}` } : {}),
-            },
-            body: JSON.stringify({
-              id: card.id,
-              lemma: card.lemma,
-              surfaceForm: card.surfaceForm,
-              sentence: card.sentence,
-              sourceUrl: card.sourceUrl,
-              sourceTitle: card.sourceTitle,
-              trMeaning: card.trMeaning,
-              audioUrl: card.audioUrl ?? null,
-              deckName: card.deckName,
-              tags: card.tags,
-              createdAt: card.createdAt,
-            }),
-          });
-          if (!res.ok) {
-            console.warn('[Syntagma] Backend sync failed:', res.status, res.statusText);
-          }
-        } catch (err) {
-          // Don't fail the save if backend is unreachable — it's saved locally
-          console.warn('[Syntagma] Backend sync error (card saved locally):', err);
-        }
+      const apiBase = settings.apiBaseUrl || BACKEND_URL;
+      const userId = settings.authToken || DEFAULT_USER_ID; // authToken stores the userId for now
+
+      const payload = {
+        lemma: card.lemma,
+        translation: card.trMeaning || '',
+        sourceSentence: card.sentence || '',
+        exampleSentence: `${card.surfaceForm} — from ${card.sourceTitle || 'web'}`,
+        knowledgeStatus: 'LEARNING',
+      };
+      console.log('[Syntagma] Syncing to:', apiBase, 'userId:', userId, 'payload:', JSON.stringify(payload));
+
+      try {
+        const res = await fetch(`${apiBase}/api/flashcards`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-User-Id': userId,
+          },
+          body: JSON.stringify(payload),
+        });
+        const responseText = await res.text();
+        console.log('[Syntagma] Backend response:', res.status, responseText);
+      } catch (err) {
+        console.error('[Syntagma] Backend sync error:', err);
       }
 
       return { ok: true };
