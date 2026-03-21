@@ -325,6 +325,30 @@ onMessage(async (msg, sender) => {
       }
     }
 
+    case 'OPEN_OPTIONS_PAGE': {
+      chrome.windows.create({
+        url: chrome.runtime.getURL('options.html'),
+        type: 'popup',
+        width: 820,
+        height: 680,
+        focused: true,
+      });
+      return { ok: true };
+    }
+
+    case 'OPEN_CARD_CREATOR': {
+      const { word, sentence, sourceUrl, sourceTitle } = msg.payload;
+      const params = new URLSearchParams({ word, sentence, sourceUrl, sourceTitle });
+      chrome.windows.create({
+        url: chrome.runtime.getURL(`card-creator.html?${params}`),
+        type: 'popup',
+        width: 900,
+        height: 640,
+        focused: true,
+      });
+      return { ok: true };
+    }
+
     default:
       return;
   }

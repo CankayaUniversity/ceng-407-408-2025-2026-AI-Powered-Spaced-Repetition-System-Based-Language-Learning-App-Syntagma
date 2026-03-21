@@ -54,6 +54,7 @@ export default defineConfig(({ command }) => {
             // Popup and options are extension pages — ES modules work fine there
             popup: resolve(__dirname, "popup.html"),
             options: resolve(__dirname, "options.html"),
+            "card-creator": resolve(__dirname, "card-creator.html"),
             // Background service worker — MV3 service workers support ES modules
             "background/service-worker": resolve(
               __dirname,

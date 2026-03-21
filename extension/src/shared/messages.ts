@@ -18,7 +18,9 @@ export type ExtensionMessage =
   | { type: 'CREATE_FLASHCARD'; payload: FlashcardPayload }
   | { type: 'EXPORT_TO_ANKI'; payload: { cardIds: string[] } }
   | { type: 'GET_SETTINGS'; payload: null }
-  | { type: 'SET_SETTINGS'; payload: Partial<UserSettings> };
+  | { type: 'SET_SETTINGS'; payload: Partial<UserSettings> }
+  | { type: 'OPEN_OPTIONS_PAGE'; payload: null }
+  | { type: 'OPEN_CARD_CREATOR'; payload: { word: string; sentence: string; sourceUrl: string; sourceTitle: string } };
 
 export type BackgroundMessage =
   | { type: 'AI_STREAM_CHUNK'; payload: { requestId: string; chunk: string } }

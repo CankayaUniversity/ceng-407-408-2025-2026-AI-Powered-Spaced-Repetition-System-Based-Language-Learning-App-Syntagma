@@ -1,8 +1,8 @@
 import { getSettings } from '../shared/storage';
 import { sendMessage } from '../shared/messages';
 import { initFrequencyTable } from '../shared/frequency';
-import type { UserSettings, LexemeEntry, WordStatus } from '../shared/types';
-import { parsePage, extractSentence } from './parser';
+import type { UserSettings, LexemeEntry, WordStatus, Token, FlashcardPayload } from '../shared/types';
+import { parsePage } from './parser';
 import {
   injectOverlays,
   removeOverlays,
@@ -14,159 +14,203 @@ import {
 import { mountHeaderBar, updateHeaderBar, unmountHeaderBar } from './header-bar';
 import { mountWordPopup, dismissWordPopup } from './popup/WordPopup';
 
-// ─── State ──────────────────────────────────────────────────────────────────
+// ─── State ────────────────────────────────────────────────────────────────────
 
 let currentSettings: UserSettings | null = null;
 let currentLexemes: Record<string, LexemeEntry> = {};
+let currentTokens: Token[] = [];
 let isParsed = false;
 let isParsing = false;
+let shiftMode = false;
 
-// ─── Init ────────────────────────────────────────────────────────────────────
+// ─── Sentence extraction ──────────────────────────────────────────────────────
+
+function getSentenceForWord(wordEl: HTMLElement): string {
+  // Walk up the DOM to find the tightest element that contains the full sentence.
+  // Prefer semantic block elements; fall back to the nearest non-inline ancestor.
+  let block = wordEl.closest('p, li, blockquote, h1, h2, h3, h4, h5, h6, td, th') as HTMLElement | null;
+  if (!block) {
+    const INLINE = new Set(['SPAN', 'A', 'B', 'I', 'EM', 'STRONG', 'U', 'S', 'MARK', 'SMALL', 'SUB', 'SUP', 'CODE', 'ABBR', 'CITE', 'Q']);
+    let el: HTMLElement | null = wordEl.parentElement;
+    while (el && el !== document.body) {
+      if (!INLINE.has(el.tagName)) { block = el; break; }
+      el = el.parentElement;
+    }
+  }
+  const root = block ?? wordEl.parentElement ?? wordEl;
+  const blockText = root.textContent ?? '';
+  if (!blockText) return wordEl.closest('span.syn-sentence')?.textContent?.trim() ?? '';
+
+  // Walk text nodes to find the character offset of the word inside the block
+  const surface = wordEl.dataset.surface ?? wordEl.textContent?.trim() ?? '';
+  let offset = 0;
+  let wordOffset = -1;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let node: Node | null;
+  while ((node = walker.nextNode())) {
+    if (wordEl.contains(node as Node)) {
+      const idx = (node.textContent ?? '').indexOf(surface);
+      wordOffset = offset + (idx >= 0 ? idx : 0);
+      break;
+    }
+    offset += (node.textContent ?? '').length;
+  }
+  if (wordOffset < 0) wordOffset = blockText.indexOf(surface);
+  if (wordOffset < 0) return wordEl.closest('span.syn-sentence')?.textContent?.trim() ?? '';
+
+  // Find sentence boundaries in block text and return the one containing wordOffset
+  const starts: number[] = [0];
+  const re = /[.!?]+\s+/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(blockText)) !== null) starts.push(m.index + m[0].length);
+  starts.push(blockText.length);
+
+  for (let i = 0; i < starts.length - 1; i++) {
+    if (wordOffset >= starts[i] && wordOffset < starts[i + 1]) {
+      return blockText.slice(starts[i], starts[i + 1]).trim();
+    }
+  }
+  return blockText.slice(0, 300).trim();
+}
+
+// ─── Header update helper ─────────────────────────────────────────────────────
+
+function refreshHeader(overrides: Partial<Parameters<typeof mountHeaderBar>[0]> = {}) {
+  if (!currentSettings) return;
+  updateHeaderBar({
+    settings: currentSettings,
+    tokens: currentTokens,
+    lexemes: currentLexemes,
+    isParsing,
+    shiftMode,
+    onParse: handleParse,
+    onToggleColors: handleToggleColors,
+    onToggleTranslations: handleToggleTranslations,
+    onOpenSettings: handleOpenSettings,
+    onQuickAddCard: handleQuickAddCard,
+    onOpenAdvancedCreator: handleOpenAdvancedCreator,
+    ...overrides,
+  });
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
 
 async function init() {
   try {
-    // Load settings and frequency table in parallel
-    const [settings] = await Promise.all([
-      getSettings(),
-      initFrequencyTable(),
-    ]);
-
+    const [settings] = await Promise.all([getSettings(), initFrequencyTable()]);
     currentSettings = settings;
-    console.log('[Syntagma] settings loaded — enabled:', settings.enabled, 'autoParseOnLoad:', settings.autoParseOnLoad);
 
-    if (!settings.enabled) {
-      console.log('[Syntagma] disabled, exiting');
-      return;
-    }
+    if (!settings.enabled) return;
 
-    // Fetch lexemes from background service worker.
-    // If the SW isn't ready yet, retry once after a short delay.
-    try {
-      const response = await sendMessage<{ lexemes: Record<string, LexemeEntry> }>({
-        type: 'PARSE_PAGE_FOR_COMPREHENSION',
-        payload: { tabId: 0, pageUrl: window.location.href },
-      });
-      currentLexemes = (response?.lexemes) ?? {};
-    } catch {
-      // SW may not be awake yet — retry after 500ms
-      await new Promise(r => setTimeout(r, 500));
+    // Fetch lexemes; retry once if SW isn't ready
+    for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const response = await sendMessage<{ lexemes: Record<string, LexemeEntry> }>({
+        const res = await sendMessage<{ lexemes: Record<string, LexemeEntry> }>({
           type: 'PARSE_PAGE_FOR_COMPREHENSION',
           payload: { tabId: 0, pageUrl: window.location.href },
         });
-        currentLexemes = (response?.lexemes) ?? {};
+        currentLexemes = res?.lexemes ?? {};
+        break;
       } catch {
-        // Still failing — proceed with empty lexemes (all words = unknown)
-        currentLexemes = {};
+        if (attempt === 0) await new Promise(r => setTimeout(r, 500));
+        else currentLexemes = {};
       }
     }
 
-    // Mount header bar
     mountHeaderBar({
       settings,
+      tokens: currentTokens,
+      lexemes: currentLexemes,
       isParsing: false,
-      comprehensionPercent: null,
-      wordCounts: null,
+      shiftMode: false,
       onParse: handleParse,
       onToggleColors: handleToggleColors,
       onToggleTranslations: handleToggleTranslations,
       onOpenSettings: handleOpenSettings,
+      onQuickAddCard: handleQuickAddCard,
+      onOpenAdvancedCreator: handleOpenAdvancedCreator,
     });
 
-    // Set up click handler for word elements (delegated)
     document.addEventListener('click', handleWordClick, { capture: false });
-
-    // Keyboard shortcuts
     document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('contextmenu', handleContextMenu);
 
-    // Auto-parse if enabled
-    if (settings.autoParseOnLoad) {
-      await handleParse();
-    }
+    if (settings.autoParseOnLoad) await handleParse();
 
   } catch (err) {
     console.error('[Syntagma] init error:', err);
   }
 }
 
-// ─── Handlers ────────────────────────────────────────────────────────────────
+// ─── Parse ────────────────────────────────────────────────────────────────────
 
 export async function handleParse() {
-  if (isParsing || !currentSettings) {
-    console.log('[Syntagma] handleParse blocked — isParsing:', isParsing, 'hasSettings:', !!currentSettings);
-    return;
-  }
-  console.log('[Syntagma] handleParse started');
+  if (isParsing || !currentSettings) return;
   isParsing = true;
-
-  updateHeaderBar({
-    settings: currentSettings,
-    isParsing: true,
-    comprehensionPercent: null,
-    wordCounts: null,
-    onParse: handleParse,
-    onToggleColors: handleToggleColors,
-    onToggleTranslations: handleToggleTranslations,
-    onOpenSettings: handleOpenSettings,
-  });
+  refreshHeader();
 
   try {
-    // Remove previous overlays if any
-    if (isParsed) {
-      removeOverlays();
-    }
+    if (isParsed) removeOverlays();
 
-    const result = await parsePage(
-      currentLexemes,
-      (_processed, _total) => {
-        // Could update progress here
-      }
-    );
-
-    console.log(`[Syntagma] parsePage done — ${result.tokens.length} tokens, ${result.textNodes.length} text nodes`);
+    const result = await parsePage(currentLexemes, () => {});
+    currentTokens = result.tokens;
     injectOverlays(result, currentLexemes);
     isParsed = true;
 
-    // Apply initial settings
     applyStatusColors(currentSettings.showLearningStatusColors);
-    if (currentSettings.showInlineTranslations) {
-      applyInlineTranslations(true, currentLexemes);
-    }
-
-    // Compute comprehension stats
-    const counts = countByStatus(currentLexemes);
-    const comprehensionPercent = counts.total > 0
-      ? Math.round(((counts.known + 0.5 * counts.learning) / counts.total) * 100)
-      : 0;
-
-    updateHeaderBar({
-      settings: currentSettings,
-      isParsing: false,
-      comprehensionPercent,
-      wordCounts: {
-        total: counts.total,
-        known: counts.known,
-        learning: counts.learning,
-        unknown: counts.unknown,
-      },
-      onParse: handleParse,
-      onToggleColors: handleToggleColors,
-      onToggleTranslations: handleToggleTranslations,
-      onOpenSettings: handleOpenSettings,
-    });
+    if (currentSettings.showInlineTranslations) applyInlineTranslations(true, currentLexemes);
 
   } catch (err) {
     console.error('[Syntagma] parse error:', err);
   } finally {
     isParsing = false;
+    refreshHeader();
   }
 }
 
+// ─── Quick card creation ──────────────────────────────────────────────────────
+
+async function handleQuickAddCard(lemma: string, sentence: string): Promise<void> {
+  if (!currentSettings) throw new Error('Settings not loaded');
+
+  const card: FlashcardPayload = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    lemma,
+    surfaceForm: lemma,
+    sentence,
+    sourceUrl: window.location.href,
+    sourceTitle: document.title,
+    trMeaning: currentLexemes[lemma]?.trMeaning ?? '',
+    createdAt: Date.now(),
+    deckName: currentSettings.ankiDeckName,
+    tags: ['syntagma', 'quick-add'],
+  };
+
+  await sendMessage({ type: 'CREATE_FLASHCARD', payload: card });
+}
+
+// ─── Advanced Card Creator ────────────────────────────────────────────────────
+
+function handleOpenAdvancedCreator(lemma?: string, sentence?: string) {
+  dismissWordPopup();
+  sendMessage({
+    type: 'OPEN_CARD_CREATOR',
+    payload: {
+      word: lemma ?? '',
+      sentence: sentence ?? '',
+      sourceUrl: window.location.href,
+      sourceTitle: document.title,
+    },
+  }).catch(console.error);
+}
+
+// ─── Word click ───────────────────────────────────────────────────────────────
+
 function handleWordClick(e: MouseEvent) {
+  if (shiftMode) return;
+
   const target = e.target as HTMLElement;
   const wordEl = target.closest('span[data-syn]') as HTMLElement | null;
-
   if (!wordEl || !currentSettings) return;
 
   e.stopPropagation();
@@ -174,20 +218,13 @@ function handleWordClick(e: MouseEvent) {
   const lemma = wordEl.getAttribute('data-syn') ?? '';
   const surface = wordEl.dataset.surface ?? wordEl.textContent ?? '';
   const lexeme = currentLexemes[lemma] ?? null;
-
-  // Extract sentence context
-  const textNode = wordEl.firstChild as Text | null;
-  const sentence = textNode
-    ? extractSentence(textNode, 0)
-    : wordEl.closest('p, div, li, td')?.textContent?.slice(0, 200) ?? '';
-
-  const anchorRect = wordEl.getBoundingClientRect();
+  const sentence = getSentenceForWord(wordEl);
 
   mountWordPopup({
     lemma,
     surface,
     sentence: sentence.trim(),
-    anchorRect,
+    anchorRect: wordEl.getBoundingClientRect(),
     lexeme,
     settings: currentSettings,
     onClose: dismissWordPopup,
@@ -195,47 +232,43 @@ function handleWordClick(e: MouseEvent) {
   });
 }
 
+// ─── Context menu (right-click on word span) ──────────────────────────────────
+
+function handleContextMenu(e: MouseEvent) {
+  const target = e.target as HTMLElement;
+  const wordEl = target.closest('span[data-syn]') as HTMLElement | null;
+  if (!wordEl) return;
+
+  const lemma = wordEl.getAttribute('data-syn') ?? '';
+  const sentence = getSentenceForWord(wordEl);
+
+  // We can't create a native context menu from content script.
+  // Instead, open Advanced Creator directly (E shortcut behaviour).
+  // Users expecting native context menu should use the chrome context menu set up in service-worker.
+  // Right-click + Shift → open advanced creator
+  if (e.shiftKey) {
+    e.preventDefault();
+    handleOpenAdvancedCreator(lemma, sentence.trim());
+  }
+}
+
+// ─── Status change ────────────────────────────────────────────────────────────
+
 function handleStatusChange(lemma: string, status: WordStatus) {
+  const now = Date.now();
   if (currentLexemes[lemma]) {
     currentLexemes[lemma].status = status;
   } else {
-    const now = Date.now();
     currentLexemes[lemma] = {
-      key: lemma,
-      lemma,
-      surface: lemma,
-      type: 'word',
-      status,
-      seenCount: 1,
-      lastSeenAt: now,
-      createdAt: now,
+      key: lemma, lemma, surface: lemma, type: 'word',
+      status, seenCount: 1, lastSeenAt: now, createdAt: now,
     };
   }
   updateWordStatus(lemma, status);
-
-  // Re-compute comprehension
-  if (isParsed && currentSettings?.showComprehensionHeader) {
-    const counts = countByStatus(currentLexemes);
-    const comprehensionPercent = counts.total > 0
-      ? Math.round(((counts.known + 0.5 * counts.learning) / counts.total) * 100)
-      : 0;
-    updateHeaderBar({
-      settings: currentSettings!,
-      isParsing: false,
-      comprehensionPercent,
-      wordCounts: {
-        total: counts.total,
-        known: counts.known,
-        learning: counts.learning,
-        unknown: counts.unknown,
-      },
-      onParse: handleParse,
-      onToggleColors: handleToggleColors,
-      onToggleTranslations: handleToggleTranslations,
-      onOpenSettings: handleOpenSettings,
-    });
-  }
+  if (isParsed && currentSettings?.showComprehensionHeader) refreshHeader();
 }
+
+// ─── Toggles ──────────────────────────────────────────────────────────────────
 
 function handleToggleColors(enabled: boolean) {
   if (!currentSettings) return;
@@ -252,23 +285,70 @@ function handleToggleTranslations(enabled: boolean) {
 }
 
 function handleOpenSettings() {
-  chrome.runtime.openOptionsPage?.();
+  sendMessage({ type: 'OPEN_OPTIONS_PAGE', payload: null }).catch(() => {
+    chrome.runtime.openOptionsPage?.();
+  });
 }
 
+// ─── Keyboard shortcuts ───────────────────────────────────────────────────────
+
 function handleKeyDown(e: KeyboardEvent) {
-  // Alt+P = parse page
-  if (e.altKey && e.key === 'p') {
+  // Alt+A — toggle overlays (parse / remove)
+  if (e.altKey && e.key === 'a') {
     e.preventDefault();
-    handleParse();
+    if (isParsed) { removeOverlays(); isParsed = false; currentTokens = []; refreshHeader(); }
+    else handleParse();
     return;
   }
-  // Escape = dismiss popup
+
+  // Alt+T — toggle inline translations
+  if (e.altKey && e.key === 't') {
+    e.preventDefault();
+    handleToggleTranslations(!currentSettings?.showInlineTranslations);
+    return;
+  }
+
+  // Alt+S — dictionary lookup for selected text
+  if (e.altKey && e.key === 's') {
+    e.preventDefault();
+    const sel = window.getSelection()?.toString().trim();
+    if (sel) handleOpenAdvancedCreator(sel, '');
+    return;
+  }
+
+  // E — send to advanced card creator
+  if (e.key === 'e' || e.key === 'E') {
+    const active = document.activeElement;
+    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || (active as HTMLElement).isContentEditable)) return;
+    const sel = window.getSelection()?.toString().trim();
+    if (sel) { handleOpenAdvancedCreator(sel, ''); return; }
+  }
+
+  // Escape — dismiss popup / creator
   if (e.key === 'Escape') {
     dismissWordPopup();
   }
 }
 
-// ─── Message listener (from background) ─────────────────────────────────────
+// ─── Shift key: link mode ─────────────────────────────────────────────────────
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Shift' && !shiftMode) {
+    shiftMode = true;
+    document.body.classList.add('syn-shift-mode');
+    if (isParsed) refreshHeader();
+  }
+});
+
+document.addEventListener('keyup', (e) => {
+  if (e.key === 'Shift' && shiftMode) {
+    shiftMode = false;
+    document.body.classList.remove('syn-shift-mode');
+    if (isParsed) refreshHeader();
+  }
+});
+
+// ─── Message listener ─────────────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === 'PARSE_PAGE') {
@@ -278,37 +358,25 @@ chrome.runtime.onMessage.addListener((msg) => {
 
   if (msg.type === 'STATUS_CHANGED') {
     const { lemma, status } = msg.payload as { lemma: string; status: WordStatus };
-    if (currentLexemes[lemma]) {
-      currentLexemes[lemma].status = status;
-    }
-    if (isParsed) {
-      updateWordStatus(lemma, status);
-    }
+    if (currentLexemes[lemma]) currentLexemes[lemma].status = status;
+    if (isParsed) updateWordStatus(lemma, status);
   }
 
   if (msg.type === 'SETTINGS_UPDATED') {
     const patch = msg.payload as Partial<UserSettings>;
-    if (currentSettings) {
-      currentSettings = { ...currentSettings, ...patch };
-    }
+    if (currentSettings) currentSettings = { ...currentSettings, ...patch };
 
     if (patch.enabled === false) {
       removeOverlays();
       unmountHeaderBar();
       isParsed = false;
+      currentTokens = [];
     }
-
-    if (patch.showLearningStatusColors !== undefined) {
-      applyStatusColors(patch.showLearningStatusColors);
-    }
-
-    if (patch.showInlineTranslations !== undefined) {
-      applyInlineTranslations(patch.showInlineTranslations, currentLexemes);
-    }
+    if (patch.showLearningStatusColors !== undefined) applyStatusColors(patch.showLearningStatusColors);
+    if (patch.showInlineTranslations !== undefined) applyInlineTranslations(patch.showInlineTranslations, currentLexemes);
   }
 
   if (msg.type === 'LOOKUP_WORD') {
-    // Context menu lookup - show popup for the word
     const { lemma } = msg.payload as { lemma: string };
     if (!lemma || !currentSettings) return;
 
@@ -316,25 +384,18 @@ chrome.runtime.onMessage.addListener((msg) => {
     if (wordEl) {
       wordEl.click();
     } else {
-      // Word not yet parsed - show basic popup at center of viewport
       const fakeRect = {
         top: window.innerHeight / 2 - 150,
         bottom: window.innerHeight / 2 - 150,
         left: window.innerWidth / 2 - 170,
         right: window.innerWidth / 2 + 170,
-        width: 340,
-        height: 0,
-        x: window.innerWidth / 2 - 170,
-        y: window.innerHeight / 2 - 150,
+        width: 340, height: 0,
+        x: window.innerWidth / 2 - 170, y: window.innerHeight / 2 - 150,
         toJSON: () => ({}),
       } as DOMRect;
-
       mountWordPopup({
-        lemma,
-        surface: lemma,
-        sentence: '',
-        anchorRect: fakeRect,
-        lexeme: currentLexemes[lemma] ?? null,
+        lemma, surface: lemma, sentence: '',
+        anchorRect: fakeRect, lexeme: currentLexemes[lemma] ?? null,
         settings: currentSettings,
         onClose: dismissWordPopup,
         onStatusChange: handleStatusChange,
@@ -343,13 +404,10 @@ chrome.runtime.onMessage.addListener((msg) => {
   }
 });
 
-// ─── Boot ────────────────────────────────────────────────────────────────────
+// ─── Boot ─────────────────────────────────────────────────────────────────────
 
-// Only run in main frame
 if (window === window.top) {
-  console.log('[Syntagma] content script loaded on', window.location.href);
   init().catch(console.error);
 }
 
-// Export parsePage for external callers
 export { handleParse as parsePage };

@@ -5,7 +5,6 @@ import { sendMessage } from '../../shared/messages';
 import { lookupFrequency, getFrequencyBand } from '../../shared/frequency';
 import { StatusRow } from './StatusRow';
 import { PopupButtons } from './PopupButtons';
-import { CardCreator } from './CardCreator';
 
 const C = {
   base: '#F5F1E9',
@@ -103,7 +102,7 @@ function WordPopupInner({
   const [aiLoading, setAiLoading] = useState<AIActionType | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
-  const [showCardCreator, setShowCardCreator] = useState(false);
+  const [cardSaved, setCardSaved] = useState<'idle' | 'saving' | 'done' | 'error'>('idle');
   const popupRef = useRef<HTMLDivElement>(null);
   const requestIdRef = useRef<string | null>(null);
 
@@ -236,6 +235,31 @@ function WordPopupInner({
     }
   }, [lemma, sentence, settings.learnerLevel]);
 
+  const handleSaveCard = useCallback(async () => {
+    if (cardSaved !== 'idle') return;
+    setCardSaved('saving');
+    try {
+      const card = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        lemma,
+        surfaceForm: surface,
+        sentence,
+        sourceUrl: window.location.href,
+        sourceTitle: document.title,
+        trMeaning: lexeme?.trMeaning ?? (translations[0] ?? ''),
+        createdAt: Date.now(),
+        deckName: 'Syntagma',
+        tags: ['syntagma'],
+      };
+      await sendMessage({ type: 'CREATE_FLASHCARD', payload: card });
+      setCardSaved('done');
+      setTimeout(() => setCardSaved('idle'), 2000);
+    } catch {
+      setCardSaved('error');
+      setTimeout(() => setCardSaved('idle'), 2000);
+    }
+  }, [cardSaved, lemma, surface, sentence, lexeme, translations]);
+
   const popupStyle: React.CSSProperties = {
     position: 'absolute',
     zIndex: 2147483645,
@@ -274,8 +298,9 @@ function WordPopupInner({
         </div>
         <div style={{ display: 'flex', gap: '6px' }}>
           <button
-            onClick={() => setShowCardCreator(v => !v)}
-            title="Create flashcard"
+            onClick={handleSaveCard}
+            title={cardSaved === 'done' ? 'Card saved!' : cardSaved === 'error' ? 'Save failed' : 'Add to flashcards'}
+            disabled={cardSaved === 'saving'}
             style={{
               width: '32px',
               height: '32px',
@@ -283,16 +308,20 @@ function WordPopupInner({
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              background: showCardCreator ? C.amber : C.mauve,
+              background: cardSaved === 'done' ? C.green : cardSaved === 'error' ? C.red : C.mauve,
               color: C.base,
               border: 'none',
-              cursor: 'pointer',
+              cursor: cardSaved === 'idle' ? 'pointer' : 'default',
               padding: 0,
-              transition: 'all 0.15s',
+              transition: 'background 0.2s',
               flexShrink: 0,
             }}
           >
-            {showCardCreator ? (
+            {cardSaved === 'done' ? (
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
+            ) : cardSaved === 'error' ? (
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="18" y1="6" x2="6" y2="18"></line>
                 <line x1="6" y1="6" x2="18" y2="18"></line>
@@ -308,6 +337,20 @@ function WordPopupInner({
           </button>
         </div>
       </div>
+
+      {/* Card save feedback */}
+      {(cardSaved === 'done' || cardSaved === 'error') && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '6px',
+          background: cardSaved === 'done' ? C.green + '22' : C.red + '22',
+          border: `1px solid ${cardSaved === 'done' ? C.green : C.red}`,
+          borderRadius: '5px', padding: '5px 9px',
+          marginBottom: '8px', fontSize: '12px', fontWeight: 600,
+          color: cardSaved === 'done' ? C.green : C.red,
+        }}>
+          {cardSaved === 'done' ? '✓ Card saved to your flashcards!' : '✕ Failed to save card. Try again.'}
+        </div>
+      )}
 
       {/* Sentence context */}
       {sentence && (
@@ -362,18 +405,6 @@ function WordPopupInner({
         />
       </div>
 
-      {/* Card creator */}
-      {showCardCreator && (
-        <CardCreator
-          lemma={lemma}
-          surface={surface}
-          sentence={sentence}
-          lexeme={lexeme}
-          translations={translations}
-          onSaved={() => setShowCardCreator(false)}
-          onCancel={() => setShowCardCreator(false)}
-        />
-      )}
     </div>
   );
 }
