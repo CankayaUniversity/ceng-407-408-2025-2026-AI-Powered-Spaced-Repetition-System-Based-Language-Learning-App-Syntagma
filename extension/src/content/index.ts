@@ -13,6 +13,7 @@ import {
 } from './overlay';
 import { mountHeaderBar, updateHeaderBar, unmountHeaderBar } from './header-bar';
 import { mountWordPopup, dismissWordPopup } from './popup/WordPopup';
+import { initVideoMode, destroyVideoMode } from './video';
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -136,6 +137,23 @@ async function init() {
     document.addEventListener('contextmenu', handleContextMenu);
 
     if (settings.autoParseOnLoad) await handleParse();
+
+    // ── Video mode ─────────────────────────────────────────────────────────
+    const isVideoPage =
+      window.location.href.includes('youtube.com/watch') ||
+      window.location.href.includes('netflix.com/watch') ||
+      document.querySelector('video') !== null;
+
+    if (isVideoPage) {
+      initVideoMode({
+        settings,
+        lexemes: currentLexemes,
+        onStatusChange: handleStatusChange,
+        onSettingsChange: (patch) => {
+          if (currentSettings) currentSettings = { ...currentSettings, ...patch };
+        },
+      }).catch(console.error);
+    }
 
   } catch (err) {
     console.error('[Syntagma] init error:', err);
@@ -405,6 +423,51 @@ chrome.runtime.onMessage.addListener((msg) => {
 });
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
+
+function isVideoPageUrl(url: string): boolean {
+  return url.includes('youtube.com/watch') || url.includes('netflix.com/watch');
+}
+
+function reinitVideoMode() {
+  if (!currentSettings) return;
+  destroyVideoMode();
+  initVideoMode({
+    settings: currentSettings,
+    lexemes: currentLexemes,
+    onStatusChange: handleStatusChange,
+    onSettingsChange: (patch) => {
+      if (currentSettings) currentSettings = { ...currentSettings, ...patch };
+    },
+  }).catch(console.error);
+}
+
+// ── SPA navigation detection (Netflix / YouTube navigate without full reload) ─
+let lastHref = window.location.href;
+const origPushState = history.pushState.bind(history);
+const origReplaceState = history.replaceState.bind(history);
+
+function onUrlChange() {
+  const href = window.location.href;
+  if (href === lastHref) return;
+  const prevHref = lastHref;
+  lastHref = href;
+  // Only reinit when entering a video page from a non-video page.
+  // Ignores Netflix's frequent replaceState calls that only change query params
+  // while playback is already running (tctx, trackId, etc.).
+  if (isVideoPageUrl(href) && !isVideoPageUrl(prevHref)) {
+    reinitVideoMode();
+  }
+}
+
+history.pushState = (...args: Parameters<typeof history.pushState>) => {
+  origPushState(...args);
+  onUrlChange();
+};
+history.replaceState = (...args: Parameters<typeof history.replaceState>) => {
+  origReplaceState(...args);
+  onUrlChange();
+};
+window.addEventListener('popstate', onUrlChange);
 
 if (window === window.top) {
   init().catch(console.error);

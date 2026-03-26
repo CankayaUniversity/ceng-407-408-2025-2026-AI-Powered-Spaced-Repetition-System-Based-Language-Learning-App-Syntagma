@@ -414,12 +414,21 @@ function WordPopupInner({
 let popupRoot: ReturnType<typeof createRoot> | null = null;
 let popupContainer: HTMLElement | null = null;
 
-export function mountWordPopup(props: WordPopupProps): void {
+export function mountWordPopup(props: WordPopupProps, opts?: { zIndex?: number }): void {
   dismissWordPopup();
 
   popupContainer = document.createElement('div');
   popupContainer.id = 'syntagma-popup-root';
   popupContainer.setAttribute('data-syntagma', '');
+  if (opts?.zIndex !== undefined) {
+    popupContainer.style.position = 'fixed';
+    popupContainer.style.zIndex = String(opts.zIndex);
+    popupContainer.style.top = '0';
+    popupContainer.style.left = '0';
+    popupContainer.style.width = '0';
+    popupContainer.style.height = '0';
+    popupContainer.style.overflow = 'visible';
+  }
   document.body.appendChild(popupContainer);
 
   popupRoot = createRoot(popupContainer);

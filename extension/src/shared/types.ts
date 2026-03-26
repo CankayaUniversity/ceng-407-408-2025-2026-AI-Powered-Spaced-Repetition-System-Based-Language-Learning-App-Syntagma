@@ -79,6 +79,14 @@ export interface UserSettings {
   resumeDelayMs: number;
   sceneSkipMode: 'off' | '2x' | '4x' | '6x' | '8x' | 'jump';
   removeBracketedSubtitles: boolean;
+  revealOnPause: boolean;
+  revealOnHover: boolean;
+  revealByKnownStatus: boolean;
+  autoPauseDelayToleranceMs: number;
+  targetSubtitleOffsetMs: number;
+  secondarySubtitleOffsetMs: number;
+  interactionDelayMs: number;
+  showSubtitleSidebar: boolean;
   aiModel: string;
   aiApiKey: string | null;
   forvoApiKey: string | null;

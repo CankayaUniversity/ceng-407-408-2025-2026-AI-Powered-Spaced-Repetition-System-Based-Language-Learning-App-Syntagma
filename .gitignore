@@ -97,3 +97,6 @@ target/
 # Test coverage
 coverage/
 Plan.md
+changes.diff
+diff_report.txt
+.claude/settings.local.json
