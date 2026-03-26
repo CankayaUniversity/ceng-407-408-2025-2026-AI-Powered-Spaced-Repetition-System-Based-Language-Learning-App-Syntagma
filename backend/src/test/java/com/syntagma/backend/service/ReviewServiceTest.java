@@ -34,6 +34,7 @@ class ReviewServiceTest {
     @Mock private SrsStateRepository srsStateRepository;
     @Mock private UserRepository userRepository;
     @Mock private SrsService srsService;
+    @Mock private FsrsAlgorithm fsrsAlgorithm;
     @InjectMocks private ReviewService reviewService;
 
     @Test
@@ -49,7 +50,7 @@ class ReviewServiceTest {
         srsState.setFlashcard(flashcard);
         srsState.setStability(1.0f);
         srsState.setDifficulty(5.0f);
-        srsState.setRetrievable(1.0f);
+        srsState.setRetrievability(1.0f);
 
         ReviewLog savedLog = new ReviewLog();
         savedLog.setReviewId(100L);
@@ -66,7 +67,7 @@ class ReviewServiceTest {
         when(reviewLogRepository.save(any(ReviewLog.class))).thenReturn(savedLog);
         when(srsStateRepository.save(any(SrsState.class))).thenReturn(srsState);
         when(srsService.toResponse(any(SrsState.class))).thenReturn(
-                new SrsStateResponse(10L, 1.8f, 4.7f, 0.8f, LocalDateTime.now(), LocalDateTime.now().plusDays(2)));
+                new SrsStateResponse(10L, 1.8f, 4.7f, 0.8f, "REVIEW", 2, 0, 2, 2, LocalDateTime.now(), LocalDateTime.now().plusDays(2)));
 
         ReviewResultResponse response = reviewService.submitReview(1L, request);
 
@@ -122,7 +123,7 @@ class ReviewServiceTest {
         when(reviewLogRepository.save(any(ReviewLog.class))).thenReturn(savedLog);
         when(srsStateRepository.save(any(SrsState.class))).thenAnswer(inv -> inv.getArgument(0));
         when(srsService.toResponse(any(SrsState.class))).thenReturn(
-                new SrsStateResponse(10L, 1.6f, 5.0f, 0.6f, LocalDateTime.now(), LocalDateTime.now().plusDays(2)));
+                new SrsStateResponse(10L, 1.6f, 5.0f, 0.6f, "REVIEW", 2, 0, 2, 2, LocalDateTime.now(), LocalDateTime.now().plusDays(2)));
 
         ReviewResultResponse response = reviewService.submitReview(1L, request);
 

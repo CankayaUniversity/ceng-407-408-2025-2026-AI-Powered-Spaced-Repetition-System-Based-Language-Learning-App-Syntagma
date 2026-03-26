@@ -6,6 +6,7 @@ import com.syntagma.backend.entity.Flashcard;
 import com.syntagma.backend.entity.ReviewLog;
 import com.syntagma.backend.entity.SrsState;
 import com.syntagma.backend.entity.User;
+import com.syntagma.backend.entity.enums.Rating;
 import com.syntagma.backend.repository.*;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +26,7 @@ public class ReviewService {
     private final SrsStateRepository srsStateRepository;
     private final UserRepository userRepository;
     private final SrsService srsService;
+    private final FsrsAlgorithm fsrsAlgorithm;
 
     @Transactional
     public ReviewResultResponse submitReview(Long userId, ReviewSubmitRequest request) {
@@ -37,6 +39,9 @@ public class ReviewService {
             throw new EntityNotFoundException("Flashcard not found: " + request.flashcardId());
         }
 
+        // Parse the FSRS rating (1=Again, 2=Hard, 3=Good, 4=Easy)
+        Rating rating = Rating.fromValue(request.result());
+
         // Create review log
         ReviewLog log = new ReviewLog();
         log.setFlashcard(flashcard);
@@ -47,26 +52,13 @@ public class ReviewService {
         log.setClientTimestamp(request.clientTimestamp());
         ReviewLog savedLog = reviewLogRepository.save(log);
 
-        // Update SRS state
+        // Get or create SRS state
         SrsState srsState = srsStateRepository.findById(flashcard.getFlashcardId())
-                .orElseGet(() -> {
-                    SrsState newState = new SrsState();
-                    newState.setFlashcard(flashcard);
-                    newState.setStability(1.0f);
-                    newState.setDifficulty(5.0f);
-                    newState.setRetrievable(1.0f);
-                    return newState;
-                });
+                .orElseGet(() -> SrsState.createNew(flashcard));
 
-        // Simple SRS parameter update (placeholder for FSRS algorithm)
-        float resultFactor = request.result() / 5.0f;
-        srsState.setStability(srsState.getStability() * (1 + resultFactor));
-        srsState.setDifficulty(Math.max(1, srsState.getDifficulty() - (resultFactor - 0.5f)));
-        srsState.setRetrievable(Math.min(1.0f, resultFactor));
-        srsState.setLastReviewedAt(LocalDateTime.now());
-
-        long intervalDays = Math.max(1, Math.round(srsState.getStability()));
-        srsState.setNextReviewAt(LocalDateTime.now().plusDays(intervalDays));
+        // Apply the FSRS algorithm
+        LocalDateTime now = LocalDateTime.now();
+        fsrsAlgorithm.processReview(srsState, rating, now);
 
         SrsState savedSrs = srsStateRepository.save(srsState);
 

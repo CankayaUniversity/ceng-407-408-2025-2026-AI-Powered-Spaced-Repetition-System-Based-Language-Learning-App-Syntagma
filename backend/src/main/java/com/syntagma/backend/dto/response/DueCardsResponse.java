@@ -12,6 +12,9 @@ public record DueCardsResponse(
             String translation,
             java.time.LocalDateTime nextReviewAt,
             Float stability,
-            Float difficulty
+            Float difficulty,
+            String state,
+            Integer reps,
+            Integer lapses
     ) {}
 }
