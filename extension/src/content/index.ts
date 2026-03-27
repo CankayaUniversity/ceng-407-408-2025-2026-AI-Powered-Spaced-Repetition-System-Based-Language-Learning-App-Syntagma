@@ -456,6 +456,8 @@ function onUrlChange() {
   // while playback is already running (tctx, trackId, etc.).
   if (isVideoPageUrl(href) && !isVideoPageUrl(prevHref)) {
     reinitVideoMode();
+  } else if (!isVideoPageUrl(href) && isVideoPageUrl(prevHref)) {
+    destroyVideoMode();
   }
 }
 
