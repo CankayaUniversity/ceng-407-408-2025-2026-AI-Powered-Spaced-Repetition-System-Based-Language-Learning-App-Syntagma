@@ -9,6 +9,7 @@
     "build": "npx tsc -b && npx vite build && npx vite build --config vite.content.config.ts",
     "typecheck": "npx tsc --noEmit",
     "test": "vitest run",
+    "test:youtube": "vitest run src/content/youtube-subtitles.test.ts -t \"live regression\"",
     "test:watch": "vitest",
     "test:unit": "vitest run tests/unit"
   },

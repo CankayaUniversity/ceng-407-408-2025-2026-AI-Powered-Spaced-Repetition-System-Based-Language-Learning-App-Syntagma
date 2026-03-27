@@ -1,14 +1,11 @@
 import type { SubtitleCue } from '../../shared/types';
 import { parseVTT } from './subtitle-parser';
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-interface YTCaptionTrack {
-  baseUrl: string;
-  languageCode: string;
-  name: { simpleText: string };
-  kind?: string; // 'asr' = auto-generated
-}
+import {
+  extractCaptionTracksFromDocument,
+  extractYoutubeSubtitles,
+  extractYoutubeVideoId,
+  type YoutubeSubtitleSegment,
+} from '../youtube-subtitles';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -20,43 +17,25 @@ function getVideoId(): string | null {
 
 // ─── Multi-source ytInitialPlayerResponse reader ─────────────────────────────
 
-function getYTCaptionTracks(): YTCaptionTrack[] {
-  try {
-    const w = window as unknown as Record<string, unknown>;
-
-    // Primary: ytInitialPlayerResponse
-    const pr1 = w.ytInitialPlayerResponse as
-      { captions?: { playerCaptionsTracklistRenderer?: { captionTracks?: YTCaptionTrack[] } } } | undefined;
-    const t1 = pr1?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-    if (Array.isArray(t1) && t1.length) return t1;
-
-    // Secondary: ytplayer.config.args.raw_player_response
-    const ytplayer = w.ytplayer as
-      { config?: { args?: { raw_player_response?: unknown } } } | undefined;
-    const raw = ytplayer?.config?.args?.raw_player_response;
-    if (raw) {
-      const pr2 = typeof raw === 'string' ? JSON.parse(raw) : raw as typeof pr1;
-      const t2 = (pr2 as typeof pr1)?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-      if (Array.isArray(t2) && t2.length) return t2;
-    }
-  } catch { /* ignore */ }
-  return [];
-}
-
-// ─── VTT fetch from signed URL ────────────────────────────────────────────────
-
-async function fetchAsVTT(baseUrl: string): Promise<SubtitleCue[]> {
-  const sep = baseUrl.includes('?') ? '&' : '?';
-  const url = `${baseUrl}${sep}fmt=vtt`;
-  try {
-    const resp = await fetch(url);
-    if (!resp.ok) return [];
-    const text = await resp.text();
-    if (!text.includes('WEBVTT')) return [];
-    return parseVTT(text);
-  } catch {
-    return [];
-  }
+function mapSegmentsToSubtitleCues(segments: YoutubeSubtitleSegment[]): SubtitleCue[] {
+  return segments
+    .map((segment, index) => {
+      const startMs = Math.max(0, segment.startMs);
+      const durationMs = Math.max(0, segment.durationMs || 0);
+      const endMs = Math.max(startMs + 1, startMs + durationMs);
+      const text = (segment.text ?? '').trim();
+      if (!text) return null;
+      return {
+        index,
+        startMs,
+        endMs,
+        text,
+        rawText: text,
+        bookmarked: false,
+        selected: false,
+      } as SubtitleCue;
+    })
+    .filter((cue): cue is SubtitleCue => cue !== null);
 }
 
 // ─── YouTube JSON3 subtitle format parser ────────────────────────────────────
@@ -218,26 +197,26 @@ export async function captureYouTubeSubtitles(
   lang: 'en' | 'tr',
   maxWaitMs = 15000,
 ): Promise<SubtitleCue[]> {
-  const videoId = getVideoId();
+  const videoId =
+    extractYoutubeVideoId(window.location.href) ??
+    getVideoId();
   const deadline = Date.now() + maxWaitMs;
 
-  // ── Method 1: ytInitialPlayerResponse signed URL (retry loop) ────────────
+  // ── Method 1: robust extractor (InnerTube + in-page payload fallback) ────
   while (Date.now() < deadline) {
-    const tracks = getYTCaptionTracks();
-    if (tracks.length > 0) {
-      const manual = tracks.filter(t => t.kind !== 'asr');
-      const asr    = tracks.filter(t => t.kind === 'asr');
-      const pick   = (list: YTCaptionTrack[]) =>
-        list.find(t => t.languageCode === lang) ??
-        list.find(t => t.languageCode.startsWith(lang));
-      const chosen = pick(manual) ?? pick(asr) ?? manual[0] ?? asr[0];
+    try {
+      const result = await extractYoutubeSubtitles({
+        videoUrlOrId: window.location.href,
+        preferredLang: lang,
+        doc: document,
+      });
 
-      if (chosen) {
-        const cues = await fetchAsVTT(chosen.baseUrl);
-        if (cues.length > 0) return cues;
+      const cues = mapSegmentsToSubtitleCues(result.segments);
+      if (cues.length > 0) {
+        return cues;
       }
-      // Tracks found but fetch failed — don't keep retrying the same broken URL
-      break;
+    } catch {
+      // Retry until timeout for early page-load race conditions.
     }
     await sleep(600);
   }
@@ -263,7 +242,12 @@ export async function captureYouTubeSubtitles(
 }
 
 export function getYouTubeAvailableLanguages(): string[] {
-  return getYTCaptionTracks().map(t => t.languageCode);
+  try {
+    const tracks = extractCaptionTracksFromDocument(document);
+    return [...new Set(tracks.map((track) => track.languageCode))];
+  } catch {
+    return [];
+  }
 }
 
 // ─── Public: watch TextTracks for progressive transcript building ─────────────
