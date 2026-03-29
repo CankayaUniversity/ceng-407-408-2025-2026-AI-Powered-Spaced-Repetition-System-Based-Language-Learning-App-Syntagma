@@ -318,6 +318,8 @@ function TopBar({
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [inVideoMode, setInVideoMode] = useState(false);
+  const [subtitlesOn, setSubtitlesOn] = useState(true);
   const [toasts, setToasts] = useState<ToastMsg[]>([]);
   const statsRef = useRef<HTMLButtonElement>(null);
 
@@ -330,6 +332,28 @@ function TopBar({
     return () => {
       window.removeEventListener('syntagma:sidebar-visible', onOpen);
       window.removeEventListener('syntagma:sidebar-hidden',  onClose);
+    };
+  }, []);
+
+  // Show/hide video-mode buttons based on VideoOverlay lifecycle
+  useEffect(() => {
+    const onEnter = () => setInVideoMode(true);
+    const onExit  = () => setInVideoMode(false);
+    const onShown  = () => setSubtitlesOn(true);
+    const onHidden = () => setSubtitlesOn(false);
+    window.addEventListener('syntagma:video-mode-enter',  onEnter);
+    window.addEventListener('syntagma:video-mode-exit',   onExit);
+    window.addEventListener('syntagma:subtitles-shown',   onShown);
+    window.addEventListener('syntagma:subtitles-hidden',  onHidden);
+    // If video mode was already active before this component mounted (race condition
+    // where initVideoMode resolves before React commits effects), ask video/index.ts
+    // to re-fire the enter event now that we're listening.
+    window.dispatchEvent(new CustomEvent('syntagma:query-video-mode'));
+    return () => {
+      window.removeEventListener('syntagma:video-mode-enter',  onEnter);
+      window.removeEventListener('syntagma:video-mode-exit',   onExit);
+      window.removeEventListener('syntagma:subtitles-shown',   onShown);
+      window.removeEventListener('syntagma:subtitles-hidden',  onHidden);
     };
   }, []);
 
@@ -506,6 +530,21 @@ function TopBar({
             </svg>
           )}
         </IconBtn>
+
+        {/* CC subtitle toggle — only in video mode */}
+        {inVideoMode && (
+          <IconBtn
+            title={subtitlesOn ? 'Hide subtitles' : 'Show subtitles'}
+            active={subtitlesOn}
+            color={C.green}
+            onClick={() => window.dispatchEvent(new CustomEvent('syntagma:toggle-subtitles'))}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="2" y="5" width="20" height="14" rx="2"/>
+              <path d="M7 15h2m4 0h4M7 11h4m4 0h2"/>
+            </svg>
+          </IconBtn>
+        )}
 
         {/* Transcript sidebar toggle */}
         <IconBtn title="Toggle transcript sidebar" color={C.blue} onClick={() => window.dispatchEvent(new CustomEvent('syntagma:toggle-sidebar'))} active={sidebarOpen}>

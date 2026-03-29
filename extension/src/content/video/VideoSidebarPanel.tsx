@@ -22,11 +22,12 @@ interface CueRowProps {
   cue: SubtitleCue;
   isActive: boolean;
   lexemes: Record<string, LexemeEntry>;
+  showColors: boolean;
   onSeek: (cue: SubtitleCue) => void;
   onWordClick: (lemma: string, surface: string, sentence: string, rect: DOMRect) => void;
 }
 
-const CueRow = memo(function CueRow({ cue, isActive, lexemes, onSeek, onWordClick }: CueRowProps) {
+const CueRow = memo(function CueRow({ cue, isActive, lexemes, showColors, onSeek, onWordClick }: CueRowProps) {
   const rowRef = useRef<HTMLDivElement>(null);
 
   // Scroll into view when this row becomes active.
@@ -43,9 +44,9 @@ const CueRow = memo(function CueRow({ cue, isActive, lexemes, onSeek, onWordClic
 
   const leftBorder = isActive
     ? `3px solid rgba(160,120,85,1)`
-    : hasUnknown
+    : showColors && hasUnknown
       ? `3px solid rgba(217,119,98,0.4)`
-      : hasLearning
+      : showColors && hasLearning
         ? `3px solid rgba(160,120,85,0.35)`
         : '3px solid transparent';
 
@@ -81,10 +82,11 @@ const CueRow = memo(function CueRow({ cue, isActive, lexemes, onSeek, onWordClic
           if (!tok.isWord) return <span key={ti}>{tok.text}</span>;
           const lemma = tok.text.toLowerCase();
           const status = lexemes[lemma]?.status ?? 'unknown';
-          const underlineColor =
-            status === 'unknown'  ? 'rgba(217,119,98,0.55)' :
-            status === 'learning' ? 'rgba(160,120,85,0.55)' :
-            'transparent';
+          const underlineColor = showColors
+            ? (status === 'unknown'  ? 'rgba(217,119,98,0.55)' :
+               status === 'learning' ? 'rgba(160,120,85,0.55)' :
+               'transparent')
+            : 'transparent';
           return (
             <span
               key={ti}
@@ -205,10 +207,22 @@ export function VideoSidebarPanel({ video, cues, lexemes, settings, onStatusChan
   const [currentCue, setCurrentCue] = useState<SubtitleCue | null>(null);
   const [showImport, setShowImport] = useState(false);
   const [localLexemes, setLocalLexemes] = useState(lexemes);
+  const [localSettings, setLocalSettings] = useState(settings);
   const listRef = useRef<HTMLDivElement>(null);
 
   // Keep local lexemes in sync with prop (e.g. overlay status changes)
   useEffect(() => { setLocalLexemes(lexemes); }, [lexemes]);
+
+  // Keep settings in sync when the user changes them from the topbar/options
+  // (the sidebar is mounted once, so the settings prop never changes after init).
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const patch = (e as CustomEvent<Partial<UserSettings>>).detail;
+      setLocalSettings(prev => ({ ...prev, ...patch }));
+    };
+    window.addEventListener('syntagma:settings-updated', handler);
+    return () => window.removeEventListener('syntagma:settings-updated', handler);
+  }, []);
 
   // Mirror the auto-detected subtitle offset broadcast by VideoOverlay.
   const [detectedOffsetMs, setDetectedOffsetMs] = useState(0);
@@ -257,22 +271,22 @@ export function VideoSidebarPanel({ video, cues, lexemes, settings, onStatusChan
   // Also immediately update currentCue so the highlight reflects the click
   // without waiting for the next timeupdate event from VideoOverlay.
   const handleSeek = useCallback((cue: SubtitleCue) => {
-    const adjusted = cue.startMs + detectedOffsetMs + settings.targetSubtitleOffsetMs;
+    const adjusted = cue.startMs + detectedOffsetMs + localSettings.targetSubtitleOffsetMs;
     video.currentTime = adjusted / 1000;
     video.play().catch(() => {});
     setCurrentCue(cue);
-  }, [video, detectedOffsetMs, settings.targetSubtitleOffsetMs]);
+  }, [video, detectedOffsetMs, localSettings.targetSubtitleOffsetMs]);
 
   // Word click — open popup (stops propagation so the row seek doesn't fire)
   const handleWordClick = useCallback((
     lemma: string, surface: string, sentence: string, rect: DOMRect,
   ) => {
-    if (settings.pauseOnWordInteraction && !video.paused) video.pause();
+    if (localSettings.pauseOnWordInteraction && !video.paused) video.pause();
     const now = Date.now();
     mountWordPopup({
       lemma, surface, sentence, anchorRect: rect,
       lexeme: localLexemes[lemma] ?? null,
-      settings,
+      settings: localSettings,
       onClose: () => { dismissWordPopup(); },
       onStatusChange: (l, status) => {
         setLocalLexemes(prev => ({
@@ -285,7 +299,7 @@ export function VideoSidebarPanel({ video, cues, lexemes, settings, onStatusChan
         onStatusChange(l, status);
       },
     }, { zIndex: 2147483647 });
-  }, [localLexemes, settings, video, onStatusChange]);
+  }, [localLexemes, localSettings, video, onStatusChange]);
 
   if (!visible) return null;
 
@@ -472,6 +486,7 @@ export function VideoSidebarPanel({ video, cues, lexemes, settings, onStatusChan
                 cue={cue}
                 isActive={currentCue?.index === cue.index}
                 lexemes={localLexemes}
+                showColors={localSettings.showLearningStatusColors}
                 onSeek={handleSeek}
                 onWordClick={handleWordClick}
               />

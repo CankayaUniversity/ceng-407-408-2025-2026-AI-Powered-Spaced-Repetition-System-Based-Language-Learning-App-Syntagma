@@ -122,7 +122,8 @@ function WordPopupInner({
     }).catch(console.error);
   }, [lemma]);
 
-  // Calculate position
+  // Calculate position — anchorRect is always in viewport space (from getBoundingClientRect).
+  // The popup is position:fixed so top/left are also viewport-relative; no scroll offset needed.
   useEffect(() => {
     const popup = popupRef.current;
     if (!popup) return;
@@ -132,18 +133,21 @@ function WordPopupInner({
     const popupH = popup.offsetHeight || 300;
     const popupW = popup.offsetWidth || 340;
 
-    let top = anchorRect.bottom + window.scrollY + 6;
-    let left = anchorRect.left + window.scrollX;
+    // Default: open below the word
+    let top = anchorRect.bottom + 6;
+    let left = anchorRect.left;
 
-    // Flip above if near bottom
-    if (anchorRect.bottom + popupH + 20 > viewportH) {
-      top = anchorRect.top + window.scrollY - popupH - 6;
+    // Flip above if popup would overflow the bottom of the viewport
+    if (top + popupH + 20 > viewportH) {
+      top = anchorRect.top - popupH - 6;
     }
+
+    // Clamp so popup never goes above the topbar or below the viewport
+    if (top < 6) top = 6;
+    if (top + popupH > viewportH - 6) top = viewportH - popupH - 6;
 
     // Clamp horizontally
-    if (left + popupW > viewportW - 12) {
-      left = viewportW - popupW - 12;
-    }
+    if (left + popupW > viewportW - 12) left = viewportW - popupW - 12;
     if (left < 12) left = 12;
 
     setPosition({ top, left });
@@ -261,7 +265,7 @@ function WordPopupInner({
   }, [cardSaved, lemma, surface, sentence, lexeme, translations]);
 
   const popupStyle: React.CSSProperties = {
-    position: 'absolute',
+    position: 'fixed',
     zIndex: 2147483645,
     background: C.overlay,
     backdropFilter: 'blur(12px)',

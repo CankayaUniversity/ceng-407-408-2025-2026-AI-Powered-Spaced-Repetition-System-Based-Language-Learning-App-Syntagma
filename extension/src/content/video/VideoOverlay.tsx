@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import type { UserSettings, LexemeEntry, WordStatus, SubtitleCue } from '../../shared/types';
 import { sendMessage } from '../../shared/messages';
 import { SubtitleDisplay } from './SubtitleDisplay';
-import { SettingsDrawer } from './SettingsDrawer';
 import {
   captureYouTubeSubtitles,
   getYouTubeAvailableLanguages,
@@ -100,8 +99,20 @@ export function VideoOverlay({
   const [currentSecondary, setCurrentSecondary] = useState<SubtitleCue | null>(null);
   const [liveCue, setLiveCue] = useState<SubtitleCue | null>(null);
   const [isPaused, setIsPaused] = useState(video.paused);
-  const [showSettings, setShowSettings] = useState(false);
   const [showSubtitles, setShowSubtitles] = useState(true);
+
+  // CC toggle driven by the topbar button
+  useEffect(() => {
+    const handler = () => {
+      setShowSubtitles(v => {
+        const next = !v;
+        window.dispatchEvent(new CustomEvent(next ? 'syntagma:subtitles-shown' : 'syntagma:subtitles-hidden'));
+        return next;
+      });
+    };
+    window.addEventListener('syntagma:toggle-subtitles', handler);
+    return () => window.removeEventListener('syntagma:toggle-subtitles', handler);
+  }, []);
   const [captureStatus, setCaptureStatus] = useState<'idle' | 'loading' | 'ok' | 'failed'>('idle');
 
   const autoPauseRef = useRef({
@@ -119,6 +130,17 @@ export function VideoOverlay({
 
   useEffect(() => setSettings(externalSettings), [externalSettings]);
   useEffect(() => setLexemes(externalLexemes), [externalLexemes]);
+
+  // Keep settings in sync when the user changes them from the topbar/options
+  // (the overlay is mounted once, so externalSettings never changes after init).
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const patch = (e as CustomEvent<Partial<typeof externalSettings>>).detail;
+      setSettings(prev => ({ ...prev, ...patch }));
+    };
+    window.addEventListener('syntagma:settings-updated', handler);
+    return () => window.removeEventListener('syntagma:settings-updated', handler);
+  }, []);
 
   // Reset auto-offset whenever the cue set changes (new video / new track).
   useEffect(() => {
@@ -540,38 +562,17 @@ export function VideoOverlay({
       data-syntagma-video-overlay=""
       style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 9999 }}
     >
-      {/* ── Settings drawer ──────────────────────────────────────────────── */}
-      {showSettings && (
-        <div style={{
-          position: 'absolute',
-          bottom: '80px',
-          right: '10px',
-          pointerEvents: 'auto',
-          zIndex: 10001,
-        }}>
-          <SettingsDrawer
-            settings={settings}
-            onSettingChange={handleSettingChange}
-            onTargetImport={handleTargetImport}
-            onSecondaryImport={handleSecondaryImport}
-            targetTrackSource={targetSource}
-            secondaryTrackSource={secondarySource}
-          />
-        </div>
-      )}
-
       {/* ── Subtitle display — floats above YouTube's native subtitle area ── */}
       {hasAnySub && showSubtitles && (
         <div style={{
           position: 'absolute',
-          bottom: '12%',
+          bottom: '22%',
           left: 0,
           right: 0,
           pointerEvents: 'auto',
           zIndex: 10000,
           userSelect: 'none',
           padding: '6px 5% 8px',
-          background: `rgba(0,0,0,${settings.subtitleOverlayOpacity})`,
           textAlign: 'center',
         }}>
           {hasTargetTrack && (displayTarget ? (
@@ -614,122 +615,6 @@ export function VideoOverlay({
         </div>
       )}
 
-      {/* ── Controls strip — always visible at the very bottom ───────────── */}
-      <div style={{
-        position: 'absolute',
-        bottom: 0,
-        left: 0,
-        right: 0,
-        pointerEvents: 'auto',
-        zIndex: 10001,
-        userSelect: 'none',
-      }}>
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '3px 10px',
-          background: 'rgba(0,0,0,0.55)',
-          backdropFilter: 'blur(4px)',
-          borderTop: '1px solid rgba(255,255,255,0.06)',
-          gap: '8px',
-        }}>
-          {/* Left: cue timing / status */}
-          <span style={{
-            fontSize: '10px',
-            color: displayTarget ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.25)',
-            fontVariantNumeric: 'tabular-nums',
-            display: 'flex', alignItems: 'center', gap: '5px',
-          }}>
-            {captureStatus === 'loading' && !hasTargetTrack && (
-              <>
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
-                  style={{ animation: 'syn-spin 1s linear infinite', flexShrink: 0 }}>
-                  <path d="M12 2a10 10 0 0 1 10 10"/>
-                  <circle cx="12" cy="12" r="10" strokeOpacity="0.2"/>
-                </svg>
-                <style>{`@keyframes syn-spin { to { transform: rotate(360deg); } }`}</style>
-                Loading subtitles…
-              </>
-            )}
-            {captureStatus === 'failed' && !hasTargetTrack && (
-              <span style={{ color: 'rgba(217,119,98,0.7)' }}>No subtitles found.</span>
-            )}
-            {(captureStatus === 'ok' || hasTargetTrack) && displayTarget && (
-              `${formatTime(displayTarget.startMs)} → ${formatTime(displayTarget.endMs)}`
-            )}
-            {(captureStatus === 'ok' || hasTargetTrack) && !displayTarget && (
-              <span style={{ opacity: 0.4 }}>—</span>
-            )}
-          </span>
-
-          {/* Right: track badges + settings toggle */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            {targetSource !== 'none' && (
-              <span style={{
-                fontSize: '9px', fontWeight: 700,
-                color: targetSource === 'import' ? '#98C1D9' : '#A8B693',
-                background: targetSource === 'import' ? 'rgba(152,193,217,0.15)' : 'rgba(168,182,147,0.15)',
-                border: `1px solid ${targetSource === 'import' ? 'rgba(152,193,217,0.3)' : 'rgba(168,182,147,0.3)'}`,
-                padding: '1px 5px', borderRadius: '3px', textTransform: 'uppercase', letterSpacing: '0.4px',
-              }}>
-                {targetSource === 'import' ? 'SRT' : 'YT'}
-              </span>
-            )}
-            {secondarySource !== 'none' && (
-              <span style={{
-                fontSize: '9px', fontWeight: 700,
-                color: '#A07855',
-                background: 'rgba(160,120,85,0.15)',
-                border: '1px solid rgba(160,120,85,0.3)',
-                padding: '1px 5px', borderRadius: '3px', textTransform: 'uppercase', letterSpacing: '0.4px',
-              }}>
-                2nd
-              </span>
-            )}
-
-            {/* CC toggle */}
-            <button
-              onClick={() => setShowSubtitles(v => !v)}
-              title={showSubtitles ? 'Hide subtitles' : 'Show subtitles'}
-              style={{
-                background: showSubtitles ? 'rgba(168,182,147,0.25)' : 'rgba(255,255,255,0.08)',
-                border: `1px solid ${showSubtitles ? 'rgba(168,182,147,0.6)' : 'rgba(255,255,255,0.15)'}`,
-                borderRadius: '4px',
-                color: showSubtitles ? '#A8B693' : 'rgba(255,255,255,0.35)',
-                padding: '2px 7px',
-                cursor: 'pointer',
-                fontSize: '10px',
-                fontWeight: 700,
-                letterSpacing: '0.4px',
-                lineHeight: 1.2,
-                transition: 'all 0.15s',
-              }}
-            >
-              CC
-            </button>
-
-            {/* Settings toggle */}
-            <button
-              onClick={() => setShowSettings(v => !v)}
-              title="Subtitle settings"
-              style={{
-                background: showSettings ? 'rgba(160,120,85,0.35)' : 'rgba(255,255,255,0.08)',
-                border: `1px solid ${showSettings ? 'rgba(160,120,85,0.6)' : 'rgba(255,255,255,0.15)'}`,
-                borderRadius: '4px',
-                color: showSettings ? '#C9A070' : 'rgba(255,255,255,0.55)',
-                padding: '2px 7px',
-                cursor: 'pointer',
-                fontSize: '12px',
-                lineHeight: 1.2,
-                transition: 'all 0.15s',
-              }}
-            >
-              ⚙
-            </button>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }

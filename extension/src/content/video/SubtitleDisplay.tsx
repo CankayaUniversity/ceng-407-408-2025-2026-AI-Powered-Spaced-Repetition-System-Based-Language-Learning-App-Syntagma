@@ -110,10 +110,11 @@ export function SubtitleDisplay({
         const lemma = tok.text.toLowerCase().replace(/'/g, "'");
         const status = lexemes[lemma]?.status ?? 'unknown';
 
-        const underline =
-          status === 'unknown' ? '#D97762' :
-          status === 'learning' ? '#E8C06A' :
-          'transparent';
+        const underline = settings.showLearningStatusColors
+          ? (status === 'unknown' ? '#D97762' :
+             status === 'learning' ? '#E8C06A' :
+             'transparent')
+          : 'transparent';
 
         return (
           <span

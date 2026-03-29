@@ -43,6 +43,18 @@ let sidebarRoot: ReturnType<typeof createRoot> | null = null;
 let sidebarHost: HTMLElement | null = null;
 let cleanupFn: (() => void) | null = null;
 
+// Tracks whether video mode is currently active.
+// Used to respond to late-arriving queries from the header bar.
+let videoModeActive = false;
+
+// When the header bar mounts after video mode is already active it dispatches
+// this event. Respond immediately so the CC button appears right away.
+window.addEventListener('syntagma:query-video-mode', () => {
+  if (videoModeActive) {
+    window.dispatchEvent(new CustomEvent('syntagma:video-mode-enter'));
+  }
+});
+
 // ─── YouTube layout injection ─────────────────────────────────────────────────
 // When the sidebar is open on YouTube, push the page content left so the video
 // sits side-by-side with the sidebar instead of hiding behind it.
@@ -174,6 +186,9 @@ export async function initVideoMode(params: VideoModeParams): Promise<void> {
 
   // ── Mount React overlay ───────────────────────────────────────────────────
   videoRoot = createRoot(renderTarget);
+  videoModeActive = true;
+  window.dispatchEvent(new CustomEvent('syntagma:video-mode-enter'));
+
   videoRoot.render(
     createElement(VideoOverlay, {
       video,
@@ -197,6 +212,8 @@ export async function initVideoMode(params: VideoModeParams): Promise<void> {
 }
 
 export function destroyVideoMode(): void {
+  videoModeActive = false;
+  window.dispatchEvent(new CustomEvent('syntagma:video-mode-exit'));
   cleanupFn?.();
   cleanupFn = null;
   if (videoRoot) {

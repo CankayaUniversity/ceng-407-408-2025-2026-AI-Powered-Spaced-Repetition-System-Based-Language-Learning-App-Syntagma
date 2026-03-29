@@ -636,12 +636,104 @@ function FlashcardsTab({ settings }: { settings: UserSettings }) {
 
 // ─── Main OptionsApp ─────────────────────────────────────────────────────────
 
-type TabId = 'general' | 'words' | 'flashcards';
+// ─── Tab: Video ──────────────────────────────────────────────────────────────
+
+function SliderRow({ label, value, min, max, step, unit, onChange }: {
+  label: string; value: number; min: number; max: number; step: number;
+  unit?: string; onChange: (v: number) => void;
+}) {
+  return (
+    <div style={{ padding: '10px 0', borderBottom: `1px solid ${C.surface1}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px' }}>
+      <span style={{ fontSize: '14px', color: C.text }}>{label}</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <input
+          type="range" min={min} max={max} step={step} value={value}
+          onChange={e => onChange(+e.target.value)}
+          style={{ width: '120px', accentColor: C.blue, cursor: 'pointer' }}
+        />
+        <span style={{ fontSize: '12px', color: C.subtext, minWidth: '52px', textAlign: 'right' }}>
+          {value}{unit ?? ''}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function VideoTab({ settings, onUpdate }: { settings: UserSettings; onUpdate: (p: Partial<UserSettings>) => void }) {
+  return (
+    <div>
+      <SectionTitle>Subtitles</SectionTitle>
+      <SliderRow label="Target subtitle size" value={settings.targetSubtitleSize} min={50} max={300} step={10} unit="%" onChange={v => onUpdate({ targetSubtitleSize: v })} />
+      <SliderRow label="Secondary subtitle size" value={settings.secondarySubtitleSize} min={50} max={300} step={10} unit="%" onChange={v => onUpdate({ secondarySubtitleSize: v })} />
+      <SliderRow label="Target timing offset" value={settings.targetSubtitleOffsetMs} min={-5000} max={5000} step={50} unit="ms" onChange={v => onUpdate({ targetSubtitleOffsetMs: v })} />
+      <SliderRow label="Secondary timing offset" value={settings.secondarySubtitleOffsetMs} min={-5000} max={5000} step={50} unit="ms" onChange={v => onUpdate({ secondarySubtitleOffsetMs: v })} />
+      <Select
+        label="Obscure target subtitle"
+        value={settings.targetSubtitleObscure}
+        onChange={v => onUpdate({ targetSubtitleObscure: v as UserSettings['targetSubtitleObscure'] })}
+        options={[
+          { value: 'off', label: 'Off' },
+          { value: 'blur', label: 'Blur until revealed' },
+          { value: 'hide', label: 'Hide until revealed' },
+        ]}
+      />
+      {settings.targetSubtitleObscure !== 'off' && <>
+        <Toggle value={settings.revealOnPause} onChange={v => onUpdate({ revealOnPause: v })} label="Reveal on pause" />
+        <Toggle value={settings.revealOnHover} onChange={v => onUpdate({ revealOnHover: v })} label="Reveal on hover" />
+        <Toggle value={settings.revealByKnownStatus} onChange={v => onUpdate({ revealByKnownStatus: v })} label="Reveal if all words known" />
+      </>}
+      <Toggle value={settings.removeBracketedSubtitles} onChange={v => onUpdate({ removeBracketedSubtitles: v })} label="Strip [bracketed] subtitles" description="Remove sound effects like [music]" />
+
+      <SectionTitle>Auto-Pause</SectionTitle>
+      <Select
+        label="Auto-pause mode"
+        value={settings.autoPauseMode}
+        onChange={v => onUpdate({ autoPauseMode: v as UserSettings['autoPauseMode'] })}
+        options={[
+          { value: 'off', label: 'Off' },
+          { value: 'before', label: 'Before subtitle' },
+          { value: 'after', label: 'After subtitle' },
+          { value: 'before-and-after', label: 'Before & after' },
+          { value: 'rewind-and-pause', label: 'Rewind & pause' },
+        ]}
+      />
+      {(settings.autoPauseMode === 'after' || settings.autoPauseMode === 'before-and-after') && (
+        <SliderRow label="End tolerance" value={settings.autoPauseDelayToleranceMs} min={0} max={2000} step={50} unit="ms" onChange={v => onUpdate({ autoPauseDelayToleranceMs: v })} />
+      )}
+
+      <SectionTitle>Scene Skipping</SectionTitle>
+      <Select
+        label="Silent gaps"
+        value={settings.sceneSkipMode}
+        onChange={v => onUpdate({ sceneSkipMode: v as UserSettings['sceneSkipMode'] })}
+        options={[
+          { value: 'off', label: 'Off' },
+          { value: '2x', label: '2× speed' },
+          { value: '4x', label: '4× speed' },
+          { value: '6x', label: '6× speed' },
+          { value: '8x', label: '8× speed' },
+          { value: 'jump', label: 'Jump to next subtitle' },
+        ]}
+      />
+
+      <SectionTitle>Word Interaction</SectionTitle>
+      <Toggle value={settings.pauseOnWordInteraction} onChange={v => onUpdate({ pauseOnWordInteraction: v })} label="Pause on word click" />
+      <Toggle value={settings.resumeAfterInteraction} onChange={v => onUpdate({ resumeAfterInteraction: v })} label="Resume after closing popup" />
+      {settings.resumeAfterInteraction && (
+        <SliderRow label="Resume delay" value={settings.resumeDelayMs} min={0} max={3000} step={100} unit="ms" onChange={v => onUpdate({ resumeDelayMs: v })} />
+      )}
+      <SliderRow label="Click delay" value={settings.interactionDelayMs} min={0} max={3000} step={100} unit="ms" onChange={v => onUpdate({ interactionDelayMs: v })} />
+    </div>
+  );
+}
+
+type TabId = 'general' | 'words' | 'flashcards' | 'video';
 
 const TABS: Array<{ id: TabId; label: string }> = [
   { id: 'general', label: 'General' },
   { id: 'words', label: 'Word Browser' },
   { id: 'flashcards', label: 'Flashcards' },
+  { id: 'video', label: 'Video' },
 ];
 
 export function OptionsApp() {
@@ -752,6 +844,7 @@ export function OptionsApp() {
           {activeTab === 'general' && <GeneralTab settings={settings} onUpdate={handleUpdate} />}
           {activeTab === 'words' && <WordBrowserTab settings={settings} />}
           {activeTab === 'flashcards' && <FlashcardsTab settings={settings} />}
+          {activeTab === 'video' && <VideoTab settings={settings} onUpdate={handleUpdate} />}
         </div>
       </div>
     </>

@@ -384,9 +384,14 @@ chrome.runtime.onMessage.addListener((msg) => {
     const patch = msg.payload as Partial<UserSettings>;
     if (currentSettings) currentSettings = { ...currentSettings, ...patch };
 
+    // Notify video components (VideoOverlay, VideoSidebarPanel) so they update
+    // their local settings without needing a full re-mount.
+    window.dispatchEvent(new CustomEvent('syntagma:settings-updated', { detail: patch }));
+
     if (patch.enabled === false) {
       removeOverlays();
       unmountHeaderBar();
+      destroyVideoMode();
       isParsed = false;
       currentTokens = [];
     }
