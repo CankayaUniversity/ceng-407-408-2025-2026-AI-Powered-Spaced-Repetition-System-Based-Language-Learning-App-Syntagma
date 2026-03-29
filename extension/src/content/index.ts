@@ -428,6 +428,15 @@ function isVideoPageUrl(url: string): boolean {
   return url.includes('youtube.com/watch') || url.includes('netflix.com/watch');
 }
 
+function getVideoIdentity(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (url.includes('youtube.com/watch')) return parsed.searchParams.get('v') ?? url;
+    if (url.includes('netflix.com/watch')) return parsed.pathname;
+  } catch { /* fall through */ }
+  return url;
+}
+
 function reinitVideoMode() {
   if (!currentSettings) return;
   destroyVideoMode();
@@ -446,20 +455,69 @@ let lastHref = window.location.href;
 const origPushState = history.pushState.bind(history);
 const origReplaceState = history.replaceState.bind(history);
 
+// Tracks the last video identity that was actually reinitialized, used to
+// deduplicate between pushState interception and yt-navigate-finish.
+let lastReinitIdentity = isVideoPageUrl(window.location.href)
+  ? getVideoIdentity(window.location.href)
+  : '';
+
+function handleVideoNavigation(href: string, prevHref: string) {
+  const hrefIsVideo = isVideoPageUrl(href);
+  const prevIsVideo = isVideoPageUrl(prevHref);
+
+  if (hrefIsVideo && !prevIsVideo) {
+    // Non-video → video
+    const id = getVideoIdentity(href);
+    lastReinitIdentity = id;
+    reinitVideoMode();
+  } else if (!hrefIsVideo && prevIsVideo) {
+    // Video → non-video
+    lastReinitIdentity = '';
+    destroyVideoMode();
+  } else if (hrefIsVideo && prevIsVideo) {
+    // Video → different video
+    const id = getVideoIdentity(href);
+    if (id !== lastReinitIdentity) {
+      lastReinitIdentity = id;
+      destroyVideoMode();
+      reinitVideoMode();
+    }
+  }
+}
+
 function onUrlChange() {
   const href = window.location.href;
   if (href === lastHref) return;
   const prevHref = lastHref;
   lastHref = href;
-  // Only reinit when entering a video page from a non-video page.
-  // Ignores Netflix's frequent replaceState calls that only change query params
-  // while playback is already running (tctx, trackId, etc.).
-  if (isVideoPageUrl(href) && !isVideoPageUrl(prevHref)) {
-    reinitVideoMode();
-  } else if (!isVideoPageUrl(href) && isVideoPageUrl(prevHref)) {
-    destroyVideoMode();
+
+  // For YouTube, pushState interception is unreliable: YouTube's router often
+  // caches the original pushState reference before our content script runs,
+  // bypassing our wrapper. yt-navigate-finish (below) handles YouTube instead.
+  if (href.includes('youtube.com')) {
+    // Still update lastHref but skip reinit — yt-navigate-finish will fire.
+    // Only handle the "leaving YouTube entirely" case here.
+    if (!isVideoPageUrl(href) && isVideoPageUrl(prevHref)) {
+      lastReinitIdentity = '';
+      destroyVideoMode();
+    }
+    return;
   }
+
+  handleVideoNavigation(href, prevHref);
 }
+
+// YouTube fires yt-navigate-finish on document after its SPA navigation fully
+// completes, including updating ytInitialPlayerResponse. This is the reliable
+// trigger for YouTube video changes — unlike pushState which YouTube's router
+// may bypass by caching the original reference before our content script runs.
+document.addEventListener('yt-navigate-finish', () => {
+  const href = window.location.href;
+  if (!href.includes('youtube.com')) return;
+  const prevHref = lastHref;
+  lastHref = href;
+  handleVideoNavigation(href, prevHref);
+});
 
 history.pushState = (...args: Parameters<typeof history.pushState>) => {
   origPushState(...args);

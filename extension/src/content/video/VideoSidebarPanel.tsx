@@ -1,6 +1,107 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import type { SubtitleCue, LexemeEntry } from '../../shared/types';
+import { useState, useEffect, useRef, useCallback, memo, useMemo } from 'react';
+import type { SubtitleCue, LexemeEntry, UserSettings, WordStatus } from '../../shared/types';
 import { parseSubtitleFile } from './subtitle-parser';
+import { mountWordPopup, dismissWordPopup } from '../popup/WordPopup';
+
+// ─── Text tokeniser (mirrors SubtitleDisplay) ─────────────────────────────────
+
+interface TextToken { text: string; isWord: boolean; }
+
+function tokenize(text: string): TextToken[] {
+  return text
+    .split(/(\b[a-zA-Z']+\b)/)
+    .filter(p => p.length > 0)
+    .map(p => ({ text: p, isWord: /^[a-zA-Z']+$/.test(p) }));
+}
+
+// ─── Memoized cue row ─────────────────────────────────────────────────────────
+// Extracted so only the 2 rows that change active-state re-render on each cue
+// transition instead of the entire list (~500 rows × N words each).
+
+interface CueRowProps {
+  cue: SubtitleCue;
+  isActive: boolean;
+  lexemes: Record<string, LexemeEntry>;
+  onSeek: (cue: SubtitleCue) => void;
+  onWordClick: (lemma: string, surface: string, sentence: string, rect: DOMRect) => void;
+}
+
+const CueRow = memo(function CueRow({ cue, isActive, lexemes, onSeek, onWordClick }: CueRowProps) {
+  const rowRef = useRef<HTMLDivElement>(null);
+
+  // Scroll into view when this row becomes active.
+  useEffect(() => {
+    if (isActive) rowRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [isActive]);
+
+  // Tokenize once per cue text, not on every render.
+  const tokens = useMemo(() => tokenize(cue.text), [cue.text]);
+
+  const words = useMemo(() => cue.text.match(/\b[a-zA-Z]+\b/g) ?? [], [cue.text]);
+  const hasUnknown = words.some(w => { const s = lexemes[w.toLowerCase()]?.status; return !s || s === 'unknown'; });
+  const hasLearning = !hasUnknown && words.some(w => lexemes[w.toLowerCase()]?.status === 'learning');
+
+  const leftBorder = isActive
+    ? `3px solid rgba(160,120,85,1)`
+    : hasUnknown
+      ? `3px solid rgba(217,119,98,0.4)`
+      : hasLearning
+        ? `3px solid rgba(160,120,85,0.35)`
+        : '3px solid transparent';
+
+  return (
+    <div
+      ref={rowRef}
+      onClick={() => onSeek(cue)}
+      style={{
+        display: 'flex', gap: '8px', alignItems: 'flex-start',
+        padding: '6px 8px 6px 6px', borderRadius: '6px', cursor: 'pointer',
+        background: isActive ? 'rgba(160,120,85,0.10)' : 'transparent',
+        borderLeft: leftBorder, transition: 'background 0.12s', marginBottom: '1px',
+      }}
+    >
+      <span style={{
+        fontSize: '10px',
+        color: isActive ? 'rgba(160,120,85,1)' : 'rgba(152,193,217,1)',
+        minWidth: '36px', paddingTop: '2px', fontVariantNumeric: 'tabular-nums',
+        flexShrink: 0, fontWeight: isActive ? 700 : 500,
+        textDecoration: 'underline',
+        textDecorationColor: isActive ? 'rgba(160,120,85,1)' : 'rgba(152,193,217,0.4)',
+        textUnderlineOffset: '2px',
+      }}>
+        {formatTime(cue.startMs)}
+      </span>
+
+      <span style={{
+        fontSize: '12px', lineHeight: 1.5,
+        color: isActive ? '#4A3B2C' : '#6A5545',
+        wordBreak: 'break-word', fontWeight: isActive ? 500 : 400,
+      }}>
+        {tokens.map((tok, ti) => {
+          if (!tok.isWord) return <span key={ti}>{tok.text}</span>;
+          const lemma = tok.text.toLowerCase();
+          const status = lexemes[lemma]?.status ?? 'unknown';
+          const underlineColor =
+            status === 'unknown'  ? 'rgba(217,119,98,0.55)' :
+            status === 'learning' ? 'rgba(160,120,85,0.55)' :
+            'transparent';
+          return (
+            <span
+              key={ti}
+              onClick={e => {
+                e.stopPropagation();
+                onWordClick(lemma, tok.text, cue.text, (e.currentTarget as HTMLElement).getBoundingClientRect());
+              }}
+              style={{ cursor: 'pointer', borderBottom: `1.5px solid ${underlineColor}`, paddingBottom: '1px' }}
+            >
+              {tok.text}
+            </span>
+          );
+        })}
+      </span>
+    </div>
+  );
+});
 
 // ─── Constants (shared with layout injection) ─────────────────────────────────
 
@@ -93,16 +194,31 @@ interface VideoSidebarPanelProps {
   video: HTMLVideoElement;
   cues: SubtitleCue[];
   lexemes: Record<string, LexemeEntry>;
+  settings: UserSettings;
+  onStatusChange: (lemma: string, status: WordStatus) => void;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function VideoSidebarPanel({ video, cues, lexemes }: VideoSidebarPanelProps) {
+export function VideoSidebarPanel({ video, cues, lexemes, settings, onStatusChange }: VideoSidebarPanelProps) {
   const [visible, setVisible] = useState(true);
   const [currentCue, setCurrentCue] = useState<SubtitleCue | null>(null);
   const [showImport, setShowImport] = useState(false);
+  const [localLexemes, setLocalLexemes] = useState(lexemes);
   const listRef = useRef<HTMLDivElement>(null);
-  const activeRef = useRef<HTMLDivElement>(null);
+
+  // Keep local lexemes in sync with prop (e.g. overlay status changes)
+  useEffect(() => { setLocalLexemes(lexemes); }, [lexemes]);
+
+  // Mirror the auto-detected subtitle offset broadcast by VideoOverlay.
+  const [detectedOffsetMs, setDetectedOffsetMs] = useState(0);
+  useEffect(() => {
+    const handler = (e: Event) => {
+      setDetectedOffsetMs((e as CustomEvent<{ offsetMs: number }>).detail.offsetMs);
+    };
+    window.addEventListener('syntagma:subtitle-offset', handler);
+    return () => window.removeEventListener('syntagma:subtitle-offset', handler);
+  }, []);
 
   // Broadcast visibility so topbar button and layout injection can react
   useEffect(() => {
@@ -117,31 +233,59 @@ export function VideoSidebarPanel({ video, cues, lexemes }: VideoSidebarPanelPro
     return () => window.removeEventListener('syntagma:toggle-sidebar', handler);
   }, []);
 
-  // Track current cue
+  // Track current cue driven by VideoOverlay's active-cue events.
+  // The overlay already applies subtitle offset + live-caption text fallback,
+  // so the sidebar is always in sync with what's actually shown on screen.
   useEffect(() => {
-    if (cues.length === 0) return;
-    const onTimeUpdate = () => {
-      const ms = video.currentTime * 1000;
-      let found: SubtitleCue | null = null;
-      for (const cue of cues) {
-        if (ms >= cue.startMs && ms < cue.endMs) { found = cue; break; }
+    const handler = (e: Event) => {
+      const { index } = (e as CustomEvent<{ index: number }>).detail;
+      if (index < 0) {
+        setCurrentCue(null);
+        return;
       }
-      setCurrentCue(found);
+      // cues array is indexed by position; prefer direct array access, fall back to find
+      const cue = cues[index] ?? cues.find(c => c.index === index) ?? null;
+      setCurrentCue(prev => (prev?.index === index ? prev : cue));
     };
-    video.addEventListener('timeupdate', onTimeUpdate);
-    return () => video.removeEventListener('timeupdate', onTimeUpdate);
-  }, [video, cues]);
+    window.addEventListener('syntagma:active-cue', handler);
+    return () => window.removeEventListener('syntagma:active-cue', handler);
+  }, [cues]);
 
-  // Auto-scroll to active cue
-  useEffect(() => {
-    activeRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  }, [currentCue]);
 
-  // Seek on cue click
-  const handleSeek = useCallback((ms: number) => {
-    video.currentTime = ms / 1000;
+  // Seek on cue row click — apply the same timing offset used by the overlay so
+  // clicking a cue lands at the actual speech start, not the window-open time.
+  // Also immediately update currentCue so the highlight reflects the click
+  // without waiting for the next timeupdate event from VideoOverlay.
+  const handleSeek = useCallback((cue: SubtitleCue) => {
+    const adjusted = cue.startMs + detectedOffsetMs + settings.targetSubtitleOffsetMs;
+    video.currentTime = adjusted / 1000;
     video.play().catch(() => {});
-  }, [video]);
+    setCurrentCue(cue);
+  }, [video, detectedOffsetMs, settings.targetSubtitleOffsetMs]);
+
+  // Word click — open popup (stops propagation so the row seek doesn't fire)
+  const handleWordClick = useCallback((
+    lemma: string, surface: string, sentence: string, rect: DOMRect,
+  ) => {
+    if (settings.pauseOnWordInteraction && !video.paused) video.pause();
+    const now = Date.now();
+    mountWordPopup({
+      lemma, surface, sentence, anchorRect: rect,
+      lexeme: localLexemes[lemma] ?? null,
+      settings,
+      onClose: () => { dismissWordPopup(); },
+      onStatusChange: (l, status) => {
+        setLocalLexemes(prev => ({
+          ...prev,
+          [l]: {
+            ...(prev[l] ?? { key: l, lemma: l, surface: l, type: 'word', seenCount: 1, lastSeenAt: now, createdAt: now }),
+            status,
+          },
+        }));
+        onStatusChange(l, status);
+      },
+    }, { zIndex: 2147483647 });
+  }, [localLexemes, settings, video, onStatusChange]);
 
   if (!visible) return null;
 
@@ -322,73 +466,16 @@ export function VideoSidebarPanel({ video, cues, lexemes }: VideoSidebarPanelPro
             ref={listRef}
             style={{ flex: 1, overflowY: 'auto', padding: '4px 6px' }}
           >
-            {cues.map(cue => {
-              const isActive = currentCue?.index === cue.index;
-
-              const words = cue.text.match(/\b[a-zA-Z]+\b/g) ?? [];
-              const hasUnknown = words.some(w => {
-                const s = lexemes[w.toLowerCase()]?.status;
-                return !s || s === 'unknown';
-              });
-              const hasLearning = !hasUnknown && words.some(w =>
-                lexemes[w.toLowerCase()]?.status === 'learning',
-              );
-
-              const leftBorder = isActive
-                ? `3px solid ${C.amber}`
-                : hasUnknown
-                  ? `3px solid rgba(217,119,98,0.4)`
-                  : hasLearning
-                    ? `3px solid rgba(160,120,85,0.35)`
-                    : '3px solid transparent';
-
-              return (
-                <div
-                  key={cue.index}
-                  ref={isActive ? activeRef : null}
-                  onClick={() => handleSeek(cue.startMs)}
-                  style={{
-                    display: 'flex',
-                    gap: '8px',
-                    alignItems: 'flex-start',
-                    padding: '6px 8px 6px 6px',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    background: isActive ? 'rgba(160,120,85,0.10)' : 'transparent',
-                    borderLeft: leftBorder,
-                    transition: 'background 0.12s',
-                    marginBottom: '1px',
-                  }}
-                >
-                  {/* Timestamp badge */}
-                  <span style={{
-                    fontSize: '10px',
-                    color: isActive ? C.amber : C.blue,
-                    minWidth: '36px',
-                    paddingTop: '2px',
-                    fontVariantNumeric: 'tabular-nums',
-                    flexShrink: 0,
-                    fontWeight: isActive ? 700 : 500,
-                    textDecoration: 'underline',
-                    textDecorationColor: isActive ? C.amber : 'rgba(152,193,217,0.4)',
-                    textUnderlineOffset: '2px',
-                  }}>
-                    {formatTime(cue.startMs)}
-                  </span>
-
-                  {/* Subtitle text */}
-                  <span style={{
-                    fontSize: '12px',
-                    lineHeight: 1.5,
-                    color: isActive ? C.text : '#6A5545',
-                    wordBreak: 'break-word',
-                    fontWeight: isActive ? 500 : 400,
-                  }}>
-                    {cue.text}
-                  </span>
-                </div>
-              );
-            })}
+            {cues.map(cue => (
+              <CueRow
+                key={cue.index}
+                cue={cue}
+                isActive={currentCue?.index === cue.index}
+                lexemes={localLexemes}
+                onSeek={handleSeek}
+                onWordClick={handleWordClick}
+              />
+            ))}
           </div>
         )}
       </div>

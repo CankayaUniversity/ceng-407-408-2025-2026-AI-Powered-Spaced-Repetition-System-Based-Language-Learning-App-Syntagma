@@ -15,10 +15,23 @@ function getVideoId(): string | null {
   return new URLSearchParams(window.location.search).get('v');
 }
 
+// ─── Shared post-processing ───────────────────────────────────────────────────
+
+// When cues overlap (cue[i].endMs > cue[i+1].startMs), findCueAt returns the
+// earlier cue until its endMs — causing the active highlight to switch late.
+// Truncate each cue's endMs to the next cue's startMs to ensure clean transitions.
+function trimOverlaps(cues: SubtitleCue[]): void {
+  for (let i = 0; i < cues.length - 1; i++) {
+    if (cues[i].endMs > cues[i + 1].startMs) {
+      cues[i].endMs = cues[i + 1].startMs;
+    }
+  }
+}
+
 // ─── Multi-source ytInitialPlayerResponse reader ─────────────────────────────
 
 function mapSegmentsToSubtitleCues(segments: YoutubeSubtitleSegment[]): SubtitleCue[] {
-  return segments
+  const cues = segments
     .map((segment, index) => {
       const startMs = Math.max(0, segment.startMs);
       const durationMs = Math.max(0, segment.durationMs || 0);
@@ -36,6 +49,8 @@ function mapSegmentsToSubtitleCues(segments: YoutubeSubtitleSegment[]): Subtitle
       } as SubtitleCue;
     })
     .filter((cue): cue is SubtitleCue => cue !== null);
+  trimOverlaps(cues);
+  return cues;
 }
 
 // ─── YouTube JSON3 subtitle format parser ────────────────────────────────────
@@ -48,29 +63,52 @@ interface Json3Event {
 }
 
 function parseJson3(text: string): SubtitleCue[] {
+  // YouTube ASR JSON3 uses a rolling-window format: each event appends one word
+  // to the current caption line, and a bare "\n" event marks a line boundary.
+  // We must group events into lines; otherwise each word becomes its own cue.
   try {
     const data = JSON.parse(text) as { events?: Json3Event[] };
     if (!data.events) return [];
 
     const cues: SubtitleCue[] = [];
+    let lineStart = -1;
+    let lineEnd   = -1;
+    let lineText  = '';
+
+    const flush = () => {
+      const clean = lineText.replace(/\s+/g, ' ').trim();
+      if (clean && lineStart >= 0) {
+        cues.push({
+          index: cues.length,
+          startMs: lineStart,
+          endMs: Math.max(lineStart + 500, lineEnd),
+          text: clean,
+          rawText: clean,
+          bookmarked: false,
+          selected: false,
+        });
+      }
+      lineStart = -1;
+      lineEnd   = -1;
+      lineText  = '';
+    };
+
     for (const ev of data.events) {
       if (!ev.segs) continue;
-      const text = ev.segs
-        .map(s => s.utf8 ?? '')
-        .join('')
-        .replace(/\n/g, ' ')
-        .trim();
-      if (!text || text === '\n') continue;
-      cues.push({
-        index: cues.length,
-        startMs: ev.tStartMs,
-        endMs: ev.tStartMs + (ev.dDurationMs ?? 3000),
-        text,
-        rawText: text,
-        bookmarked: false,
-        selected: false,
-      });
+      const seg = ev.segs.map(s => s.utf8 ?? '').join('');
+
+      // Bare newline = sentence boundary
+      if (seg === '\n') { flush(); continue; }
+
+      const piece = seg.replace(/\n/g, ' ');
+      if (!piece.trim()) continue;
+
+      if (lineStart < 0) lineStart = ev.tStartMs;
+      lineText += piece;
+      lineEnd = ev.tStartMs + (ev.dDurationMs ?? 3000);
     }
+    flush(); // emit last line
+    trimOverlaps(cues);
     return cues;
   } catch {
     return [];
@@ -188,9 +226,9 @@ async function captureViaTextTracks(video: HTMLVideoElement, lang: string, waitM
  * Tries every available method in priority order to fetch the complete
  * subtitle transcript for the current YouTube video.
  *
- * Method 1 – ytInitialPlayerResponse signed URL (fastest; retried up to 15 s
- *            to handle race conditions with page load).
- * Method 2 – Direct timedtext API (no auth, covers ASR auto-captions too).
+ * Method 1 – Direct timedtext API (no auth; timestamps match the web player).
+ * Method 2 – ytInitialPlayerResponse / InnerTube (retried up to remaining
+ *            wait time to handle race conditions with page load).
  * Method 3 – video.textTracks (works when user has CC already enabled).
  */
 export async function captureYouTubeSubtitles(
@@ -202,7 +240,17 @@ export async function captureYouTubeSubtitles(
     getVideoId();
   const deadline = Date.now() + maxWaitMs;
 
-  // ── Method 1: robust extractor (InnerTube + in-page payload fallback) ────
+  // ── Method 1: Direct timedtext API (accurate web-player timestamps) ──────
+  // Tried first because its timestamps are aligned with the web player,
+  // avoiding the ~2–3 s offset sometimes present in InnerTube Android data.
+  if (videoId) {
+    try {
+      const cues = await fetchViaTimedtextApi(videoId, lang);
+      if (cues.length > 0) return cues;
+    } catch { /* fall through to InnerTube */ }
+  }
+
+  // ── Method 2: InnerTube extractor (retried for early page-load races) ────
   while (Date.now() < deadline) {
     try {
       const result = await extractYoutubeSubtitles({
@@ -219,12 +267,6 @@ export async function captureYouTubeSubtitles(
       // Retry until timeout for early page-load race conditions.
     }
     await sleep(600);
-  }
-
-  // ── Method 2: Direct timedtext API (works without signed URLs) ───────────
-  if (videoId) {
-    const cues = await fetchViaTimedtextApi(videoId, lang);
-    if (cues.length > 0) return cues;
   }
 
   // ── Method 3: video.textTracks (user has CC enabled already) ────────────

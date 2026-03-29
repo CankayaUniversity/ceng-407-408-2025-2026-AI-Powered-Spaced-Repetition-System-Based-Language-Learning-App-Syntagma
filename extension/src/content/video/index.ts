@@ -83,7 +83,7 @@ window.addEventListener('syntagma:sidebar-hidden',  removeYouTubeLayout);
 function renderSidebar(
   video: HTMLVideoElement,
   cues: SubtitleCue[],
-  lexemes: Record<string, LexemeEntry>,
+  params: VideoModeParams,
 ): void {
   if (!sidebarHost) {
     sidebarHost = document.createElement('div');
@@ -93,7 +93,13 @@ function renderSidebar(
   }
   if (!sidebarRoot) sidebarRoot = createRoot(sidebarHost);
   sidebarRoot.render(
-    createElement(VideoSidebarPanel, { video, cues, lexemes })
+    createElement(VideoSidebarPanel, {
+      video,
+      cues,
+      lexemes: params.lexemes,
+      settings: params.settings,
+      onStatusChange: params.onStatusChange,
+    })
   );
 }
 
@@ -164,7 +170,7 @@ export async function initVideoMode(params: VideoModeParams): Promise<void> {
 
   // ── Mount sidebar immediately so the toggle button works right away ─────
   // Sidebar shows an empty/loading state until cues arrive from VideoOverlay.
-  renderSidebar(video, [], params.lexemes);
+  renderSidebar(video, [], params);
 
   // ── Mount React overlay ───────────────────────────────────────────────────
   videoRoot = createRoot(renderTarget);
@@ -177,7 +183,7 @@ export async function initVideoMode(params: VideoModeParams): Promise<void> {
       onStatusChange: params.onStatusChange,
       onSettingsChange: params.onSettingsChange,
       onCuesChange: (cues: SubtitleCue[]) => {
-        renderSidebar(video, cues, params.lexemes);
+        renderSidebar(video, cues, params);
       },
     })
   );

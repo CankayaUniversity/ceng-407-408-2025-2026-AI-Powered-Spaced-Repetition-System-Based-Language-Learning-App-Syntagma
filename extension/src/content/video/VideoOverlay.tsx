@@ -24,20 +24,31 @@ function formatTime(ms: number): string {
 
 // ─── Cue lookup helpers ───────────────────────────────────────────────────────
 
+// Binary search for the last cue whose startMs <= t, then verify t < endMs.
+// O(log n) instead of O(n) — called on every timeupdate (~15×/s).
 function findCueAt(cues: SubtitleCue[], ms: number, offsetMs: number): SubtitleCue | null {
   const t = ms - offsetMs;
-  for (const cue of cues) {
-    if (t >= cue.startMs && t < cue.endMs) return cue;
+  let lo = 0, hi = cues.length - 1, idx = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >>> 1;
+    if (cues[mid].startMs <= t) { idx = mid; lo = mid + 1; }
+    else hi = mid - 1;
   }
-  return null;
+  if (idx < 0) return null;
+  const cue = cues[idx];
+  return t < cue.endMs ? cue : null;
 }
 
+// Binary search for the first cue whose startMs > t.
 function findNextCue(cues: SubtitleCue[], ms: number, offsetMs: number): SubtitleCue | null {
   const t = ms - offsetMs;
-  for (const cue of cues) {
-    if (cue.startMs > t) return cue;
+  let lo = 0, hi = cues.length - 1, idx = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >>> 1;
+    if (cues[mid].startMs > t) { idx = mid; hi = mid - 1; }
+    else lo = mid + 1;
   }
-  return null;
+  return idx < 0 ? null : cues[idx];
 }
 
 function isInAnyCue(cues: SubtitleCue[], ms: number, offsetMs: number): boolean {
@@ -90,6 +101,7 @@ export function VideoOverlay({
   const [liveCue, setLiveCue] = useState<SubtitleCue | null>(null);
   const [isPaused, setIsPaused] = useState(video.paused);
   const [showSettings, setShowSettings] = useState(false);
+  const [showSubtitles, setShowSubtitles] = useState(true);
   const [captureStatus, setCaptureStatus] = useState<'idle' | 'loading' | 'ok' | 'failed'>('idle');
 
   const autoPauseRef = useRef({
@@ -101,9 +113,65 @@ export function VideoOverlay({
   const sceneSpeedRef = useRef(false);
   const resumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const interactionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Auto-detected timing offset (YouTube captions open their window before speech).
+  const autoOffsetRef          = useRef(0);
+  const autoOffsetDetectedRef  = useRef(false);
 
   useEffect(() => setSettings(externalSettings), [externalSettings]);
   useEffect(() => setLexemes(externalLexemes), [externalLexemes]);
+
+  // Reset auto-offset whenever the cue set changes (new video / new track).
+  useEffect(() => {
+    autoOffsetDetectedRef.current = false;
+    autoOffsetRef.current = 0;
+    window.dispatchEvent(new CustomEvent('syntagma:subtitle-offset', { detail: { offsetMs: 0 } }));
+  }, [targetCues]);
+
+  // Auto-detect subtitle timing offset from live DOM captions.
+  // YouTube sets cue.startMs to when the caption window *opens*, which is
+  // typically 1–4 s before the first word of that sentence is spoken.
+  // When the DOM caption first appears we capture video.currentTime as the
+  // true speech-start, then compute offset = speechMs - cue.startMs.
+  useEffect(() => {
+    if (!liveCue || targetCues.length === 0) return;
+    if (autoOffsetDetectedRef.current) return;
+    if (settings.targetSubtitleOffsetMs !== 0) return; // user already configured
+
+    const normalizeWords = (s: string) =>
+      s.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim().split(/\s+/).filter(w => w.length > 2);
+
+    const needleWords = normalizeWords(liveCue.text);
+    if (needleWords.length < 2) return;
+
+    const currentMs = video.currentTime * 1000;
+    let bestCue: SubtitleCue | null = null;
+    let bestDist = Infinity;
+
+    for (const cue of targetCues) {
+      const hayWords = normalizeWords(cue.text);
+      const checkLen = Math.min(needleWords.length, hayWords.length, 4);
+      if (checkLen < 2) continue;
+      let matches = 0;
+      for (let i = 0; i < checkLen; i++) {
+        if (needleWords[i] === hayWords[i]) matches++;
+      }
+      if (matches < Math.ceil(checkLen * 0.75)) continue;
+      const dist = Math.abs(cue.startMs - currentMs);
+      if (dist < bestDist) { bestDist = dist; bestCue = cue; }
+    }
+
+    if (bestCue) {
+      const offset = currentMs - bestCue.startMs;
+      // Only accept a positive offset (our window opens before speech) within 8 s.
+      if (offset >= 300 && offset <= 8000) {
+        autoOffsetDetectedRef.current = true;
+        autoOffsetRef.current = Math.round(offset);
+        window.dispatchEvent(new CustomEvent('syntagma:subtitle-offset', {
+          detail: { offsetMs: autoOffsetRef.current },
+        }));
+      }
+    }
+  }, [liveCue, targetCues, video, settings.targetSubtitleOffsetMs]);
 
   // ── Platform subtitle init ─────────────────────────────────────────────────
   useEffect(() => {
@@ -324,18 +392,43 @@ export function VideoOverlay({
 
   // ── Core timeupdate loop ────────────────────────────────────────────────────
   useEffect(() => {
-    const tOffset = settings.targetSubtitleOffsetMs;
-    const sOffset = settings.secondarySubtitleOffsetMs;
-    const tolerance = settings.autoPauseDelayToleranceMs;
-    const ap = autoPauseRef.current;
+    // NOTE: tOffset is intentionally read *inside* onTimeUpdate so it picks up
+    // autoOffsetRef.current (a ref → always current, no stale closure).
+    const sOffset    = settings.secondarySubtitleOffsetMs;
+    const tolerance  = settings.autoPauseDelayToleranceMs;
+    const ap         = autoPauseRef.current;
+
+    // Track last dispatched indices to avoid redundant state updates / events.
+    let lastTargetIdx    = -2;
+    let lastSecondaryIdx = -2;
 
     const onTimeUpdate = () => {
-      const ms = video.currentTime * 1000;
+      const ms      = video.currentTime * 1000;
+      // Read auto-detected offset live from ref so we never need this effect to
+      // re-subscribe just because the offset was just discovered.
+      const tOffset = settings.targetSubtitleOffsetMs + autoOffsetRef.current;
 
-      const newTarget = findCueAt(targetCues, ms, tOffset);
+      const newTarget    = findCueAt(targetCues, ms, tOffset);
       const newSecondary = findCueAt(secondaryCues, ms, sOffset);
-      setCurrentTarget(newTarget);
-      setCurrentSecondary(newSecondary);
+
+      const newTargetIdx    = newTarget?.index    ?? -1;
+      const newSecondaryIdx = newSecondary?.index ?? -1;
+
+      // Only update React state / dispatch DOM events when the cue actually changes.
+      // This avoids 4 re-renders per second while nothing is moving between cues.
+      if (newTargetIdx !== lastTargetIdx) {
+        lastTargetIdx = newTargetIdx;
+        setCurrentTarget(newTarget);
+        // Notify sidebar of the overlay's active cue so it stays in sync even when
+        // InnerTube subtitle timestamps are offset from video.currentTime.
+        window.dispatchEvent(new CustomEvent('syntagma:active-cue', {
+          detail: { index: newTargetIdx },
+        }));
+      }
+      if (newSecondaryIdx !== lastSecondaryIdx) {
+        lastSecondaryIdx = newSecondaryIdx;
+        setCurrentSecondary(newSecondary);
+      }
 
       // ── Scene skip ──────────────────────────────────────────────────────
       if (settings.sceneSkipMode !== 'off' && targetCues.length > 0) {
@@ -343,11 +436,16 @@ export function VideoOverlay({
         if (!inCue) {
           const nextCue = findNextCue(targetCues, ms, tOffset);
           const adjustedMs = ms - tOffset;
+          // Binary search: last cue whose endMs <= adjustedMs.
+          // After trimOverlaps, endMs values are also sorted, so this is safe.
           const prevEndMs = (() => {
-            for (let i = targetCues.length - 1; i >= 0; i--) {
-              if (targetCues[i].endMs <= adjustedMs) return targetCues[i].endMs;
+            let lo = 0, hi = targetCues.length - 1, result = 0;
+            while (lo <= hi) {
+              const mid = (lo + hi) >>> 1;
+              if (targetCues[mid].endMs <= adjustedMs) { result = targetCues[mid].endMs; lo = mid + 1; }
+              else hi = mid - 1;
             }
-            return 0;
+            return result;
           })();
           const gapMs = (nextCue ? nextCue.startMs : Infinity) - prevEndMs;
           if (gapMs > 3000) {
@@ -398,6 +496,38 @@ export function VideoOverlay({
     return () => video.removeEventListener('timeupdate', onTimeUpdate);
   }, [video, settings, targetCues, secondaryCues]);
 
+  // ── Live-caption fallback for sidebar sync ────────────────────────────────
+  // When timestamp-based lookup misses (e.g. InnerTube timing offset) but native
+  // captions are visible, match by text so the sidebar stays in sync.
+  useEffect(() => {
+    if (!liveCue || currentTarget !== null || targetCues.length === 0) return;
+
+    const normalize = (s: string) =>
+      s.toLowerCase().replace(/[^\w\s]/g, '').trim();
+    const needle = normalize(liveCue.text).slice(0, 25);
+    if (!needle) return;
+
+    const ms = video.currentTime * 1000;
+    const WINDOW = 8000;
+    let best: SubtitleCue | null = null;
+    let bestDist = Infinity;
+
+    for (const cue of targetCues) {
+      const dist = Math.abs(cue.startMs - ms);
+      if (dist > WINDOW) continue;
+      const hay = normalize(cue.text);
+      if (hay.startsWith(needle) || needle.startsWith(hay.slice(0, needle.length))) {
+        if (dist < bestDist) { bestDist = dist; best = cue; }
+      }
+    }
+
+    if (best) {
+      window.dispatchEvent(new CustomEvent('syntagma:active-cue', {
+        detail: { index: best.index },
+      }));
+    }
+  }, [liveCue, currentTarget, targetCues, video]);
+
   // ── Render ──────────────────────────────────────────────────────────────────
 
   const displayTarget  = currentTarget ?? liveCue;
@@ -430,18 +560,70 @@ export function VideoOverlay({
         </div>
       )}
 
-      {/* ── Migaku-style subtitle bar ────────────────────────────────────── */}
+      {/* ── Subtitle display — floats above YouTube's native subtitle area ── */}
+      {hasAnySub && showSubtitles && (
+        <div style={{
+          position: 'absolute',
+          bottom: '12%',
+          left: 0,
+          right: 0,
+          pointerEvents: 'auto',
+          zIndex: 10000,
+          userSelect: 'none',
+          padding: '6px 5% 8px',
+          background: `rgba(0,0,0,${settings.subtitleOverlayOpacity})`,
+          textAlign: 'center',
+        }}>
+          {hasTargetTrack && (displayTarget ? (
+            <div style={{ fontSize: `${settings.targetSubtitleSize}%` }}>
+              <SubtitleDisplay
+                cue={displayTarget}
+                language="en"
+                obscureMode={settings.targetSubtitleObscure}
+                revealOnPause={settings.revealOnPause}
+                revealOnHover={settings.revealOnHover}
+                revealByKnownStatus={settings.revealByKnownStatus}
+                isPaused={isPaused}
+                lexemes={lexemes}
+                settings={settings}
+                fontSize={settings.targetSubtitleSize}
+                onWordClick={handleWordClick}
+              />
+            </div>
+          ) : (
+            <div style={{ height: `${Math.max(settings.targetSubtitleSize * 0.28, 28)}px`, opacity: 0 }} />
+          ))}
+
+          {hasSecondaryTrack && currentSecondary && (
+            <div style={{ fontSize: `${settings.secondarySubtitleSize}%`, marginTop: '2px' }}>
+              <SubtitleDisplay
+                cue={currentSecondary}
+                language="tr"
+                obscureMode={settings.secondarySubtitleObscure}
+                revealOnPause={settings.revealOnPause}
+                revealOnHover={settings.revealOnHover}
+                revealByKnownStatus={false}
+                isPaused={isPaused}
+                lexemes={lexemes}
+                settings={settings}
+                fontSize={settings.secondarySubtitleSize}
+                onWordClick={handleWordClick}
+              />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Controls strip — always visible at the very bottom ───────────── */}
       <div style={{
         position: 'absolute',
         bottom: 0,
         left: 0,
         right: 0,
         pointerEvents: 'auto',
-        zIndex: 10000,
+        zIndex: 10001,
         userSelect: 'none',
       }}>
-
-        {/* Controls strip — always visible so user can access settings */}
         <div style={{
           display: 'flex',
           alignItems: 'center',
@@ -516,6 +698,27 @@ export function VideoOverlay({
               </span>
             )}
 
+            {/* CC toggle */}
+            <button
+              onClick={() => setShowSubtitles(v => !v)}
+              title={showSubtitles ? 'Hide subtitles' : 'Show subtitles'}
+              style={{
+                background: showSubtitles ? 'rgba(168,182,147,0.25)' : 'rgba(255,255,255,0.08)',
+                border: `1px solid ${showSubtitles ? 'rgba(168,182,147,0.6)' : 'rgba(255,255,255,0.15)'}`,
+                borderRadius: '4px',
+                color: showSubtitles ? '#A8B693' : 'rgba(255,255,255,0.35)',
+                padding: '2px 7px',
+                cursor: 'pointer',
+                fontSize: '10px',
+                fontWeight: 700,
+                letterSpacing: '0.4px',
+                lineHeight: 1.2,
+                transition: 'all 0.15s',
+              }}
+            >
+              CC
+            </button>
+
             {/* Settings toggle */}
             <button
               onClick={() => setShowSettings(v => !v)}
@@ -536,59 +739,6 @@ export function VideoOverlay({
             </button>
           </div>
         </div>
-
-        {/* Subtitle text area */}
-        {hasAnySub && (
-          <div style={{
-            background: `rgba(0,0,0,${settings.subtitleOverlayOpacity})`,
-            backdropFilter: 'blur(3px)',
-            padding: '6px 5% 10px',
-          }}>
-            {/* Target subtitle */}
-            {hasTargetTrack && (displayTarget ? (
-              <div style={{ fontSize: `${settings.targetSubtitleSize}%` }}>
-                <SubtitleDisplay
-                  cue={displayTarget}
-                  language="en"
-                  obscureMode={settings.targetSubtitleObscure}
-                  revealOnPause={settings.revealOnPause}
-                  revealOnHover={settings.revealOnHover}
-                  revealByKnownStatus={settings.revealByKnownStatus}
-                  isPaused={isPaused}
-                  lexemes={lexemes}
-                  settings={settings}
-                  fontSize={settings.targetSubtitleSize}
-                  onWordClick={handleWordClick}
-                />
-              </div>
-            ) : (
-              /* Placeholder bar so the panel height stays consistent */
-              <div style={{
-                height: `${Math.max(settings.targetSubtitleSize * 0.28, 28)}px`,
-                opacity: 0,
-              }} />
-            ))}
-
-            {/* Secondary subtitle */}
-            {hasSecondaryTrack && currentSecondary && (
-              <div style={{ fontSize: `${settings.secondarySubtitleSize}%`, marginTop: '2px' }}>
-                <SubtitleDisplay
-                  cue={currentSecondary}
-                  language="tr"
-                  obscureMode={settings.secondarySubtitleObscure}
-                  revealOnPause={settings.revealOnPause}
-                  revealOnHover={settings.revealOnHover}
-                  revealByKnownStatus={false}
-                  isPaused={isPaused}
-                  lexemes={lexemes}
-                  settings={settings}
-                  fontSize={settings.secondarySubtitleSize}
-                  onWordClick={handleWordClick}
-                />
-              </div>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );
