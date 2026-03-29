@@ -653,17 +653,7 @@ export function VideoOverlay({
               </>
             )}
             {captureStatus === 'failed' && !hasTargetTrack && (
-              <>
-                <span style={{ color: 'rgba(217,119,98,0.7)' }}>No subtitles found.</span>
-                <button
-                  onClick={() => window.dispatchEvent(new CustomEvent('syntagma:retry-subtitle-capture'))}
-                  style={{
-                    background: 'rgba(152,193,217,0.15)', border: '1px solid rgba(152,193,217,0.35)',
-                    borderRadius: '3px', color: '#98C1D9', fontSize: '10px', fontWeight: 600,
-                    padding: '1px 6px', cursor: 'pointer',
-                  }}
-                >↺ Retry</button>
-              </>
+              <span style={{ color: 'rgba(217,119,98,0.7)' }}>No subtitles found.</span>
             )}
             {(captureStatus === 'ok' || hasTargetTrack) && displayTarget && (
               `${formatTime(displayTarget.startMs)} → ${formatTime(displayTarget.endMs)}`
