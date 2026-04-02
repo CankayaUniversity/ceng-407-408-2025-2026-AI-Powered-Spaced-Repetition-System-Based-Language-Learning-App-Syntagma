@@ -46,4 +46,12 @@ public class JwtService {
             return null;
         }
     }
+
+    public String refreshToken(String token) {
+        Long userId = extractUserId(token);
+        if (userId != null) {
+            return generateToken(userId);
+        }
+        return null;
+    }
 }
