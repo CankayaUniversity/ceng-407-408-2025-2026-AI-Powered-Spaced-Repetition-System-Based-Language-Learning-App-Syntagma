@@ -8,6 +8,7 @@ import com.syntagma.backend.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -18,6 +19,7 @@ public class DataSeeder implements CommandLineRunner {
 
     private final UserRepository userRepository;
     private final FlashcardRepository flashcardRepository;
+    private final PasswordEncoder passwordEncoder;
 
     @Override
     public void run(String... args) throws Exception {
@@ -28,7 +30,7 @@ public class DataSeeder implements CommandLineRunner {
             // Create a Mock User (User ID will likely be 1)
             User testUser = new User();
             testUser.setEmail("test@syntagma.com");
-            testUser.setPasswordHash("password123"); // Dummy password
+            testUser.setPasswordHash(passwordEncoder.encode("password123"));
             testUser.setCreatedAt(LocalDateTime.now());
             testUser.setStreakCount(0);
             userRepository.save(testUser);

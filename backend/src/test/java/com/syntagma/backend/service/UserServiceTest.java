@@ -5,6 +5,7 @@ import com.syntagma.backend.dto.response.UserResponse;
 import com.syntagma.backend.entity.User;
 import com.syntagma.backend.exception.DuplicateResourceException;
 import com.syntagma.backend.repository.UserRepository;
+import com.syntagma.backend.security.JwtService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -16,12 +17,19 @@ import java.time.LocalDateTime;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
 @ExtendWith(MockitoExtension.class)
 class UserServiceTest {
 
     @Mock
     private UserRepository userRepository;
+
+    @Mock
+    private PasswordEncoder passwordEncoder;
+
+    @Mock
+    private JwtService jwtService;
 
     @InjectMocks
     private UserService userService;
@@ -37,6 +45,7 @@ class UserServiceTest {
         savedUser.setStreakCount(0);
 
         when(userRepository.existsByEmail("test@example.com")).thenReturn(false);
+        when(passwordEncoder.encode("password123")).thenReturn("hashedPassword");
         when(userRepository.save(any(User.class))).thenReturn(savedUser);
 
         // Act
