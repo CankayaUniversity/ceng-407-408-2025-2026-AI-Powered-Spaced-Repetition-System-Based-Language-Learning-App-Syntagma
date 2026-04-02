@@ -3,6 +3,7 @@ package com.syntagma.backend.controller;
 import com.syntagma.backend.dto.response.ApiResponse;
 import com.syntagma.backend.dto.response.DueCardsResponse;
 import com.syntagma.backend.dto.response.SrsStateResponse;
+import com.syntagma.backend.security.SecurityUtils;
 import com.syntagma.backend.service.SrsService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -16,16 +17,16 @@ public class SrsController {
 
     @GetMapping("/api/flashcards/{flashcardId}/srs")
     public ResponseEntity<ApiResponse<SrsStateResponse>> getSrsState(
-            @RequestHeader("X-User-Id") Long userId,
             @PathVariable Long flashcardId) {
+        Long userId = SecurityUtils.getAuthenticatedUserId();
         SrsStateResponse response = srsService.getSrsState(userId, flashcardId);
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 
     @GetMapping("/api/srs/due")
     public ResponseEntity<ApiResponse<DueCardsResponse>> getDueCards(
-            @RequestHeader("X-User-Id") Long userId,
             @RequestParam(defaultValue = "20") int limit) {
+        Long userId = SecurityUtils.getAuthenticatedUserId();
         DueCardsResponse response = srsService.getDueCards(userId, limit);
         return ResponseEntity.ok(ApiResponse.success(response));
     }

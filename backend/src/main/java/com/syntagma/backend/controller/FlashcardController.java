@@ -5,6 +5,7 @@ import com.syntagma.backend.dto.request.FlashcardUpdateRequest;
 import com.syntagma.backend.dto.response.ApiResponse;
 import com.syntagma.backend.dto.response.FlashcardResponse;
 import com.syntagma.backend.entity.enums.KnowledgeStatus;
+import com.syntagma.backend.security.SecurityUtils;
 import com.syntagma.backend.service.FlashcardService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -23,43 +24,43 @@ public class FlashcardController {
 
     @PostMapping
     public ResponseEntity<ApiResponse<FlashcardResponse>> create(
-            @RequestHeader("X-User-Id") Long userId,
             @RequestBody FlashcardCreateRequest request) {
+        Long userId = SecurityUtils.getAuthenticatedUserId();
         FlashcardResponse response = flashcardService.create(userId, request);
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(response));
     }
 
     @GetMapping
     public ResponseEntity<ApiResponse<Page<FlashcardResponse>>> getAll(
-            @RequestHeader("X-User-Id") Long userId,
             @RequestParam(required = false) KnowledgeStatus knowledgeStatus,
             @RequestParam(required = false) String search,
             @PageableDefault(size = 20, sort = "createdAt") Pageable pageable) {
+        Long userId = SecurityUtils.getAuthenticatedUserId();
         Page<FlashcardResponse> page = flashcardService.getAll(userId, knowledgeStatus, search, pageable);
         return ResponseEntity.ok(ApiResponse.success(page));
     }
 
     @GetMapping("/{flashcardId}")
     public ResponseEntity<ApiResponse<FlashcardResponse>> getById(
-            @RequestHeader("X-User-Id") Long userId,
             @PathVariable Long flashcardId) {
+        Long userId = SecurityUtils.getAuthenticatedUserId();
         FlashcardResponse response = flashcardService.getById(userId, flashcardId);
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 
     @PutMapping("/{flashcardId}")
     public ResponseEntity<ApiResponse<FlashcardResponse>> update(
-            @RequestHeader("X-User-Id") Long userId,
             @PathVariable Long flashcardId,
             @RequestBody FlashcardUpdateRequest request) {
+        Long userId = SecurityUtils.getAuthenticatedUserId();
         FlashcardResponse response = flashcardService.update(userId, flashcardId, request);
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 
     @DeleteMapping("/{flashcardId}")
     public ResponseEntity<Void> delete(
-            @RequestHeader("X-User-Id") Long userId,
             @PathVariable Long flashcardId) {
+        Long userId = SecurityUtils.getAuthenticatedUserId();
         flashcardService.delete(userId, flashcardId);
         return ResponseEntity.noContent().build();
     }
