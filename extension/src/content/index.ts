@@ -14,6 +14,12 @@ import {
 import { mountHeaderBar, updateHeaderBar, unmountHeaderBar } from './header-bar';
 import { mountWordPopup, dismissWordPopup } from './popup/WordPopup';
 import { initVideoMode, destroyVideoMode } from './video';
+import { injectNetflixInterceptor } from './video/subtitle-capture';
+
+// Inject interceptor immediately at document_start to catch initial network requests!
+if (window.location.hostname.includes('netflix.com')) {
+  injectNetflixInterceptor();
+}
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -141,8 +147,7 @@ async function init() {
     // ── Video mode ─────────────────────────────────────────────────────────
     const isVideoPage =
       window.location.href.includes('youtube.com/watch') ||
-      window.location.href.includes('netflix.com/watch') ||
-      document.querySelector('video') !== null;
+      window.location.href.includes('netflix.com/watch');
 
     if (isVideoPage) {
       initVideoMode({
@@ -163,7 +168,7 @@ async function init() {
 // ─── Parse ────────────────────────────────────────────────────────────────────
 
 export async function handleParse() {
-  if (isParsing || !currentSettings) return;
+  if (isParsing || !currentSettings || !currentSettings.enabled) return;
   isParsing = true;
   refreshHeader();
 
@@ -311,6 +316,7 @@ function handleOpenSettings() {
 // ─── Keyboard shortcuts ───────────────────────────────────────────────────────
 
 function handleKeyDown(e: KeyboardEvent) {
+  if (!currentSettings?.enabled) return;
   // Alt+A — toggle overlays (parse / remove)
   if (e.altKey && e.key === 'a') {
     e.preventDefault();
@@ -370,7 +376,7 @@ document.addEventListener('keyup', (e) => {
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === 'PARSE_PAGE') {
-    handleParse().catch(console.error);
+    if (currentSettings?.enabled) handleParse().catch(console.error);
     return;
   }
 
@@ -378,6 +384,14 @@ chrome.runtime.onMessage.addListener((msg) => {
     const { lemma, status } = msg.payload as { lemma: string; status: WordStatus };
     if (currentLexemes[lemma]) currentLexemes[lemma].status = status;
     if (isParsed) updateWordStatus(lemma, status);
+  }
+
+  if (msg.type === 'BULK_STATUS_CHANGED') {
+    const { lemmas, status } = msg.payload as { lemmas: string[]; status: WordStatus };
+    for (const lemma of lemmas) {
+      if (currentLexemes[lemma]) currentLexemes[lemma].status = status;
+      if (isParsed) updateWordStatus(lemma, status);
+    }
   }
 
   if (msg.type === 'SETTINGS_UPDATED') {
@@ -443,7 +457,7 @@ function getVideoIdentity(url: string): string {
 }
 
 function reinitVideoMode() {
-  if (!currentSettings) return;
+  if (!currentSettings || !currentSettings.enabled) return;
   destroyVideoMode();
   initVideoMode({
     settings: currentSettings,
@@ -535,7 +549,11 @@ history.replaceState = (...args: Parameters<typeof history.replaceState>) => {
 window.addEventListener('popstate', onUrlChange);
 
 if (window === window.top) {
-  init().catch(console.error);
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => init().catch(console.error));
+  } else {
+    init().catch(console.error);
+  }
 }
 
 export { handleParse as parsePage };

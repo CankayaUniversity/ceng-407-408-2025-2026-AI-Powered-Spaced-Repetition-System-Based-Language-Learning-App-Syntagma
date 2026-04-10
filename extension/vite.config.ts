@@ -38,6 +38,12 @@ function copyExtensionAssets() {
           }
         }
       }
+
+      // Copy dictionary.json → dist/dictionary.json (if present at extension root)
+      const dictSrc = join(root, "dictionary.json");
+      if (existsSync(dictSrc)) {
+        copyFileSync(dictSrc, join(dist, "dictionary.json"));
+      }
     },
   };
 }

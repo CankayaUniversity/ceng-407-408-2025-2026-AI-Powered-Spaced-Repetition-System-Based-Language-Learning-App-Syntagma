@@ -15,10 +15,12 @@ import { populateDictionary, lookupTranslation } from './dictionary-db';
 // Initialize the massive IndexedDB dictionary
 populateDictionary().catch(console.error);
 
-// Keep alive for MV3 service workers
-const keepAlive = () => setInterval(chrome.runtime.getPlatformInfo, 20e3);
-chrome.runtime.onStartup.addListener(keepAlive);
-keepAlive();
+// Keep the MV3 service worker alive via a periodic no-op.
+// The direct call covers every SW wakeup (module code re-runs each time).
+// The onStartup listener was redundant — module-level keepAlive() already
+// runs when the browser starts and wakes the SW, so it was creating a second
+// concurrent interval on every browser startup.
+setInterval(chrome.runtime.getPlatformInfo, 20e3);
 
 function _computeComprehension(entries: LexemeEntry[], totalTokenCount: number): number {
   const known = entries.filter(e => e.status === 'known').length;
@@ -105,15 +107,14 @@ onMessage(async (msg, sender) => {
         console.warn('[Syntagma] Bulk word knowledge sync error:', err);
       }
 
+      // Send one BULK_STATUS_CHANGED per tab instead of O(tabs × lemmas) messages.
       const tabs = await chrome.tabs.query({});
       for (const tab of tabs) {
         if (tab.id) {
-          for (const lemma of lemmas) {
-            chrome.tabs.sendMessage(tab.id, {
-              type: 'STATUS_CHANGED',
-              payload: { lemma, status },
-            }).catch(() => {});
-          }
+          chrome.tabs.sendMessage(tab.id, {
+            type: 'BULK_STATUS_CHANGED',
+            payload: { lemmas, status },
+          }).catch(() => {});
         }
       }
       return { ok: true };
@@ -355,10 +356,16 @@ onMessage(async (msg, sender) => {
 });
 
 // Context menu for "Look up in Syntagma"
-chrome.contextMenus.create({
-  id: 'syntagma-lookup',
-  title: 'Look up in Syntagma',
-  contexts: ['selection'],
+// Must be created inside onInstalled — not at module top level.
+// MV3 service workers restart on every event wakeup; calling
+// contextMenus.create at module scope causes "Cannot create item with
+// duplicate id syntagma-lookup" errors on every restart after the first.
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.contextMenus.create({
+    id: 'syntagma-lookup',
+    title: 'Look up in Syntagma',
+    contexts: ['selection'],
+  });
 });
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {

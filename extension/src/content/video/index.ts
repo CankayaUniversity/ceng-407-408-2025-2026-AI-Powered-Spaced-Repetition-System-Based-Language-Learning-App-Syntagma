@@ -61,35 +61,48 @@ window.addEventListener('syntagma:query-video-mode', () => {
 
 let layoutStyleEl: HTMLStyleElement | null = null;
 
-function injectYouTubeLayout(): void {
-  if (layoutStyleEl || !window.location.hostname.includes('youtube.com')) return;
+function injectPlatformLayout(): void {
+  if (layoutStyleEl) return;
+  const isYouTube = window.location.hostname.includes('youtube.com');
+  const isNetflix = window.location.hostname.includes('netflix.com');
+  
+  if (!isYouTube && !isNetflix) return;
+
   layoutStyleEl = document.createElement('style');
-  layoutStyleEl.id = 'syntagma-yt-sidebar-layout';
-  layoutStyleEl.textContent = [
-    /* Non-theater mode — constrain the primary column so sidebar sits next to it */
-    `ytd-watch-flexy:not([theater]):not([full-bleed-player]) #primary.ytd-watch-flexy {`,
-    `  max-width: calc(100% - ${SIDEBAR_WIDTH}px) !important;`,
-    `}`,
-    /* Theater mode — narrow the player container */
-    `ytd-watch-flexy[theater] #player-theater-container,`,
-    `ytd-watch-flexy[full-bleed-player] #player-theater-container {`,
-    `  padding-right: ${SIDEBAR_WIDTH}px !important;`,
-    `  box-sizing: border-box !important;`,
-    `}`,
-    /* Keep YouTube's own masthead from stretching under the sidebar */
-    `#masthead-container { padding-right: ${SIDEBAR_WIDTH}px !important; }`,
-  ].join('\n');
+  layoutStyleEl.id = 'syntagma-sidebar-layout';
+  
+  if (isYouTube) {
+    layoutStyleEl.textContent = [
+      /* Non-theater mode — constrain the primary column so sidebar sits next to it */
+      `ytd-watch-flexy:not([theater]):not([full-bleed-player]) #primary.ytd-watch-flexy {`,
+      `  max-width: calc(100% - ${SIDEBAR_WIDTH}px) !important;`,
+      `}`,
+      /* Theater mode — narrow the player container */
+      `ytd-watch-flexy[theater] #player-theater-container,`,
+      `ytd-watch-flexy[full-bleed-player] #player-theater-container {`,
+      `  padding-right: ${SIDEBAR_WIDTH}px !important;`,
+      `  box-sizing: border-box !important;`,
+      `}`,
+      /* Keep YouTube's own masthead from stretching under the sidebar */
+      `#masthead-container { padding-right: ${SIDEBAR_WIDTH}px !important; }`,
+    ].join('\n');
+  } else if (isNetflix) {
+    layoutStyleEl.textContent = [
+      `.watch-video--player-view {`,
+      `  width: calc(100% - ${SIDEBAR_WIDTH}px) !important;`,
+      `}`,
+    ].join('\n');
+  }
   document.head.appendChild(layoutStyleEl);
 }
 
-function removeYouTubeLayout(): void {
+function removePlatformLayout(): void {
   layoutStyleEl?.remove();
   layoutStyleEl = null;
 }
 
-window.addEventListener('syntagma:sidebar-visible', injectYouTubeLayout);
-window.addEventListener('syntagma:sidebar-hidden',  removeYouTubeLayout);
-
+window.addEventListener('syntagma:sidebar-visible', injectPlatformLayout);
+window.addEventListener('syntagma:sidebar-hidden',  removePlatformLayout);
 // ─── Sidebar renderer ─────────────────────────────────────────────────────────
 
 function renderSidebar(
@@ -141,7 +154,7 @@ export async function initVideoMode(params: VideoModeParams): Promise<void> {
     'position:fixed',
     'top:0', 'left:0',
     'width:0', 'height:0',          // sized to video via syncPosition()
-    'z-index:2147483647',
+    'z-index:2147483645',
     'pointer-events:none',
   ].join(';');
   document.body.appendChild(shadowHost);

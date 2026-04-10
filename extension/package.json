@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:youtube": "vitest run src/content/youtube-subtitles.test.ts -t \"live regression\"",
     "test:watch": "vitest",
-    "test:unit": "vitest run tests/unit"
+    "test:unit": "vitest run tests/unit",
+    "test:netflix": "node test-netflix.mjs"
   },
   "dependencies": {
     "compromise": "^14.14.4",
@@ -34,6 +35,7 @@
     "@types/uuid": "^10.0.0",
     "@vitejs/plugin-react": "^6.0.1",
     "jsdom": "^29.0.0",
+    "puppeteer": "^24.40.0",
     "typescript": "^5.9.3",
     "vite": "^8.0.0",
     "vitest": "^4.1.0"

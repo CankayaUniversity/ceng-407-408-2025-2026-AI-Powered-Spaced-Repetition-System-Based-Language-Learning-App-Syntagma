@@ -57,6 +57,7 @@ const CueRow = memo(function CueRow({ cue, isActive, lexemes, showColors, onSeek
       style={{
         display: 'flex', gap: '8px', alignItems: 'flex-start',
         padding: '6px 8px 6px 6px', borderRadius: '6px', cursor: 'pointer',
+        pointerEvents: 'auto',
         background: isActive ? 'rgba(160,120,85,0.10)' : 'transparent',
         borderLeft: leftBorder, transition: 'background 0.12s', marginBottom: '1px',
       }}
@@ -94,7 +95,12 @@ const CueRow = memo(function CueRow({ cue, isActive, lexemes, showColors, onSeek
                 e.stopPropagation();
                 onWordClick(lemma, tok.text, cue.text, (e.currentTarget as HTMLElement).getBoundingClientRect());
               }}
-              style={{ cursor: 'pointer', borderBottom: `1.5px solid ${underlineColor}`, paddingBottom: '1px' }}
+              style={{
+                cursor: 'pointer',
+                pointerEvents: 'auto',
+                borderBottom: `1.5px solid ${underlineColor}`,
+                paddingBottom: '1px',
+              }}
             >
               {tok.text}
             </span>
@@ -271,11 +277,34 @@ export function VideoSidebarPanel({ video, cues, lexemes, settings, onStatusChan
   // Also immediately update currentCue so the highlight reflects the click
   // without waiting for the next timeupdate event from VideoOverlay.
   const handleSeek = useCallback((cue: SubtitleCue) => {
-    const adjusted = cue.startMs + detectedOffsetMs + localSettings.targetSubtitleOffsetMs;
-    video.currentTime = adjusted / 1000;
-    video.play().catch(() => {});
+    const isNetflix = window.location.hostname.includes('netflix.com');
+    // Netflix TTML timestamps are frame-accurate; the auto-detected offset is
+    // YouTube-specific and must NOT be applied here.
+    const offsetMs = isNetflix ? 0 : detectedOffsetMs;
+    const adjusted = cue.startMs + offsetMs + localSettings.targetSubtitleOffsetMs;
+
+    if (isNetflix) {
+      // Use only the Netflix internal player API via the injected page script.
+      // Directly setting video.currentTime on a DRM-encrypted Netflix video
+      // triggers error M7375 (EME state violation). The injected script calls
+      // window.netflix.appContext…videoPlayer.seek() which is the only safe path.
+      window.dispatchEvent(new CustomEvent('syntagma:netflix-seek', {
+        detail: { timeMs: adjusted }
+      }));
+    } else {
+      video.currentTime = adjusted / 1000;
+      video.play().catch(() => {});
+    }
+
     setCurrentCue(cue);
   }, [video, detectedOffsetMs, localSettings.targetSubtitleOffsetMs]);
+
+  // Keep a ref to localLexemes so handleWordClick doesn't need it as a
+  // dependency. Without this, every lexeme status change creates a new
+  // handleWordClick reference, which invalidates all memoized CueRow props
+  // and causes every visible row to re-render.
+  const localLexemesRef = useRef(localLexemes);
+  useEffect(() => { localLexemesRef.current = localLexemes; }, [localLexemes]);
 
   // Word click — open popup (stops propagation so the row seek doesn't fire)
   const handleWordClick = useCallback((
@@ -285,7 +314,7 @@ export function VideoSidebarPanel({ video, cues, lexemes, settings, onStatusChan
     const now = Date.now();
     mountWordPopup({
       lemma, surface, sentence, anchorRect: rect,
-      lexeme: localLexemes[lemma] ?? null,
+      lexeme: localLexemesRef.current[lemma] ?? null,
       settings: localSettings,
       onClose: () => { dismissWordPopup(); },
       onStatusChange: (l, status) => {
@@ -299,7 +328,7 @@ export function VideoSidebarPanel({ video, cues, lexemes, settings, onStatusChan
         onStatusChange(l, status);
       },
     }, { zIndex: 2147483647 });
-  }, [localLexemes, localSettings, video, onStatusChange]);
+  }, [localSettings, video, onStatusChange]);
 
   if (!visible) return null;
 
@@ -327,7 +356,7 @@ export function VideoSidebarPanel({ video, cues, lexemes, settings, onStatusChan
           bottom: '0',
           display: 'flex',
           flexDirection: 'column',
-          zIndex: 2147483640,
+          zIndex: 2147483647,
           fontFamily: 'system-ui, -apple-system, sans-serif',
           background: C.base,
           backdropFilter: 'blur(12px)',
@@ -482,7 +511,7 @@ export function VideoSidebarPanel({ video, cues, lexemes, settings, onStatusChan
           >
             {cues.map(cue => (
               <CueRow
-                key={cue.index}
+                key={cue.startMs}
                 cue={cue}
                 isActive={currentCue?.index === cue.index}
                 lexemes={localLexemes}

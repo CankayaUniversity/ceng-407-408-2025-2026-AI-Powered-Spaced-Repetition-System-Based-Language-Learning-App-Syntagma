@@ -13,7 +13,7 @@
     {
       "matches": ["<all_urls>"],
       "js": ["content/index.js"],
-      "run_at": "document_idle"
+      "run_at": "document_start"
     }
   ],
   "action": {
@@ -26,7 +26,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["assets/*", "chunks/*"],
+      "resources": ["assets/*", "chunks/*", "dictionary.json"],
       "matches": ["<all_urls>"]
     }
   ]

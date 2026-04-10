@@ -405,7 +405,7 @@ function TopBar({
           title="Expand Syntagma (Alt+Z)"
           style={{
             position: 'fixed', top: 0, left: '50%', transform: 'translateX(-50%)',
-            zIndex: 2147483640, background: C.overlay,
+            zIndex: 2147483647, background: C.overlay,
             borderRadius: '0 0 10px 10px',
             padding: '3px 14px 4px',
             display: 'flex', alignItems: 'center', gap: '6px',
@@ -436,7 +436,7 @@ function TopBar({
         data-syntagma
         style={{
           position: 'fixed', top: 0, left: 0, right: 0,
-          zIndex: 2147483640, height: '44px',
+          zIndex: 2147483647, height: '44px',
           background: C.overlay, backdropFilter: 'blur(10px)',
           display: 'flex', alignItems: 'center',
           padding: '0 14px', gap: '10px',

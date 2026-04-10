@@ -24,7 +24,15 @@ export function getDictionaryDB(): Promise<IDBDatabase> {
   return dbPromise;
 }
 
+const DICT_LOADED_KEY = 'dictIndexed';
+
 export async function isDictionaryLoaded(): Promise<boolean> {
+  // Fast path: O(1) chrome.storage check instead of counting 1.46M IDB rows.
+  try {
+    const result = await chrome.storage.local.get(DICT_LOADED_KEY);
+    if (result[DICT_LOADED_KEY] === true) return true;
+  } catch { /* fall through to IDB count */ }
+
   const db = await getDictionaryDB();
   return new Promise((resolve) => {
     const tx = db.transaction(STORE_NAME, 'readonly');
@@ -82,6 +90,8 @@ export async function populateDictionary(): Promise<void> {
       await new Promise(r => setTimeout(r, 0)); 
     }
     console.log('[Syntagma] Dictionary completely indexed!');
+    // Cache the loaded flag so future SW wakeups skip the expensive IDB count.
+    await chrome.storage.local.set({ [DICT_LOADED_KEY]: true });
   } catch (err) {
     console.error('[Syntagma] Dictionary population failed:', err);
   }

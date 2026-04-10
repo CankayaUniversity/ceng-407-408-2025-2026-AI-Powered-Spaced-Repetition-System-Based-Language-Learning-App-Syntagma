@@ -158,6 +158,8 @@ export function VideoOverlay({
     if (!liveCue || targetCues.length === 0) return;
     if (autoOffsetDetectedRef.current) return;
     if (settings.targetSubtitleOffsetMs !== 0) return; // user already configured
+    // Netflix TTML timestamps are frame-accurate — no offset correction needed.
+    if (platform === 'netflix') return;
 
     const normalizeWords = (s: string) =>
       s.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim().split(/\s+/).filter(w => w.length > 2);
@@ -244,13 +246,17 @@ export function VideoOverlay({
     }
 
     if (platform === 'netflix') {
+      setCaptureStatus('loading');
       cleanups.push(
         observeNetflixCaptions(
           video,
           text => setLiveCue(makeLiveCue(text)),
           () => setLiveCue(null),
           (allCues) => {
-            setTargetCues(prev => allCues.length > prev.length ? allCues : prev);
+            setTargetCues(allCues);
+            if (allCues.length > 0) {
+              setCaptureStatus('ok');
+            }
           },
         )
       );
@@ -260,6 +266,35 @@ export function VideoOverlay({
     // ── Manual retry via custom event (sidebar "Retry" button) ────────
     const handleRetry = () => {
       setCaptureStatus('loading');
+
+      if (platform === 'netflix') {
+        // 1. Try DOM cache first (covers race where manifest fired before listener).
+        const cacheEl = document.getElementById('syntagma-netflix-cues-cache');
+        const cachedJson = cacheEl?.getAttribute('data-cues');
+        if (cachedJson) {
+          try {
+            const raw = JSON.parse(cachedJson) as Array<{ startMs: number; endMs: number; text: string }>;
+            if (raw?.length > 0) {
+              const recovered: SubtitleCue[] = raw.map((c, i) => ({
+                index: i, startMs: c.startMs, endMs: c.endMs,
+                text: c.text, rawText: c.text,
+                bookmarked: false, selected: false,
+              }));
+              setTargetCues(recovered);
+              setTargetSource('platform');
+              setCaptureStatus('ok');
+              return;
+            }
+          } catch { /* malformed cache */ }
+        }
+        // 2. Trigger on-demand fetch from Netflix player's internal state.
+        //    The injected page script will dispatch 'syntagma:netflix-cues' if
+        //    it finds subtitle URLs, or 'syntagma:netflix-subtitles-unavailable'.
+        window.dispatchEvent(new CustomEvent('syntagma:request-subtitles'));
+        return;
+      }
+
+      // YouTube — re-fetch the full transcript
       setTargetCues([]);
       captureYouTubeSubtitles('en', 10000).then(cues => {
         if (cues.length) {
@@ -273,6 +308,14 @@ export function VideoOverlay({
     };
     window.addEventListener('syntagma:retry-subtitle-capture', handleRetry);
     cleanups.push(() => window.removeEventListener('syntagma:retry-subtitle-capture', handleRetry));
+
+    // ── Netflix subtitle unavailable signal ───────────────────────────
+    // The injected page script fires this when on-demand fetch finds nothing.
+    const handleUnavailable = () => {
+      if (platform === 'netflix') setCaptureStatus('failed');
+    };
+    window.addEventListener('syntagma:netflix-subtitles-unavailable', handleUnavailable);
+    cleanups.push(() => window.removeEventListener('syntagma:netflix-subtitles-unavailable', handleUnavailable));
 
     return () => cleanups.forEach(fn => fn());
   }, [platform, video]); // eslint-disable-line react-hooks/exhaustive-deps

@@ -1,4 +1,4 @@
-export type VideoPlatform = 'youtube' | 'netflix' | 'html5';
+export type VideoPlatform = 'youtube' | 'netflix';
 
 export interface VideoContext {
   platform: VideoPlatform;
@@ -41,12 +41,6 @@ export function detectVideoContext(): VideoContext | null {
       document.querySelector<HTMLElement>('.NFPlayer') ??
       (video ? findPositionedAncestor(video) : null);
     if (video && container) return { platform: 'netflix', video, container };
-  }
-
-  // ── Generic HTML5 ─────────────────────────────────────────────────────────
-  const video = document.querySelector<HTMLVideoElement>('video');
-  if (video && video.duration > 0) {
-    return { platform: 'html5', video, container: findPositionedAncestor(video) };
   }
 
   return null;

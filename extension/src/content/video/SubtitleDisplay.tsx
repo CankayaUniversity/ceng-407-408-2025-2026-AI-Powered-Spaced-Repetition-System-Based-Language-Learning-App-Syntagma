@@ -86,6 +86,10 @@ export function SubtitleDisplay({
         fontSize: `${fontSize}%`,
         lineHeight: 1.45,
         userSelect: 'none',
+        // Explicit — the shadow DOM host chain has pointer-events:none on all
+        // ancestor containers. The hover/click handlers on this element and its
+        // children require pointer-events to be explicitly enabled here.
+        pointerEvents: 'auto',
         filter: !revealed && obscureMode === 'blur' ? 'blur(6px)' : 'none',
         opacity: !revealed && obscureMode === 'hide' ? 0 : 1,
         transition: 'filter 0.2s ease, opacity 0.2s ease',
@@ -128,6 +132,11 @@ export function SubtitleDisplay({
               textShadow: '0 1px 4px rgba(0,0,0,0.9), 0 0 2px rgba(0,0,0,0.9)',
               fontWeight: 600,
               cursor: 'pointer',
+              // Must be explicit — ancestor containers in the shadow DOM have
+              // pointer-events:none, and `pointer-events` is not inherited, so
+              // without this the span falls back to the computed default which
+              // Chrome may resolve to `none` when all ancestors are `none`.
+              pointerEvents: 'auto',
               borderBottom: `2px solid ${underline}`,
               paddingBottom: '1px',
               opacity: status === 'ignored' ? 0.5 : 1,
