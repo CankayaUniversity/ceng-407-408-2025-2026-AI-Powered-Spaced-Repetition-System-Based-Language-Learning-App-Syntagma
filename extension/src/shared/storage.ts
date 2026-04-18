@@ -43,7 +43,17 @@ export const DEFAULT_SETTINGS: UserSettings = {
   ankiDeckName: 'Syntagma',
   apiBaseUrl: '',
   authToken: null,
+  authEmail: null,
+  authUserId: null,
 };
+
+export function getAuthHeaders(settings: UserSettings): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (settings.authToken) {
+    headers['Authorization'] = `Bearer ${settings.authToken}`;
+  }
+  return headers;
+}
 
 export async function getSettings(): Promise<UserSettings> {
   const result = await chrome.storage.local.get('userSettings');

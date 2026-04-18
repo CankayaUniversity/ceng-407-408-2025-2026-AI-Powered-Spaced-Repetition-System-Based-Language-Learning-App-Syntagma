@@ -30,6 +30,7 @@ interface WordPopupProps {
   anchorRect: DOMRect;
   lexeme: LexemeEntry | null;
   settings: UserSettings;
+  screenshotDataUrl?: string;
   onClose: () => void;
   onStatusChange: (lemma: string, status: WordStatus) => void;
 }
@@ -94,6 +95,7 @@ function WordPopupInner({
   anchorRect,
   lexeme,
   settings,
+  screenshotDataUrl,
   onClose,
   onStatusChange,
 }: WordPopupProps) {
@@ -103,6 +105,7 @@ function WordPopupInner({
   const [aiError, setAiError] = useState<string | null>(null);
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
   const [cardSaved, setCardSaved] = useState<'idle' | 'saving' | 'done' | 'error'>('idle');
+  const [screenshot] = useState<string | null>(screenshotDataUrl ?? null);
   const popupRef = useRef<HTMLDivElement>(null);
   const requestIdRef = useRef<string | null>(null);
 
@@ -251,6 +254,7 @@ function WordPopupInner({
         sourceUrl: window.location.href,
         sourceTitle: document.title,
         trMeaning: lexeme?.trMeaning ?? (translations[0] ?? ''),
+        screenshotDataUrl: screenshot ?? undefined,
         createdAt: Date.now(),
         deckName: 'Syntagma',
         tags: ['syntagma'],
@@ -303,8 +307,8 @@ function WordPopupInner({
         <div style={{ display: 'flex', gap: '6px' }}>
           <button
             onClick={handleSaveCard}
-            title={cardSaved === 'done' ? 'Card saved!' : cardSaved === 'error' ? 'Save failed' : 'Add to flashcards'}
-            disabled={cardSaved === 'saving'}
+            title={!settings.authToken ? 'Log in to save cards' : cardSaved === 'done' ? 'Card saved!' : cardSaved === 'error' ? 'Save failed' : 'Add to flashcards'}
+            disabled={!settings.authToken || cardSaved === 'saving'}
             style={{
               width: '32px',
               height: '32px',
@@ -372,6 +376,17 @@ function WordPopupInner({
         </div>
       )}
 
+      {/* Video screenshot */}
+      {screenshot && (
+        <div style={{ marginBottom: '8px', borderRadius: '5px', overflow: 'hidden', lineHeight: 0 }}>
+          <img
+            src={screenshot}
+            alt="video frame"
+            style={{ width: '100%', display: 'block', borderRadius: '5px' }}
+          />
+        </div>
+      )}
+
       {/* Action buttons */}
       <PopupButtons
         word={lemma}
@@ -433,7 +448,8 @@ export function mountWordPopup(props: WordPopupProps, opts?: { zIndex?: number }
     popupContainer.style.height = '0';
     popupContainer.style.overflow = 'visible';
   }
-  document.body.appendChild(popupContainer);
+  // Append to <html> to avoid CSS transform containment issues on YouTube/Netflix body.
+  document.documentElement.appendChild(popupContainer);
 
   popupRoot = createRoot(popupContainer);
   popupRoot.render(<WordPopupInner {...props} />);

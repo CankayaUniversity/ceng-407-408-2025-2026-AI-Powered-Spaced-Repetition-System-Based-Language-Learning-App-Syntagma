@@ -368,7 +368,7 @@ export function mountAdvancedCardCreator(props: Omit<Props, 'onClose'> & { onClo
   creatorContainer = document.createElement('div');
   creatorContainer.id = 'syntagma-creator-root';
   creatorContainer.setAttribute('data-syntagma', '');
-  document.body.appendChild(creatorContainer);
+  document.documentElement.appendChild(creatorContainer);
 
   creatorRoot = createRoot(creatorContainer);
   creatorRoot.render(

@@ -108,6 +108,7 @@ async function init() {
     currentSettings = settings;
 
     if (!settings.enabled) return;
+    if (!settings.authToken) return;
 
     // Fetch lexemes; retry once if SW isn't ready
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -138,7 +139,7 @@ async function init() {
       onOpenAdvancedCreator: handleOpenAdvancedCreator,
     });
 
-    document.addEventListener('click', handleWordClick, { capture: false });
+    document.addEventListener('click', handleWordClick, { capture: true });
     document.addEventListener('keydown', handleKeyDown);
     document.addEventListener('contextmenu', handleContextMenu);
 
@@ -236,6 +237,8 @@ function handleWordClick(e: MouseEvent) {
   const wordEl = target.closest('span[data-syn]') as HTMLElement | null;
   if (!wordEl || !currentSettings) return;
 
+  // Prevent link navigation (Wikipedia wraps words in <a> tags).
+  e.preventDefault();
   e.stopPropagation();
 
   const lemma = wordEl.getAttribute('data-syn') ?? '';
@@ -396,19 +399,35 @@ chrome.runtime.onMessage.addListener((msg) => {
 
   if (msg.type === 'SETTINGS_UPDATED') {
     const patch = msg.payload as Partial<UserSettings>;
+    const prevToken = currentSettings?.authToken ?? null;
     if (currentSettings) currentSettings = { ...currentSettings, ...patch };
 
-    // Notify video components (VideoOverlay, VideoSidebarPanel) so they update
-    // their local settings without needing a full re-mount.
     window.dispatchEvent(new CustomEvent('syntagma:settings-updated', { detail: patch }));
 
     if (patch.enabled === false) {
       removeOverlays();
       unmountHeaderBar();
       destroyVideoMode();
+      dismissWordPopup();
       isParsed = false;
       currentTokens = [];
     }
+
+    // Logout — tear down everything
+    if ('authToken' in patch && !patch.authToken) {
+      removeOverlays();
+      unmountHeaderBar();
+      destroyVideoMode();
+      dismissWordPopup();
+      isParsed = false;
+      currentTokens = [];
+    }
+
+    // Login — prompt user to reload so init() runs cleanly from scratch
+    if ('authToken' in patch && patch.authToken && !prevToken) {
+      showReloadBanner();
+    }
+
     if (patch.showLearningStatusColors !== undefined) applyStatusColors(patch.showLearningStatusColors);
     if (patch.showInlineTranslations !== undefined) applyInlineTranslations(patch.showInlineTranslations, currentLexemes);
   }
@@ -440,6 +459,70 @@ chrome.runtime.onMessage.addListener((msg) => {
     }
   }
 });
+
+// ─── Reload banner ────────────────────────────────────────────────────────────
+
+function showReloadBanner(): void {
+  if (document.getElementById('syntagma-reload-banner')) return;
+
+  const banner = document.createElement('div');
+  banner.id = 'syntagma-reload-banner';
+  banner.style.cssText = [
+    'position:fixed',
+    'bottom:24px',
+    'right:24px',
+    'z-index:2147483647',
+    'background:#1a1a2e',
+    'color:#e0e0ff',
+    'font-family:system-ui,sans-serif',
+    'font-size:14px',
+    'border-radius:12px',
+    'padding:14px 18px',
+    'box-shadow:0 4px 24px rgba(0,0,0,0.45)',
+    'display:flex',
+    'align-items:center',
+    'gap:12px',
+    'max-width:340px',
+    'border:1px solid rgba(120,80,255,0.4)',
+  ].join(';');
+
+  const text = document.createElement('span');
+  text.textContent = 'Syntagma: Signed in — reload to activate on this page.';
+  text.style.flex = '1';
+
+  const reloadBtn = document.createElement('button');
+  reloadBtn.textContent = 'Reload';
+  reloadBtn.style.cssText = [
+    'background:#7c3aed',
+    'color:#fff',
+    'border:none',
+    'border-radius:7px',
+    'padding:6px 14px',
+    'cursor:pointer',
+    'font-size:13px',
+    'font-weight:600',
+    'white-space:nowrap',
+  ].join(';');
+  reloadBtn.addEventListener('click', () => window.location.reload());
+
+  const closeBtn = document.createElement('button');
+  closeBtn.textContent = '×';
+  closeBtn.style.cssText = [
+    'background:transparent',
+    'color:#aaa',
+    'border:none',
+    'cursor:pointer',
+    'font-size:18px',
+    'line-height:1',
+    'padding:0 4px',
+  ].join(';');
+  closeBtn.addEventListener('click', () => banner.remove());
+
+  banner.appendChild(text);
+  banner.appendChild(reloadBtn);
+  banner.appendChild(closeBtn);
+  document.documentElement.appendChild(banner);
+}
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 

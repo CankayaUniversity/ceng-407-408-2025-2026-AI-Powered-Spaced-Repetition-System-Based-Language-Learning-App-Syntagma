@@ -23,11 +23,12 @@ interface CueRowProps {
   isActive: boolean;
   lexemes: Record<string, LexemeEntry>;
   showColors: boolean;
+  audioUrl?: string;
   onSeek: (cue: SubtitleCue) => void;
   onWordClick: (lemma: string, surface: string, sentence: string, rect: DOMRect) => void;
 }
 
-const CueRow = memo(function CueRow({ cue, isActive, lexemes, showColors, onSeek, onWordClick }: CueRowProps) {
+const CueRow = memo(function CueRow({ cue, isActive, lexemes, showColors, audioUrl, onSeek, onWordClick }: CueRowProps) {
   const rowRef = useRef<HTMLDivElement>(null);
 
   // Scroll into view when this row becomes active.
@@ -73,6 +74,30 @@ const CueRow = memo(function CueRow({ cue, isActive, lexemes, showColors, onSeek
       }}>
         {formatTime(cue.startMs)}
       </span>
+
+      {audioUrl && (
+        <button
+          onClick={e => {
+            e.stopPropagation();
+            new Audio(audioUrl).play().catch(() => {});
+          }}
+          title="Play recorded audio"
+          style={{
+            flexShrink: 0,
+            background: 'transparent',
+            border: 'none',
+            cursor: 'pointer',
+            padding: '0 2px',
+            color: 'rgba(168,182,147,0.9)',
+            fontSize: '10px',
+            lineHeight: 1,
+            display: 'flex',
+            alignItems: 'center',
+          }}
+        >
+          ▶
+        </button>
+      )}
 
       <span style={{
         fontSize: '12px', lineHeight: 1.5,
@@ -214,6 +239,7 @@ export function VideoSidebarPanel({ video, cues, lexemes, settings, onStatusChan
   const [showImport, setShowImport] = useState(false);
   const [localLexemes, setLocalLexemes] = useState(lexemes);
   const [localSettings, setLocalSettings] = useState(settings);
+  const [audioMap, setAudioMap] = useState<Record<number, string>>({});
   const listRef = useRef<HTMLDivElement>(null);
 
   // Keep local lexemes in sync with prop (e.g. overlay status changes)
@@ -238,6 +264,16 @@ export function VideoSidebarPanel({ video, cues, lexemes, settings, onStatusChan
     };
     window.addEventListener('syntagma:subtitle-offset', handler);
     return () => window.removeEventListener('syntagma:subtitle-offset', handler);
+  }, []);
+
+  // Listen for audio clips recorded by VideoOverlay
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { cueIndex, dataUrl } = (e as CustomEvent<{ cueIndex: number; dataUrl: string }>).detail;
+      setAudioMap(prev => ({ ...prev, [cueIndex]: dataUrl }));
+    };
+    window.addEventListener('syntagma:audio-recorded', handler);
+    return () => window.removeEventListener('syntagma:audio-recorded', handler);
   }, []);
 
   // Broadcast visibility so topbar button and layout injection can react
@@ -516,6 +552,7 @@ export function VideoSidebarPanel({ video, cues, lexemes, settings, onStatusChan
                 isActive={currentCue?.index === cue.index}
                 lexemes={localLexemes}
                 showColors={localSettings.showLearningStatusColors}
+                audioUrl={audioMap[cue.index]}
                 onSeek={handleSeek}
                 onWordClick={handleWordClick}
               />

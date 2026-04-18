@@ -643,7 +643,9 @@ export function mountHeaderBar(state: HeaderBarState): void {
     headerContainer = document.createElement('div');
     headerContainer.id = 'syntagma-header-root';
     headerContainer.setAttribute('data-syntagma', '');
-    document.body.appendChild(headerContainer);
+    // Append to <html> not <body>: YouTube/Netflix apply CSS transforms to <body>
+    // which breaks position:fixed containment — <html> never has transforms.
+    document.documentElement.appendChild(headerContainer);
   }
   if (!headerRoot) headerRoot = createRoot(headerContainer);
   headerRoot.render(<TopBar {...state} />);

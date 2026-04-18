@@ -20,7 +20,13 @@ export type ExtensionMessage =
   | { type: 'GET_SETTINGS'; payload: null }
   | { type: 'SET_SETTINGS'; payload: Partial<UserSettings> }
   | { type: 'OPEN_OPTIONS_PAGE'; payload: null }
-  | { type: 'OPEN_CARD_CREATOR'; payload: { word: string; sentence: string; sourceUrl: string; sourceTitle: string } };
+  | { type: 'OPEN_CARD_CREATOR'; payload: { word: string; sentence: string; sourceUrl: string; sourceTitle: string } }
+  | { type: 'LOGIN'; payload: { email: string; password: string } }
+  | { type: 'REGISTER'; payload: { email: string; password: string } }
+  | { type: 'LOGOUT'; payload: null }
+  | { type: 'OPEN_AUTH_PAGE'; payload: null }
+  | { type: 'GET_TAB_CAPTURE_STREAM_ID'; payload: null }
+  | { type: 'CAPTURE_TAB_SCREENSHOT'; payload: null };
 
 export type BackgroundMessage =
   | { type: 'AI_STREAM_CHUNK'; payload: { requestId: string; chunk: string } }

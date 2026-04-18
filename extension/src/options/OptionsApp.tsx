@@ -194,6 +194,8 @@ function GeneralTab({ settings, onUpdate }: { settings: UserSettings; onUpdate: 
   );
 }
 
+const BACKEND_URL = 'https://syntagma.omerhanyigit.online';
+
 // ─── Tab: Word Browser ───────────────────────────────────────────────────────
 
 type StatusFilter = 'all' | 'unknown' | 'learning' | 'known' | 'ignored';
@@ -210,22 +212,38 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState<'lemma' | 'status' | 'updatedAt'>('lemma');
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const BACKEND_URL = 'https://syntagma.omerhanyigit.online';
-  const DEFAULT_USER_ID = '3';
+  const [source, setSource] = useState<'server' | 'local'>('local');
 
   const apiBase = settings.apiBaseUrl || BACKEND_URL;
-  const userId = settings.authToken || DEFAULT_USER_ID;
+  const authHeader: Record<string, string> = settings.authToken
+    ? { 'Authorization': `Bearer ${settings.authToken}`, 'Content-Type': 'application/json' }
+    : {};
+
+  const loadFromLocal = useCallback(async () => {
+    const result = await chrome.storage.local.get('lexemes');
+    const entries = Object.values(result.lexemes ?? {}) as LexemeEntry[];
+    setWords(entries.map(e => ({
+      lemma: e.lemma,
+      status: e.status,
+      updatedAt: e.lastSeenAt || 0,
+    })));
+    setSource('local');
+  }, []);
 
   const fetchWords = useCallback(async () => {
     setLoading(true);
-    setError(null);
+    if (!settings.authToken) {
+      await loadFromLocal();
+      setLoading(false);
+      return;
+    }
     try {
       const statusParam = filter !== 'all' ? `&status=${filter.toUpperCase()}` : '';
-      const res = await fetch(`${apiBase}/api/word-knowledge?size=200&sort=updatedAt,desc${statusParam}`, {
-        headers: { 'X-User-Id': userId },
+      const res = await fetch(`${apiBase}/api/word-knowledge?size=200${statusParam}`, {
+        headers: authHeader,
       });
+      const newToken = res.headers.get('X-Refreshed-Token');
+      if (newToken) sendMessage({ type: 'SET_SETTINGS', payload: { authToken: newToken } }).catch(() => {});
       if (!res.ok) throw new Error(`Server returned ${res.status}`);
       const json = await res.json();
       const content = json.data?.content ?? json.data ?? [];
@@ -235,21 +253,14 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
         updatedAt: wk.updatedAt ? new Date(wk.updatedAt).getTime() : 0,
       }));
       setWords(mapped);
-    } catch (err) {
-      console.error('[Syntagma] Failed to fetch word knowledge:', err);
-      setError((err as Error).message);
-      // Fallback to local storage
-      const result = await chrome.storage.local.get('lexemes');
-      const entries = Object.values(result.lexemes ?? {}) as LexemeEntry[];
-      setWords(entries.map(e => ({
-        lemma: e.lemma,
-        status: e.status,
-        updatedAt: e.lastSeenAt || 0,
-      })));
+      setSource('server');
+    } catch {
+      // Server unavailable — fall back to local storage silently
+      await loadFromLocal();
     } finally {
       setLoading(false);
     }
-  }, [apiBase, userId, filter]);
+  }, [apiBase, settings.authToken, filter, loadFromLocal]);
 
   useEffect(() => { fetchWords(); }, [fetchWords]);
 
@@ -269,30 +280,10 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
     return C.subtext;
   };
 
-  if (loading) return <div style={{ color: C.subtext, padding: '20px', textAlign: 'center' }}>Loading words from server…</div>;
+  if (loading) return <div style={{ color: C.subtext, padding: '20px', textAlign: 'center' }}>Loading words…</div>;
 
   return (
     <div>
-      {/* Error banner */}
-      {error && (
-        <div style={{
-          background: C.red + '20',
-          border: `1px solid ${C.red}`,
-          borderRadius: '6px',
-          padding: '8px 12px',
-          marginBottom: '12px',
-          fontSize: '12px',
-          color: C.red,
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-        }}>
-          <span>⚠ Could not fetch from server ({error}). Showing local words.</span>
-          <button onClick={fetchWords} style={{ background: C.red, color: C.base, border: 'none', borderRadius: '4px', padding: '4px 8px', cursor: 'pointer', fontSize: '11px' }}>
-            Retry
-          </button>
-        </div>
-      )}
 
       {/* Controls */}
       <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
@@ -356,7 +347,9 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
 
       <div style={{ fontSize: '12px', color: C.subtext, marginBottom: '8px' }}>
         {filtered.length} words · {words.filter(e => e.status === 'known').length} known · {words.filter(e => e.status === 'learning').length} learning
-        {!error && <span style={{ color: C.green, marginLeft: '6px' }}>● Live</span>}
+        <span style={{ color: source === 'server' ? C.green : C.amber, marginLeft: '6px' }}>
+          ● {source === 'server' ? 'Live' : 'Local'}
+        </span>
       </div>
 
       {/* Word table */}
@@ -422,7 +415,7 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
       }}>
         Server: <span style={{ color: C.text }}>{apiBase}</span>
         <br />
-        User ID: <span style={{ color: C.text }}>{userId}</span>
+        Account: <span style={{ color: C.text }}>{settings.authEmail ?? 'Not logged in'}</span>
       </div>
     </div>
   );
@@ -436,19 +429,25 @@ function FlashcardsTab({ settings }: { settings: UserSettings }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const BACKEND_URL = 'https://syntagma.omerhanyigit.online';
-  const DEFAULT_USER_ID = '3';
-
   const apiBase = settings.apiBaseUrl || BACKEND_URL;
-  const userId = settings.authToken || DEFAULT_USER_ID;
+  const authHeader: Record<string, string> = settings.authToken
+    ? { 'Authorization': `Bearer ${settings.authToken}` }
+    : {};
 
   const fetchCards = useCallback(async () => {
     setLoading(true);
     setError(null);
+    if (!settings.authToken) {
+      setError('Not logged in');
+      setLoading(false);
+      return;
+    }
     try {
       const res = await fetch(`${apiBase}/api/flashcards?size=100&sort=createdAt,desc`, {
-        headers: { 'X-User-Id': userId },
+        headers: authHeader,
       });
+      const newToken = res.headers.get('X-Refreshed-Token');
+      if (newToken) sendMessage({ type: 'SET_SETTINGS', payload: { authToken: newToken } }).catch(() => {});
       if (!res.ok) throw new Error(`Server returned ${res.status}`);
       const json = await res.json();
       const content = json.data?.content ?? json.data ?? [];
@@ -474,7 +473,7 @@ function FlashcardsTab({ settings }: { settings: UserSettings }) {
     } finally {
       setLoading(false);
     }
-  }, [apiBase, userId]);
+  }, [apiBase, settings.authToken]);
 
   useEffect(() => { fetchCards(); }, [fetchCards]);
 
@@ -495,7 +494,7 @@ function FlashcardsTab({ settings }: { settings: UserSettings }) {
     try {
       await fetch(`${apiBase}/api/flashcards/${id}`, {
         method: 'DELETE',
-        headers: { 'X-User-Id': userId },
+        headers: authHeader,
       });
     } catch (err) {
       console.warn('[Syntagma] Backend delete failed:', err);
@@ -628,7 +627,7 @@ function FlashcardsTab({ settings }: { settings: UserSettings }) {
       }}>
         Server: <span style={{ color: C.text }}>{apiBase}</span>
         <br />
-        User ID: <span style={{ color: C.text }}>{userId}</span>
+        Account: <span style={{ color: C.text }}>{settings.authEmail ?? 'Not logged in'}</span>
       </div>
     </div>
   );

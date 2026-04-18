@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import type { UserSettings, LexemeEntry, WordStatus, SubtitleCue } from '../../shared/types';
 import { sendMessage } from '../../shared/messages';
 import { SubtitleDisplay } from './SubtitleDisplay';
+import { AudioRecorder } from './audio-recorder';
 import {
   captureYouTubeSubtitles,
   getYouTubeAvailableLanguages,
@@ -127,6 +128,10 @@ export function VideoOverlay({
   // Auto-detected timing offset (YouTube captions open their window before speech).
   const autoOffsetRef          = useRef(0);
   const autoOffsetDetectedRef  = useRef(false);
+
+  // ── Voice Depot: tab audio recorder ──────────────────────────────────────
+  const recorderRef       = useRef<AudioRecorder | null>(null);
+  const prevRecCueRef     = useRef<number>(-1);
 
   useEffect(() => setSettings(externalSettings), [externalSettings]);
   useEffect(() => setLexemes(externalLexemes), [externalLexemes]);
@@ -376,13 +381,14 @@ export function VideoOverlay({
     sentence: string,
     rect: DOMRect,
   ) => {
-    const doOpen = () => {
+    const doOpen = (screenshotDataUrl?: string) => {
       if (settings.pauseOnWordInteraction && !video.paused) video.pause();
 
       mountWordPopup({
         lemma, surface, sentence, anchorRect: rect,
         lexeme: lexemes[lemma] ?? null,
         settings,
+        screenshotDataUrl,
         onClose: () => {
           dismissWordPopup();
           if (settings.resumeAfterInteraction) {
@@ -406,11 +412,45 @@ export function VideoOverlay({
       }, { zIndex: 2147483647 });
     };
 
+    // Capture the full tab screenshot then crop to the video element's bounds
+    // so the saved image is exactly the video frame (no UI chrome or sidebar).
+    const captureAndOpen = () => {
+      sendMessage<{ dataUrl?: string }>({ type: 'CAPTURE_TAB_SCREENSHOT', payload: null })
+        .then(res => {
+          if (!res?.dataUrl) { doOpen(); return; }
+          const videoRect = video.getBoundingClientRect();
+          const dpr = window.devicePixelRatio || 1;
+          const img = new Image();
+          img.onload = () => {
+            try {
+              const canvas = document.createElement('canvas');
+              canvas.width  = Math.round(videoRect.width  * dpr);
+              canvas.height = Math.round(videoRect.height * dpr);
+              const ctx = canvas.getContext('2d');
+              if (!ctx) { doOpen(res.dataUrl); return; }
+              ctx.drawImage(
+                img,
+                Math.round(videoRect.left * dpr), Math.round(videoRect.top * dpr),
+                Math.round(videoRect.width * dpr), Math.round(videoRect.height * dpr),
+                0, 0,
+                Math.round(videoRect.width * dpr), Math.round(videoRect.height * dpr),
+              );
+              doOpen(canvas.toDataURL('image/jpeg', 0.85));
+            } catch {
+              doOpen(res.dataUrl); // fallback: full tab screenshot
+            }
+          };
+          img.onerror = () => doOpen();
+          img.src = res.dataUrl;
+        })
+        .catch(() => doOpen());
+    };
+
     if (settings.interactionDelayMs > 0) {
       if (interactionTimerRef.current) clearTimeout(interactionTimerRef.current);
-      interactionTimerRef.current = setTimeout(doOpen, settings.interactionDelayMs);
+      interactionTimerRef.current = setTimeout(captureAndOpen, settings.interactionDelayMs);
     } else {
-      doOpen();
+      captureAndOpen();
     }
   }, [lexemes, settings, video, onStatusChange]);
 
@@ -592,6 +632,45 @@ export function VideoOverlay({
       }));
     }
   }, [liveCue, currentTarget, targetCues, video]);
+
+  // ── Voice Depot: initialize tab audio capture ─────────────────────────────
+  useEffect(() => {
+    let destroyed = false;
+    sendMessage<{ streamId?: string; error?: string }>({ type: 'GET_TAB_CAPTURE_STREAM_ID', payload: null })
+      .then(async (res) => {
+        if (destroyed || !res.streamId) return;
+        const rec = new AudioRecorder({
+          onAudioReady: (cueIndex, dataUrl) => {
+            window.dispatchEvent(new CustomEvent('syntagma:audio-recorded', {
+              detail: { cueIndex, dataUrl },
+            }));
+          },
+        });
+        await rec.init(res.streamId);
+        if (!destroyed) recorderRef.current = rec;
+      })
+      .catch(() => { /* tabCapture unavailable or user denied */ });
+    return () => {
+      destroyed = true;
+      recorderRef.current?.destroy();
+      recorderRef.current = null;
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Voice Depot: start/stop recording on cue transitions ──────────────────
+  useEffect(() => {
+    const rec = recorderRef.current;
+    if (!rec) return;
+    if (currentTarget === null) {
+      if (prevRecCueRef.current >= 0) {
+        rec.stopCue();
+        prevRecCueRef.current = -1;
+      }
+    } else if (currentTarget.index !== prevRecCueRef.current) {
+      rec.startCue(currentTarget.index);
+      prevRecCueRef.current = currentTarget.index;
+    }
+  }, [currentTarget]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
