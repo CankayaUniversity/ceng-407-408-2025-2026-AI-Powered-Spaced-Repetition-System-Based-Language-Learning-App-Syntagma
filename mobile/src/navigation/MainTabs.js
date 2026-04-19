@@ -64,10 +64,15 @@ export default function MainTabs() {
         },
       })}
     >
-      <Tab.Screen name="Sanctuary" component={HomeStack} />
+      <Tab.Screen
+        name="Sanctuary"
+        component={HomeStack}
+        listeners={{ tabPress: () => {} }}
+      />
       <Tab.Screen
         name="Library"
         component={FlashcardReviewScreen}
+        listeners={{ tabPress: () => {} }}
         initialParams={{
           cards: [
             {
@@ -123,8 +128,16 @@ export default function MainTabs() {
           startIndex: 0,
         }}
       />
-      <Tab.Screen name="Progress" component={OverviewScreen} />
-      <Tab.Screen name="Profile" component={SettingsScreen} />
+      <Tab.Screen
+        name="Progress"
+        component={OverviewScreen}
+        listeners={{ tabPress: () => {} }}
+      />
+      <Tab.Screen
+        name="Profile"
+        component={SettingsScreen}
+        listeners={{ tabPress: () => {} }}
+      />
     </Tab.Navigator>
   );
 }
