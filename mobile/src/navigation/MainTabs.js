@@ -24,7 +24,7 @@ function HomeStack() {
 }
 
 function TabIcon({ focused, icon }) {
-  const tintColor = focused ? '#6B4226' : '#8A7A6A';
+  const tintColor = '#3E3A34';
 
   if (focused) {
     return (
@@ -131,9 +131,9 @@ export default function MainTabs() {
 
 const styles = StyleSheet.create({
   tabBar: {
-    backgroundColor: '#F2EDE4',
+    backgroundColor: '#F5F0EA',
     borderTopWidth: 0.5,
-    borderTopColor: '#DDD3C4',
+    borderTopColor: '#E5DACD',
     elevation: 0,
     shadowOpacity: 0,
     height: 92,
@@ -148,7 +148,7 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: '#F5C49A',
+    backgroundColor: '#F2A96E',
     alignItems: 'center',
     justifyContent: 'center',
   },
