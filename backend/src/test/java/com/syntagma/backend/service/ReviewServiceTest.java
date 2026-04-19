@@ -2,6 +2,7 @@ package com.syntagma.backend.service;
 
 import com.syntagma.backend.dto.request.ReviewSubmitRequest;
 import com.syntagma.backend.dto.response.ReviewResultResponse;
+import com.syntagma.backend.dto.response.ReviewStatsResponse;
 import com.syntagma.backend.dto.response.SrsStateResponse;
 import com.syntagma.backend.entity.Flashcard;
 import com.syntagma.backend.entity.ReviewLog;
@@ -23,7 +24,7 @@ import java.time.LocalDateTime;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -129,5 +130,43 @@ class ReviewServiceTest {
 
         assertNotNull(response);
         verify(srsStateRepository).save(any(SrsState.class));
+    }
+
+    @Test
+    void getStats_ReturnsWeeklyMonthlyYearlyCounts() {
+        User user = new User();
+        user.setUserId(1L);
+        user.setStreakCount(3);
+
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        when(reviewLogRepository.countByUser_UserId(1L)).thenReturn(50L);
+        when(reviewLogRepository.findAverageResultByUserId(1L)).thenReturn(3.5);
+        when(reviewLogRepository.countByUserIdSince(eq(1L), any(LocalDateTime.class)))
+                .thenReturn(10L)  // weekly
+                .thenReturn(30L)  // monthly
+                .thenReturn(50L); // yearly
+        when(reviewLogRepository.countReviewsByDay(eq(1L), any(LocalDateTime.class)))
+                .thenReturn(java.util.List.of());
+
+        ReviewStatsResponse stats = reviewService.getStats(1L, "week");
+
+        assertNotNull(stats);
+        assertEquals(50L, stats.totalReviews());
+        assertEquals(10L, stats.weeklyCount());
+        assertEquals(30L, stats.monthlyCount());
+        assertEquals(50L, stats.yearlyCount());
+        assertEquals(3,   stats.streakCount());
+        assertEquals(3.5, stats.averageResult());
+    }
+
+    @Test
+    void getStats_UserNotFound_ThrowsException() {
+        when(reviewLogRepository.countByUser_UserId(99L)).thenReturn(0L);
+        when(reviewLogRepository.findAverageResultByUserId(99L)).thenReturn(null);
+        lenient().when(reviewLogRepository.countByUserIdSince(eq(99L), any(LocalDateTime.class))).thenReturn(0L);
+        when(userRepository.findById(99L)).thenReturn(Optional.empty());
+
+        assertThrows(jakarta.persistence.EntityNotFoundException.class,
+                () -> reviewService.getStats(99L, "week"));
     }
 }

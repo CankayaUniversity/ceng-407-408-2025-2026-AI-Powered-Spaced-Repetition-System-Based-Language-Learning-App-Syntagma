@@ -10,6 +10,7 @@ import com.syntagma.backend.entity.enums.Rating;
 import com.syntagma.backend.repository.*;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -17,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.List;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ReviewService {
@@ -42,15 +44,18 @@ public class ReviewService {
         // Parse the FSRS rating (1=Again, 2=Hard, 3=Good, 4=Easy)
         Rating rating = Rating.fromValue(request.result());
 
+        log.info("Submitting review for userId={}, flashcardId={}, result={}",
+                userId, request.flashcardId(), request.result());
+
         // Create review log
-        ReviewLog log = new ReviewLog();
-        log.setFlashcard(flashcard);
-        log.setUser(user);
-        log.setReviewedAt(LocalDateTime.now());
-        log.setResult(request.result());
-        log.setDevice(request.device());
-        log.setClientTimestamp(request.clientTimestamp());
-        ReviewLog savedLog = reviewLogRepository.save(log);
+        ReviewLog reviewLog = new ReviewLog();
+        reviewLog.setFlashcard(flashcard);
+        reviewLog.setUser(user);
+        reviewLog.setReviewedAt(LocalDateTime.now());
+        reviewLog.setResult(request.result());
+        reviewLog.setDevice(request.device());
+        reviewLog.setClientTimestamp(request.clientTimestamp());
+        ReviewLog savedLog = reviewLogRepository.save(reviewLog);
 
         // Get or create SRS state
         SrsState srsState = srsStateRepository.findById(flashcard.getFlashcardId())
@@ -58,9 +63,12 @@ public class ReviewService {
 
         // Apply the FSRS algorithm
         LocalDateTime now = LocalDateTime.now();
+        log.debug("Applying FSRS for flashcardId={}, rating={}", flashcard.getFlashcardId(), rating);
         fsrsAlgorithm.processReview(srsState, rating, now);
 
         SrsState savedSrs = srsStateRepository.save(srsState);
+        log.info("Review saved: reviewId={}, nextReviewAt={}",
+                savedLog.getReviewId(), savedSrs.getNextReviewAt());
 
         return new ReviewResultResponse(
                 savedLog.getReviewId(),
@@ -86,18 +94,24 @@ public class ReviewService {
     }
 
     public ReviewStatsResponse getStats(Long userId, String period) {
+        log.info("Fetching review stats for userId={}, period={}", userId, period);
         long totalReviews = reviewLogRepository.countByUser_UserId(userId);
         Double avgResult = reviewLogRepository.findAverageResultByUserId(userId);
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new EntityNotFoundException("User not found: " + userId));
 
+        LocalDateTime now = LocalDateTime.now();
+        long weeklyCount  = reviewLogRepository.countByUserIdSince(userId, now.minusWeeks(1));
+        long monthlyCount = reviewLogRepository.countByUserIdSince(userId, now.minusMonths(1));
+        long yearlyCount  = reviewLogRepository.countByUserIdSince(userId, now.minusYears(1));
+
         int days = switch (period) {
-            case "day" -> 1;
+            case "day"   -> 1;
             case "month" -> 30;
-            default -> 7; // week
+            default      -> 7; // week
         };
 
-        LocalDateTime since = LocalDateTime.now().minusDays(days);
+        LocalDateTime since = now.minusDays(days);
         List<Object[]> rawCounts = reviewLogRepository.countReviewsByDay(userId, since);
         List<ReviewStatsResponse.DailyReviewCount> dailyCounts = rawCounts.stream()
                 .map(row -> new ReviewStatsResponse.DailyReviewCount(
@@ -108,6 +122,9 @@ public class ReviewService {
 
         return new ReviewStatsResponse(
                 totalReviews,
+                weeklyCount,
+                monthlyCount,
+                yearlyCount,
                 user.getStreakCount(),
                 avgResult != null ? avgResult : 0.0,
                 dailyCounts
