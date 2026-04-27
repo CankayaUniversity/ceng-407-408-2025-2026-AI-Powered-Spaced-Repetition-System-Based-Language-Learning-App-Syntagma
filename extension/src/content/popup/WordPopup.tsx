@@ -106,8 +106,11 @@ function WordPopupInner({
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
   const [cardSaved, setCardSaved] = useState<'idle' | 'saving' | 'done' | 'error'>('idle');
   const [screenshot] = useState<string | null>(screenshotDataUrl ?? null);
+  const [isDragging, setIsDragging] = useState(false);
   const popupRef = useRef<HTMLDivElement>(null);
   const requestIdRef = useRef<string | null>(null);
+  const isDraggingRef = useRef(false);
+  const dragOffsetRef = useRef({ x: 0, y: 0 });
 
   const freqEntry = lookupFrequency(lemma);
 
@@ -156,9 +159,48 @@ function WordPopupInner({
     setPosition({ top, left });
   }, [anchorRect]);
 
+  // Drag-and-drop
+  const handleDragStart = useCallback((e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    isDraggingRef.current = true;
+    setIsDragging(true);
+    dragOffsetRef.current = {
+      x: e.clientX - (position?.left ?? 0),
+      y: e.clientY - (position?.top ?? 0),
+    };
+    e.preventDefault();
+  }, [position]);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDraggingRef.current || !popupRef.current) return;
+      const newLeft = e.clientX - dragOffsetRef.current.x;
+      const newTop = e.clientY - dragOffsetRef.current.y;
+      const popupW = popupRef.current.offsetWidth;
+      const popupH = popupRef.current.offsetHeight;
+      setPosition({
+        top: Math.max(0, Math.min(newTop, window.innerHeight - popupH)),
+        left: Math.max(0, Math.min(newLeft, window.innerWidth - popupW)),
+      });
+    };
+    const handleMouseUp = () => {
+      if (isDraggingRef.current) {
+        isDraggingRef.current = false;
+        setIsDragging(false);
+      }
+    };
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, []);
+
   // Close on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
+      if (isDraggingRef.current) return;
       if (popupRef.current && !popupRef.current.contains(e.target as Node)) {
         onClose();
       }
@@ -282,10 +324,34 @@ function WordPopupInner({
     fontSize: '13px',
     color: C.text,
     ...(position ? { top: position.top, left: position.left } : { top: -9999, left: -9999, visibility: 'hidden' as const }),
+    ...(isDragging ? { userSelect: 'none' as const, cursor: 'grabbing' } : {}),
   };
 
   return (
     <div ref={popupRef} style={popupStyle}>
+      {/* Drag handle */}
+      <div
+        onMouseDown={handleDragStart}
+        style={{
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          height: '14px',
+          marginBottom: '6px',
+          marginTop: '-4px',
+          cursor: isDragging ? 'grabbing' : 'grab',
+          borderRadius: '4px',
+        }}
+      >
+        <svg width="24" height="8" viewBox="0 0 24 8" fill={C.surface2}>
+          <circle cx="7" cy="2" r="1.5"/>
+          <circle cx="12" cy="2" r="1.5"/>
+          <circle cx="17" cy="2" r="1.5"/>
+          <circle cx="7" cy="6" r="1.5"/>
+          <circle cx="12" cy="6" r="1.5"/>
+          <circle cx="17" cy="6" r="1.5"/>
+        </svg>
+      </div>
       {/* Header row */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '8px' }}>
         <div>
