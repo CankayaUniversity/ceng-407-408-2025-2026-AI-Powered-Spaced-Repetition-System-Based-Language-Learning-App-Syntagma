@@ -1,0 +1,33 @@
+server:
+  port: 8080
+
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/syntagma
+    username: postgres
+    password: admin123
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+    open-in-view: false
+    show-sql: false
+
+jwt:
+  secret: dev-only-change-me-32chars-minimum-secret-key-please
+  expiration: 86400000
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+  api-docs:
+    path: /v3/api-docs
+
+logging:
+  level:
+    org.springframework: INFO
+    com.syntagma: DEBUG
