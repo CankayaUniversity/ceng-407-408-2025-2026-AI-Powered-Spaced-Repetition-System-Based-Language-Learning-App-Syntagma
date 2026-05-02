@@ -43,7 +43,10 @@ public class SrsService {
                         s.getFlashcard().getTranslation(),
                         s.getNextReviewAt(),
                         s.getStability(),
-                        s.getDifficulty()
+                        s.getDifficulty(),
+                        s.getState(),
+                        s.getReps(),
+                        s.getLapses()
                 ))
                 .toList();
 
@@ -55,7 +58,12 @@ public class SrsService {
                 state.getFlashcardId(),
                 state.getStability(),
                 state.getDifficulty(),
-                state.getRetrievable(),
+                state.getRetrievability(),
+                state.getState(),
+                state.getReps(),
+                state.getLapses(),
+                state.getScheduledDays(),
+                state.getElapsedDays(),
                 state.getLastReviewedAt(),
                 state.getNextReviewAt()
         );

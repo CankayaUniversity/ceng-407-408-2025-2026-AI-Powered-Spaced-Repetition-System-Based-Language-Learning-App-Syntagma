@@ -6,7 +6,12 @@ public record SrsStateResponse(
         Long flashcardId,
         Float stability,
         Float difficulty,
-        Float retrievable,
+        Float retrievability,
+        String state,
+        Integer reps,
+        Integer lapses,
+        Integer scheduledDays,
+        Integer elapsedDays,
         LocalDateTime lastReviewedAt,
         LocalDateTime nextReviewAt
 ) {}

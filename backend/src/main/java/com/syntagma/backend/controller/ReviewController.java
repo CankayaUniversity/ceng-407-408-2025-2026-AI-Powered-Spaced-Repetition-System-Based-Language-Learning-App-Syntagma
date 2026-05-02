@@ -5,6 +5,7 @@ import com.syntagma.backend.dto.response.ApiResponse;
 import com.syntagma.backend.dto.response.ReviewLogResponse;
 import com.syntagma.backend.dto.response.ReviewResultResponse;
 import com.syntagma.backend.dto.response.ReviewStatsResponse;
+import com.syntagma.backend.security.SecurityUtils;
 import com.syntagma.backend.service.ReviewService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -27,27 +28,27 @@ public class ReviewController {
 
     @PostMapping
     public ResponseEntity<ApiResponse<ReviewResultResponse>> submitReview(
-            @RequestHeader("X-User-Id") Long userId,
             @Valid @RequestBody ReviewSubmitRequest request) {
+        Long userId = SecurityUtils.getAuthenticatedUserId();
         ReviewResultResponse response = reviewService.submitReview(userId, request);
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(response));
     }
 
     @GetMapping
     public ResponseEntity<ApiResponse<Page<ReviewLogResponse>>> getReviews(
-            @RequestHeader("X-User-Id") Long userId,
             @RequestParam(required = false) Long flashcardId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startDate,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime endDate,
             @PageableDefault(size = 20) Pageable pageable) {
+        Long userId = SecurityUtils.getAuthenticatedUserId();
         Page<ReviewLogResponse> page = reviewService.getReviews(userId, flashcardId, startDate, endDate, pageable);
         return ResponseEntity.ok(ApiResponse.success(page));
     }
 
     @GetMapping("/stats")
     public ResponseEntity<ApiResponse<ReviewStatsResponse>> getStats(
-            @RequestHeader("X-User-Id") Long userId,
             @RequestParam(defaultValue = "week") String period) {
+        Long userId = SecurityUtils.getAuthenticatedUserId();
         ReviewStatsResponse stats = reviewService.getStats(userId, period);
         return ResponseEntity.ok(ApiResponse.success(stats));
     }

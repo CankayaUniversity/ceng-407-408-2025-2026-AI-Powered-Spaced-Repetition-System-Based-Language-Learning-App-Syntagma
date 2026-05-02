@@ -25,5 +25,9 @@ public class MediaAsset {
 
     private String mimeType;
 
+    private String originalFileName;
+
+    private Long sizeBytes;
+
     private LocalDateTime createdAt;
 }
