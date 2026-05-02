@@ -10,7 +10,7 @@ import {
   getAuthHeaders,
 } from '../shared/storage';
 import { callAI } from '../shared/ai';
-import type { LexemeEntry } from '../shared/types';
+import type { FlashcardPayload, LexemeEntry } from '../shared/types';
 import { populateDictionary, lookupTranslation } from './dictionary-db';
 
 // Initialize the massive IndexedDB dictionary
@@ -24,18 +24,201 @@ populateDictionary().catch(console.error);
 setInterval(chrome.runtime.getPlatformInfo, 20e3);
 
 const BACKEND_URL = 'https://syntagma.omerhanyigit.online';
+const SCREENSHOT_URL_CACHE_KEY = 'flashcardScreenshotUrls';
+const SCREENSHOT_URL_REFRESH_MARGIN_MS = 30_000;
+
+type ScreenshotUrlCache = Record<string, { url: string; expiresAt: number }>;
 
 async function refreshTokenIfNeeded(response: Response): Promise<void> {
   const newToken = response.headers.get('X-Refreshed-Token');
-  if (newToken) {
+  if (!newToken) return;
+
+  const settings = await getSettings();
+  if (settings.authToken !== newToken) {
     await setSettings({ authToken: newToken });
   }
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  mapper: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(limit, items.length);
+
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(items[index]);
+    }
+  }));
+
+  return results;
 }
 
 function _computeComprehension(entries: LexemeEntry[], totalTokenCount: number): number {
   const known = entries.filter(e => e.status === 'known').length;
   const learning = entries.filter(e => e.status === 'learning').length;
   return Math.round(((known + 0.5 * learning) / Math.max(totalTokenCount, 1)) * 100);
+}
+
+function mapBackendFlashcard(fc: any): FlashcardPayload {
+  return {
+    id: String(fc.flashcardId),
+    lemma: fc.lemma ?? '',
+    surfaceForm: fc.lemma ?? '',
+    sentence: fc.sourceSentence ?? '',
+    sourceUrl: '',
+    sourceTitle: fc.exampleSentence ?? '',
+    trMeaning: fc.translation ?? '',
+    createdAt: fc.createdAt ? new Date(fc.createdAt).getTime() : Date.now(),
+    deckName: 'Syntagma',
+    tags: ['syntagma'],
+  };
+}
+
+async function getResponseError(response: Response, fallback: string): Promise<string> {
+  try {
+    const json = await response.clone().json();
+    return json?.message ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function getImageFileName(card: FlashcardPayload, contentType: string): string {
+  const safeLemma = (card.lemma || 'screenshot').replace(/[^A-Za-z0-9._-]/g, '_');
+  const extension = contentType.includes('png') ? 'png' : 'jpg';
+  return `${safeLemma}-${Date.now()}.${extension}`;
+}
+
+function dataUrlToBlob(dataUrl: string): Blob {
+  const [meta, data] = dataUrl.split(',');
+  if (!meta || !data) throw new Error('Invalid screenshot data URL');
+
+  const contentType = meta.match(/data:([^;]+)/)?.[1] ?? 'image/jpeg';
+  const binary = atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: contentType });
+}
+
+async function uploadScreenshotMedia(
+  apiBase: string,
+  settings: Awaited<ReturnType<typeof getSettings>>,
+  flashcardId: number,
+  card: FlashcardPayload
+): Promise<string | undefined> {
+  if (!card.screenshotDataUrl) return undefined;
+
+  const blob = dataUrlToBlob(card.screenshotDataUrl);
+  const contentType = blob.type || 'image/jpeg';
+  const fileName = getImageFileName(card, contentType);
+
+  const presignResponse = await fetch(`${apiBase}/api/media/presign`, {
+    method: 'POST',
+    headers: getAuthHeaders(settings),
+    body: JSON.stringify({
+      flashcardId,
+      type: 'SCREENSHOT',
+      fileName,
+      contentType,
+      size: blob.size,
+    }),
+  });
+  await refreshTokenIfNeeded(presignResponse);
+  if (!presignResponse.ok) {
+    throw new Error(await getResponseError(presignResponse, `Screenshot presign failed (${presignResponse.status})`));
+  }
+
+  const presignJson = await presignResponse.json();
+  const { uploadUrl, objectKey } = presignJson.data ?? {};
+  if (!uploadUrl || !objectKey) throw new Error('Screenshot presign response was incomplete');
+
+  const uploadResponse = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': contentType },
+    body: blob,
+  });
+  if (!uploadResponse.ok) {
+    throw new Error(`Screenshot upload failed (${uploadResponse.status})`);
+  }
+
+  const mediaResponse = await fetch(`${apiBase}/api/media`, {
+    method: 'POST',
+    headers: getAuthHeaders(settings),
+    body: JSON.stringify({
+      flashcardId,
+      type: 'SCREENSHOT',
+      objectKey,
+      originalFileName: fileName,
+      contentType,
+      size: blob.size,
+    }),
+  });
+  await refreshTokenIfNeeded(mediaResponse);
+  if (!mediaResponse.ok) {
+    throw new Error(await getResponseError(mediaResponse, `Screenshot media save failed (${mediaResponse.status})`));
+  }
+
+  const mediaJson = await mediaResponse.json();
+  const mediaId = mediaJson.data?.mediaId;
+  if (!mediaId) return undefined;
+
+  const urlResponse = await fetch(`${apiBase}/api/media/${mediaId}/url`, {
+    headers: getAuthHeaders(settings),
+  });
+  await refreshTokenIfNeeded(urlResponse);
+  if (!urlResponse.ok) return undefined;
+  const urlJson = await urlResponse.json();
+  return urlJson.data?.downloadUrl;
+}
+
+async function getScreenshotUrl(
+  apiBase: string,
+  settings: Awaited<ReturnType<typeof getSettings>>,
+  flashcardId: string,
+  cache: ScreenshotUrlCache
+): Promise<string | undefined> {
+  const cached = cache[flashcardId];
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.url;
+  }
+
+  const mediaResponse = await fetch(`${apiBase}/api/flashcards/${encodeURIComponent(flashcardId)}/media`, {
+    headers: getAuthHeaders(settings),
+  });
+  await refreshTokenIfNeeded(mediaResponse);
+  if (!mediaResponse.ok) return undefined;
+
+  const mediaJson = await mediaResponse.json();
+  const assets = mediaJson.data ?? [];
+  const screenshot = assets.find((asset: any) => asset.type === 'SCREENSHOT');
+  if (!screenshot?.mediaId) return undefined;
+
+  const urlResponse = await fetch(`${apiBase}/api/media/${screenshot.mediaId}/url`, {
+    headers: getAuthHeaders(settings),
+  });
+  await refreshTokenIfNeeded(urlResponse);
+  if (!urlResponse.ok) return undefined;
+
+  const urlJson = await urlResponse.json();
+  const downloadUrl = urlJson.data?.downloadUrl;
+  if (!downloadUrl) return undefined;
+
+  const responseExpiresAt = Date.parse(urlJson.data?.expiresAt ?? '');
+  cache[flashcardId] = {
+    url: downloadUrl,
+    expiresAt: Number.isFinite(responseExpiresAt)
+      ? responseExpiresAt - SCREENSHOT_URL_REFRESH_MARGIN_MS
+      : Date.now() + 8 * 60 * 1000,
+  };
+  return downloadUrl;
 }
 
 onMessage(async (msg, sender) => {
@@ -269,7 +452,6 @@ onMessage(async (msg, sender) => {
         return { ok: false, error: 'Not logged in' };
       }
       const card = msg.payload;
-      await saveFlashcard(card);
       if (settings.authToken) {
         const apiBase = settings.apiBaseUrl || BACKEND_URL;
         const payload = {
@@ -286,12 +468,89 @@ onMessage(async (msg, sender) => {
             body: JSON.stringify(payload),
           });
           await refreshTokenIfNeeded(res);
+          if (!res.ok) {
+            return { ok: false, error: await getResponseError(res, `Server returned ${res.status}`) };
+          }
+          const json = await res.json();
+          const serverCard = mapBackendFlashcard(json.data ?? {});
+          const flashcardId = Number(serverCard.id);
+          const screenshotUrl = Number.isFinite(flashcardId)
+            ? await uploadScreenshotMedia(apiBase, settings, flashcardId, card)
+            : undefined;
+          const savedCard: FlashcardPayload = {
+            ...card,
+            ...serverCard,
+            sourceUrl: card.sourceUrl,
+            sourceTitle: card.sourceTitle,
+            deckName: card.deckName,
+            tags: card.tags,
+            screenshotDataUrl: screenshotUrl ?? card.screenshotDataUrl,
+          };
+          await saveFlashcard(savedCard);
+          return { ok: true, card: savedCard };
         } catch (err) {
           console.error('[Syntagma] Backend sync error:', err);
+          return { ok: false, error: (err as Error).message };
         }
       }
 
       return { ok: true };
+    }
+
+    case 'FETCH_FLASHCARDS': {
+      const settings = await getSettings();
+      if (!settings.authToken) {
+        return { ok: false, error: 'Not logged in' };
+      }
+      const apiBase = settings.apiBaseUrl || BACKEND_URL;
+      try {
+        const res = await fetch(`${apiBase}/api/flashcards?size=100&sort=createdAt,desc`, {
+          headers: getAuthHeaders(settings),
+        });
+        await refreshTokenIfNeeded(res);
+        if (!res.ok) {
+          return { ok: false, error: await getResponseError(res, `Server returned ${res.status}`) };
+        }
+        const json = await res.json();
+        const content = json.data?.content ?? json.data ?? [];
+        const baseCards = content.map(mapBackendFlashcard);
+        const cacheResult = await chrome.storage.local.get(SCREENSHOT_URL_CACHE_KEY);
+        const screenshotCache = (cacheResult[SCREENSHOT_URL_CACHE_KEY] ?? {}) as ScreenshotUrlCache;
+        const cards = await mapWithConcurrency(baseCards, 4, async (card: FlashcardPayload) => ({
+          ...card,
+          screenshotDataUrl: await getScreenshotUrl(apiBase, settings, card.id, screenshotCache),
+        }));
+        await chrome.storage.local.set({
+          flashcards: cards,
+          [SCREENSHOT_URL_CACHE_KEY]: screenshotCache,
+        });
+        return { ok: true, cards };
+      } catch (err) {
+        console.error('[Syntagma] Failed to fetch flashcards:', err);
+        return { ok: false, error: (err as Error).message };
+      }
+    }
+
+    case 'DELETE_FLASHCARD': {
+      const settings = await getSettings();
+      if (!settings.authToken) {
+        return { ok: false, error: 'Not logged in' };
+      }
+      const apiBase = settings.apiBaseUrl || BACKEND_URL;
+      try {
+        const res = await fetch(`${apiBase}/api/flashcards/${encodeURIComponent(msg.payload.id)}`, {
+          method: 'DELETE',
+          headers: getAuthHeaders(settings),
+        });
+        await refreshTokenIfNeeded(res);
+        if (!res.ok) {
+          return { ok: false, error: await getResponseError(res, `Server returned ${res.status}`) };
+        }
+        return { ok: true };
+      } catch (err) {
+        console.error('[Syntagma] Failed to delete flashcard:', err);
+        return { ok: false, error: (err as Error).message };
+      }
     }
 
     case 'EXPORT_TO_ANKI': {

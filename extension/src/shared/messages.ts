@@ -16,6 +16,8 @@ export type ExtensionMessage =
   | { type: 'OPEN_EXTERNAL_DICTIONARY'; payload: { provider: 'tureng' | 'cambridge' | 'oxford' | 'merriam-webster'; word: string } }
   | { type: 'LOOKUP_DICTIONARY'; payload: { word: string } }
   | { type: 'CREATE_FLASHCARD'; payload: FlashcardPayload }
+  | { type: 'FETCH_FLASHCARDS'; payload: null }
+  | { type: 'DELETE_FLASHCARD'; payload: { id: string } }
   | { type: 'EXPORT_TO_ANKI'; payload: { cardIds: string[] } }
   | { type: 'GET_SETTINGS'; payload: null }
   | { type: 'SET_SETTINGS'; payload: Partial<UserSettings> }

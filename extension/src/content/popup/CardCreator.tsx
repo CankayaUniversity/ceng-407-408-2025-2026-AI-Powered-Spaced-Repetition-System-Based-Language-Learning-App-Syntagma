@@ -46,7 +46,11 @@ export function CardCreator({ lemma, surface, sentence, lexeme, translations, on
         deckName: 'Syntagma',
         tags: ['syntagma'],
       };
-      await sendMessage({ type: 'CREATE_FLASHCARD', payload: card });
+      const result = await sendMessage<{ ok: boolean; error?: string }>({
+        type: 'CREATE_FLASHCARD',
+        payload: card,
+      });
+      if (!result.ok) throw new Error(result.error ?? 'Could not save flashcard');
       setSaved(true);
       setTimeout(onSaved, 800);
     } catch (err) {

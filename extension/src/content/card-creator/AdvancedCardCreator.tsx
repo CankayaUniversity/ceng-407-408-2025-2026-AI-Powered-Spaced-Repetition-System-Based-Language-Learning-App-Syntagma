@@ -89,7 +89,11 @@ function AdvancedCardCreatorInner({ initialWord = '', initialSentence = '', sett
         deckName: deck,
         tags: ['syntagma', 'advanced-creator'],
       };
-      await sendMessage({ type: 'CREATE_FLASHCARD', payload: card });
+      const result = await sendMessage<{ ok: boolean; error?: string }>({
+        type: 'CREATE_FLASHCARD',
+        payload: card,
+      });
+      if (!result.ok) throw new Error(result.error ?? 'Could not create card');
       onCreated(card.lemma);
       setSaveMsg({ text: 'Card created!', ok: true });
       setTimeout(() => setSaveMsg(null), 2000);

@@ -301,7 +301,11 @@ function WordPopupInner({
         deckName: 'Syntagma',
         tags: ['syntagma'],
       };
-      await sendMessage({ type: 'CREATE_FLASHCARD', payload: card });
+      const result = await sendMessage<{ ok: boolean; error?: string }>({
+        type: 'CREATE_FLASHCARD',
+        payload: card,
+      });
+      if (!result.ok) throw new Error(result.error ?? 'Could not save flashcard');
       setCardSaved('done');
       setTimeout(() => setCardSaved('idle'), 2000);
     } catch {
