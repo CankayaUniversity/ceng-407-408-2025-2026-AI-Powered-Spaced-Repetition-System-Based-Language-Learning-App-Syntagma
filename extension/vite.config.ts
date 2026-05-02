@@ -1,7 +1,7 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import { resolve } from "path";
-import { copyFileSync, mkdirSync, existsSync, readdirSync, statSync } from "fs";
+import { copyFileSync, mkdirSync, existsSync, readdirSync, statSync, cpSync } from "fs";
 import { join } from "path";
 
 // Plugin to copy static extension assets after build
@@ -44,6 +44,24 @@ function copyExtensionAssets() {
       if (existsSync(dictSrc)) {
         copyFileSync(dictSrc, join(dist, "dictionary.json"));
       }
+
+      // Copy pdf.js worker → dist/pdf.worker.min.mjs
+      const pdfWorkerSrc = join(root, "node_modules", "pdfjs-dist", "build", "pdf.worker.min.mjs");
+      if (existsSync(pdfWorkerSrc)) {
+        copyFileSync(pdfWorkerSrc, join(dist, "pdf.worker.min.mjs"));
+      }
+
+      // Copy pdfjs-dist asset directories needed at runtime:
+      //   wasm/           — JBIG2, OpenJPEG, QCMS decoders
+      //   cmaps/          — CMap data for CJK fonts
+      //   standard_fonts/ — Standard PDF fonts
+      const pdfBase = join(root, "node_modules", "pdfjs-dist");
+      for (const assetDir of ["wasm", "cmaps", "standard_fonts"]) {
+        const src = join(pdfBase, assetDir);
+        if (existsSync(src)) {
+          cpSync(src, join(dist, assetDir), { recursive: true });
+        }
+      }
     },
   };
 }
@@ -62,6 +80,7 @@ export default defineConfig(({ command }) => {
             options: resolve(__dirname, "options.html"),
             "card-creator": resolve(__dirname, "card-creator.html"),
             auth: resolve(__dirname, "auth.html"),
+            "pdf-viewer": resolve(__dirname, "pdf-viewer.html"),
             // Background service worker — MV3 service workers support ES modules
             "background/service-worker": resolve(
               __dirname,
