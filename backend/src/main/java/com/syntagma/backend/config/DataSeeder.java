@@ -35,25 +35,34 @@ public class DataSeeder implements CommandLineRunner {
             testUser.setStreakCount(0);
             userRepository.save(testUser);
 
-            // Create 5 Mock Flashcards for this User
-            Flashcard f1 = createFlashcard(testUser, "aberration", "sapma, anormallik", 
-                    "The current weather is an aberration.", "Şu anki hava durumu bir sapmadır.");
-            
-            Flashcard f2 = createFlashcard(testUser, "ephemeral", "kısa ömürlü, geçici", 
-                    "Fame in the modern world is often ephemeral.", "Modern dünyada şöhret genellikle kısa ömürlüdür.");
-            
-            Flashcard f3 = createFlashcard(testUser, "cacophony", "kakofoni, uyumsuz ses", 
-                    "A cacophony of alarms woke me up.", "Bir alarm kakofonisi beni uyandırdı.");
-            
-            Flashcard f4 = createFlashcard(testUser, "ubiquitous", "her yerde birden bulunan", 
-                    "Smartphones have become ubiquitous.", "Akıllı telefonlar her yerde bulunur hale geldi.");
-            
-            Flashcard f5 = createFlashcard(testUser, "dichotomy", "ikiye bölünme, zıtlık", 
-                    "There is a dichotomy between science and mysticism.", "Bilim ve mistisizm arasında bir zıtlık vardır.");
+            // Create mock flashcards to exercise 2-button FSRS flow (known/unknown)
+            Flashcard f1 = createFlashcard(testUser, "aberration", "sapma, anormallik",
+                    "The current weather is an aberration.", "Su anki hava durumu bir sapmadir.");
 
-            flashcardRepository.saveAll(List.of(f1, f2, f3, f4, f5));
+            Flashcard f2 = createFlashcard(testUser, "ephemeral", "kisa omurlu, gecici",
+                    "Fame in the modern world is often ephemeral.", "Modern dunyada sohret genellikle kisa omurludur.");
 
-            System.out.println("✅ Mock data seeding complete! 1 User and 5 Flashcards created.");
+            Flashcard f3 = createFlashcard(testUser, "cacophony", "kakofoni, uyumsuz ses",
+                    "A cacophony of alarms woke me up.", "Bir alarm kakofonisi beni uyandirdi.");
+
+            Flashcard f4 = createFlashcard(testUser, "ubiquitous", "her yerde birden bulunan",
+                    "Smartphones have become ubiquitous.", "Akilli telefonlar her yerde bulunur hale geldi.");
+
+            Flashcard f5 = createFlashcard(testUser, "dichotomy", "ikiye bolunme, zitlik",
+                    "There is a dichotomy between science and mysticism.", "Bilim ve mistisizm arasinda bir zitlik vardir.");
+
+            Flashcard f6 = createFlashcard(testUser, "serendipity", "tesadufi sans, mutlu rastlanti",
+                    "We found the cafe by pure serendipity.", "Kafeyi tamamen tesaduf eseri bulduk.");
+
+            Flashcard f7 = createFlashcard(testUser, "meticulous", "titiz, ayrintici",
+                    "She keeps meticulous notes.", "Titiz notlar tutar.");
+
+            Flashcard f8 = createFlashcard(testUser, "resilient", "dayanikli, direncli",
+                    "Children are remarkably resilient.", "Cocuklar sasirtici derecede dayaniktir.");
+
+            flashcardRepository.saveAll(List.of(f1, f2, f3, f4, f5, f6, f7, f8));
+
+            System.out.println("✅ Mock data seeding complete! 1 User and 8 Flashcards created.");
         }
     }
 

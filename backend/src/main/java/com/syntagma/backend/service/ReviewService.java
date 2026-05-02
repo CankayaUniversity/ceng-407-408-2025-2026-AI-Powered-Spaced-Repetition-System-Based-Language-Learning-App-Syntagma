@@ -41,20 +41,32 @@ public class ReviewService {
             throw new EntityNotFoundException("Flashcard not found: " + request.flashcardId());
         }
 
-        // Parse the FSRS rating (1=Again, 2=Hard, 3=Good, 4=Easy)
-        Rating rating = Rating.fromValue(request.result());
+                // Map 2-button UI to FSRS: known -> GOOD(3), unknown -> AGAIN(1)
+                Rating rating;
+                Integer resultValue;
+                if (request.known() != null) {
+                        rating = request.known() ? Rating.GOOD : Rating.AGAIN;
+                        resultValue = rating.getValue();
+                } else if (request.result() != null) {
+                        rating = Rating.fromValue(request.result());
+                        resultValue = rating.getValue();
+                } else {
+                        throw new IllegalArgumentException("Either 'known' or 'result' must be provided");
+                }
 
-        log.info("Submitting review for userId={}, flashcardId={}, result={}",
-                userId, request.flashcardId(), request.result());
+                log.info("Submitting review for userId={}, flashcardId={}, result={}",
+                                userId, request.flashcardId(), resultValue);
 
         // Create review log
         ReviewLog reviewLog = new ReviewLog();
         reviewLog.setFlashcard(flashcard);
         reviewLog.setUser(user);
         reviewLog.setReviewedAt(LocalDateTime.now());
-        reviewLog.setResult(request.result());
+        reviewLog.setResult(resultValue);
         reviewLog.setDevice(request.device());
-        reviewLog.setClientTimestamp(request.clientTimestamp());
+                if (request.clientTimestamp() != null) {
+                        reviewLog.setClientTimestamp(request.clientTimestamp().toLocalDateTime());
+                }
         ReviewLog savedLog = reviewLogRepository.save(reviewLog);
 
         // Get or create SRS state

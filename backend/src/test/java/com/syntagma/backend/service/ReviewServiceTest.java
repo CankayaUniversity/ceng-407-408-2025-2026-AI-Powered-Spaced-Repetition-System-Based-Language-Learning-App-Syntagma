@@ -21,6 +21,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -60,7 +61,7 @@ class ReviewServiceTest {
         savedLog.setResult(4);
         savedLog.setReviewedAt(LocalDateTime.now());
 
-        ReviewSubmitRequest request = new ReviewSubmitRequest(10L, 4, DeviceType.MOBILE, LocalDateTime.now());
+        ReviewSubmitRequest request = new ReviewSubmitRequest(10L, null, 4, DeviceType.MOBILE, OffsetDateTime.now());
 
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
         when(flashcardRepository.findById(10L)).thenReturn(Optional.of(flashcard));
@@ -91,7 +92,7 @@ class ReviewServiceTest {
         flashcard.setFlashcardId(10L);
         flashcard.setUser(otherUser);
 
-        ReviewSubmitRequest request = new ReviewSubmitRequest(10L, 4, DeviceType.MOBILE, LocalDateTime.now());
+        ReviewSubmitRequest request = new ReviewSubmitRequest(10L, null, 4, DeviceType.MOBILE, OffsetDateTime.now());
 
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
         when(flashcardRepository.findById(10L)).thenReturn(Optional.of(flashcard));
@@ -116,7 +117,7 @@ class ReviewServiceTest {
         savedLog.setResult(3);
         savedLog.setReviewedAt(LocalDateTime.now());
 
-        ReviewSubmitRequest request = new ReviewSubmitRequest(10L, 3, DeviceType.EXTENSION, LocalDateTime.now());
+        ReviewSubmitRequest request = new ReviewSubmitRequest(10L, null, 3, DeviceType.EXTENSION, OffsetDateTime.now());
 
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
         when(flashcardRepository.findById(10L)).thenReturn(Optional.of(flashcard));
