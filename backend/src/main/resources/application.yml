@@ -5,7 +5,7 @@ spring:
   datasource:
     url: jdbc:postgresql://localhost:5432/syntagma
     username: postgres
-    password: admin123
+    password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
@@ -18,7 +18,7 @@ spring:
     show-sql: false
 
 jwt:
-  secret: dev-only-change-me-32chars-minimum-secret-key-please
+  secret: ${JWT_SECRET}
   expiration: 86400000
 
 storage:
