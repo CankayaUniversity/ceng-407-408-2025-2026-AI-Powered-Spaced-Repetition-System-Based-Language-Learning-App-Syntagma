@@ -210,7 +210,11 @@ async function handleQuickAddCard(lemma: string, sentence: string): Promise<void
     tags: ['syntagma', 'quick-add'],
   };
 
-  await sendMessage({ type: 'CREATE_FLASHCARD', payload: card });
+  const result = await sendMessage<{ ok: boolean; error?: string }>({
+    type: 'CREATE_FLASHCARD',
+    payload: card,
+  });
+  if (!result.ok) throw new Error(result.error ?? 'Could not create flashcard');
 }
 
 // ─── Advanced Card Creator ────────────────────────────────────────────────────

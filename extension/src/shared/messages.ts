@@ -16,6 +16,8 @@ export type ExtensionMessage =
   | { type: 'OPEN_EXTERNAL_DICTIONARY'; payload: { provider: 'tureng' | 'cambridge' | 'oxford' | 'merriam-webster'; word: string } }
   | { type: 'LOOKUP_DICTIONARY'; payload: { word: string } }
   | { type: 'CREATE_FLASHCARD'; payload: FlashcardPayload }
+  | { type: 'FETCH_FLASHCARDS'; payload: null }
+  | { type: 'DELETE_FLASHCARD'; payload: { id: string } }
   | { type: 'EXPORT_TO_ANKI'; payload: { cardIds: string[] } }
   | { type: 'GET_SETTINGS'; payload: null }
   | { type: 'SET_SETTINGS'; payload: Partial<UserSettings> }
@@ -26,7 +28,8 @@ export type ExtensionMessage =
   | { type: 'LOGOUT'; payload: null }
   | { type: 'OPEN_AUTH_PAGE'; payload: null }
   | { type: 'GET_TAB_CAPTURE_STREAM_ID'; payload: null }
-  | { type: 'CAPTURE_TAB_SCREENSHOT'; payload: null };
+  | { type: 'CAPTURE_TAB_SCREENSHOT'; payload: null }
+  | { type: 'UPLOAD_SENTENCE_AUDIO'; payload: { flashcardId: number; audioDataUrl: string; mimeType: string; sentence: string; videoUrl: string } };
 
 export type BackgroundMessage =
   | { type: 'AI_STREAM_CHUNK'; payload: { requestId: string; chunk: string } }

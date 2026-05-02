@@ -10,7 +10,7 @@ import {
   getAuthHeaders,
 } from '../shared/storage';
 import { callAI } from '../shared/ai';
-import type { LexemeEntry } from '../shared/types';
+import type { FlashcardPayload, LexemeEntry } from '../shared/types';
 import { populateDictionary, lookupTranslation } from './dictionary-db';
 
 // Initialize the massive IndexedDB dictionary
@@ -24,18 +24,302 @@ populateDictionary().catch(console.error);
 setInterval(chrome.runtime.getPlatformInfo, 20e3);
 
 const BACKEND_URL = 'https://syntagma.omerhanyigit.online';
+const MEDIA_URL_CACHE_KEY = 'flashcardMediaUrls';
+const SCREENSHOT_URL_CACHE_KEY = 'flashcardScreenshotUrls';
+const MEDIA_URL_REFRESH_MARGIN_MS = 30_000;
+
+interface CachedMediaUrls {
+  screenshotUrl?: string;
+  audioUrl?: string;
+  expiresAt: number;
+}
+type MediaUrlCache = Record<string, CachedMediaUrls>;
+// Keep the old type alias so the screenshot-only cache key still works during migration.
+type ScreenshotUrlCache = Record<string, { url: string; expiresAt: number }>;
 
 async function refreshTokenIfNeeded(response: Response): Promise<void> {
   const newToken = response.headers.get('X-Refreshed-Token');
-  if (newToken) {
+  if (!newToken) return;
+
+  const settings = await getSettings();
+  if (settings.authToken !== newToken) {
     await setSettings({ authToken: newToken });
   }
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  mapper: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(limit, items.length);
+
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(items[index]);
+    }
+  }));
+
+  return results;
 }
 
 function _computeComprehension(entries: LexemeEntry[], totalTokenCount: number): number {
   const known = entries.filter(e => e.status === 'known').length;
   const learning = entries.filter(e => e.status === 'learning').length;
   return Math.round(((known + 0.5 * learning) / Math.max(totalTokenCount, 1)) * 100);
+}
+
+function mapBackendFlashcard(fc: any): FlashcardPayload {
+  return {
+    id: String(fc.flashcardId),
+    lemma: fc.lemma ?? '',
+    surfaceForm: fc.lemma ?? '',
+    sentence: fc.sourceSentence ?? '',
+    sourceUrl: '',
+    sourceTitle: fc.exampleSentence ?? '',
+    trMeaning: fc.translation ?? '',
+    createdAt: fc.createdAt ? new Date(fc.createdAt).getTime() : Date.now(),
+    deckName: 'Syntagma',
+    tags: ['syntagma'],
+  };
+}
+
+async function getResponseError(response: Response, fallback: string): Promise<string> {
+  try {
+    const json = await response.clone().json();
+    return json?.message ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function getImageFileName(card: FlashcardPayload, contentType: string): string {
+  const safeLemma = (card.lemma || 'screenshot').replace(/[^A-Za-z0-9._-]/g, '_');
+  const extension = contentType.includes('png') ? 'png' : 'jpg';
+  return `${safeLemma}-${Date.now()}.${extension}`;
+}
+
+function dataUrlToBlob(dataUrl: string): Blob {
+  const [meta, data] = dataUrl.split(',');
+  if (!meta || !data) throw new Error('Invalid screenshot data URL');
+
+  const contentType = meta.match(/data:([^;]+)/)?.[1] ?? 'image/jpeg';
+  const binary = atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: contentType });
+}
+
+async function uploadScreenshotMedia(
+  apiBase: string,
+  settings: Awaited<ReturnType<typeof getSettings>>,
+  flashcardId: number,
+  card: FlashcardPayload
+): Promise<string | undefined> {
+  if (!card.screenshotDataUrl) return undefined;
+
+  const blob = dataUrlToBlob(card.screenshotDataUrl);
+  const contentType = blob.type || 'image/jpeg';
+  const fileName = getImageFileName(card, contentType);
+
+  const presignResponse = await fetch(`${apiBase}/api/media/presign`, {
+    method: 'POST',
+    headers: getAuthHeaders(settings),
+    body: JSON.stringify({
+      flashcardId,
+      type: 'SCREENSHOT',
+      fileName,
+      contentType,
+      size: blob.size,
+    }),
+  });
+  await refreshTokenIfNeeded(presignResponse);
+  if (!presignResponse.ok) {
+    throw new Error(await getResponseError(presignResponse, `Screenshot presign failed (${presignResponse.status})`));
+  }
+
+  const presignJson = await presignResponse.json();
+  const { uploadUrl, objectKey } = presignJson.data ?? {};
+  if (!uploadUrl || !objectKey) throw new Error('Screenshot presign response was incomplete');
+
+  const uploadResponse = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': contentType },
+    body: blob,
+  });
+  if (!uploadResponse.ok) {
+    throw new Error(`Screenshot upload failed (${uploadResponse.status})`);
+  }
+
+  const mediaResponse = await fetch(`${apiBase}/api/media`, {
+    method: 'POST',
+    headers: getAuthHeaders(settings),
+    body: JSON.stringify({
+      flashcardId,
+      type: 'SCREENSHOT',
+      objectKey,
+      originalFileName: fileName,
+      contentType,
+      size: blob.size,
+    }),
+  });
+  await refreshTokenIfNeeded(mediaResponse);
+  if (!mediaResponse.ok) {
+    throw new Error(await getResponseError(mediaResponse, `Screenshot media save failed (${mediaResponse.status})`));
+  }
+
+  const mediaJson = await mediaResponse.json();
+  const mediaId = mediaJson.data?.mediaId;
+  if (!mediaId) return undefined;
+
+  const urlResponse = await fetch(`${apiBase}/api/media/${mediaId}/url`, {
+    headers: getAuthHeaders(settings),
+  });
+  await refreshTokenIfNeeded(urlResponse);
+  if (!urlResponse.ok) return undefined;
+  const urlJson = await urlResponse.json();
+  return urlJson.data?.downloadUrl;
+}
+
+async function uploadAudioMedia(
+  apiBase: string,
+  settings: Awaited<ReturnType<typeof getSettings>>,
+  flashcardId: number,
+  card: FlashcardPayload
+): Promise<string | undefined> {
+  if (!card.sentenceAudioDataUrl) return undefined;
+
+  const blob = dataUrlToBlob(card.sentenceAudioDataUrl);
+  const contentType = blob.type || 'audio/webm';
+  const ext = contentType.includes('webm') ? 'webm' : 'ogg';
+  const fileName = `sentence_audio_${flashcardId}_${Date.now()}.${ext}`;
+
+  const presignResponse = await fetch(`${apiBase}/api/media/presign`, {
+    method: 'POST',
+    headers: getAuthHeaders(settings),
+    body: JSON.stringify({
+      flashcardId,
+      type: 'AUDIO',
+      fileName,
+      contentType,
+      size: blob.size,
+    }),
+  });
+  await refreshTokenIfNeeded(presignResponse);
+  if (!presignResponse.ok) {
+    console.warn('[Syntagma] Audio presign failed:', presignResponse.status);
+    return undefined;
+  }
+
+  const presignJson = await presignResponse.json();
+  const { uploadUrl, objectKey } = presignJson.data ?? {};
+  if (!uploadUrl || !objectKey) return undefined;
+
+  const uploadResponse = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': contentType },
+    body: blob,
+  });
+  if (!uploadResponse.ok) {
+    console.warn('[Syntagma] Audio S3 upload failed:', uploadResponse.status);
+    return undefined;
+  }
+
+  const mediaResponse = await fetch(`${apiBase}/api/media`, {
+    method: 'POST',
+    headers: getAuthHeaders(settings),
+    body: JSON.stringify({
+      flashcardId,
+      type: 'AUDIO',
+      objectKey,
+      originalFileName: fileName,
+      contentType,
+      size: blob.size,
+    }),
+  });
+  await refreshTokenIfNeeded(mediaResponse);
+  if (!mediaResponse.ok) return undefined;
+
+  const mediaJson = await mediaResponse.json();
+  const mediaId = mediaJson.data?.mediaId;
+  if (!mediaId) return undefined;
+
+  const urlResponse = await fetch(`${apiBase}/api/media/${mediaId}/url`, {
+    headers: getAuthHeaders(settings),
+  });
+  await refreshTokenIfNeeded(urlResponse);
+  if (!urlResponse.ok) return undefined;
+  const urlJson = await urlResponse.json();
+  return urlJson.data?.downloadUrl;
+}
+
+async function getMediaUrls(
+  apiBase: string,
+  settings: Awaited<ReturnType<typeof getSettings>>,
+  flashcardId: string,
+  cache: MediaUrlCache
+): Promise<{ screenshotUrl?: string; audioUrl?: string }> {
+  const cached = cache[flashcardId];
+  if (cached && cached.expiresAt > Date.now()) {
+    return { screenshotUrl: cached.screenshotUrl, audioUrl: cached.audioUrl };
+  }
+
+  const mediaResponse = await fetch(`${apiBase}/api/flashcards/${encodeURIComponent(flashcardId)}/media`, {
+    headers: getAuthHeaders(settings),
+  });
+  await refreshTokenIfNeeded(mediaResponse);
+  if (!mediaResponse.ok) return {};
+
+  const mediaJson = await mediaResponse.json();
+  const assets: any[] = mediaJson.data ?? [];
+
+  const result: { screenshotUrl?: string; audioUrl?: string } = {};
+  let minExpiresAt = Infinity;
+
+  // Resolve download URLs for both SCREENSHOT and AUDIO assets in parallel
+  const screenshot = assets.find((a: any) => a.type === 'SCREENSHOT');
+  const audio = assets.find((a: any) => a.type === 'AUDIO');
+
+  const resolveUrl = async (mediaId: number | undefined): Promise<{ url?: string; expiresAt?: number }> => {
+    if (!mediaId) return {};
+    const urlResponse = await fetch(`${apiBase}/api/media/${mediaId}/url`, {
+      headers: getAuthHeaders(settings),
+    });
+    await refreshTokenIfNeeded(urlResponse);
+    if (!urlResponse.ok) return {};
+    const urlJson = await urlResponse.json();
+    const expiresAt = Date.parse(urlJson.data?.expiresAt ?? '');
+    return { url: urlJson.data?.downloadUrl, expiresAt: Number.isFinite(expiresAt) ? expiresAt : undefined };
+  };
+
+  const [ssResult, audioResult] = await Promise.all([
+    resolveUrl(screenshot?.mediaId),
+    resolveUrl(audio?.mediaId),
+  ]);
+
+  if (ssResult.url) {
+    result.screenshotUrl = ssResult.url;
+    if (ssResult.expiresAt && ssResult.expiresAt < minExpiresAt) minExpiresAt = ssResult.expiresAt;
+  }
+  if (audioResult.url) {
+    result.audioUrl = audioResult.url;
+    if (audioResult.expiresAt && audioResult.expiresAt < minExpiresAt) minExpiresAt = audioResult.expiresAt;
+  }
+
+  cache[flashcardId] = {
+    screenshotUrl: result.screenshotUrl,
+    audioUrl: result.audioUrl,
+    expiresAt: Number.isFinite(minExpiresAt)
+      ? minExpiresAt - MEDIA_URL_REFRESH_MARGIN_MS
+      : Date.now() + 8 * 60 * 1000,
+  };
+  return result;
 }
 
 onMessage(async (msg, sender) => {
@@ -269,7 +553,6 @@ onMessage(async (msg, sender) => {
         return { ok: false, error: 'Not logged in' };
       }
       const card = msg.payload;
-      await saveFlashcard(card);
       if (settings.authToken) {
         const apiBase = settings.apiBaseUrl || BACKEND_URL;
         const payload = {
@@ -286,12 +569,98 @@ onMessage(async (msg, sender) => {
             body: JSON.stringify(payload),
           });
           await refreshTokenIfNeeded(res);
+          if (!res.ok) {
+            return { ok: false, error: await getResponseError(res, `Server returned ${res.status}`) };
+          }
+          const json = await res.json();
+          const serverCard = mapBackendFlashcard(json.data ?? {});
+          const flashcardId = Number(serverCard.id);
+          // Upload screenshot and sentence audio in parallel (both are optional / soft-fail).
+          const [screenshotUrl, audioUrl] = Number.isFinite(flashcardId)
+            ? await Promise.all([
+                uploadScreenshotMedia(apiBase, settings, flashcardId, card).catch(() => undefined),
+                uploadAudioMedia(apiBase, settings, flashcardId, card).catch(() => undefined),
+              ])
+            : [undefined, undefined];
+          const savedCard: FlashcardPayload = {
+            ...card,
+            ...serverCard,
+            sourceUrl: card.sourceUrl,
+            sourceTitle: card.sourceTitle,
+            deckName: card.deckName,
+            tags: card.tags,
+            screenshotDataUrl: screenshotUrl ?? card.screenshotDataUrl,
+            audioUrl: audioUrl ?? card.audioUrl,
+          };
+          await saveFlashcard(savedCard);
+          return { ok: true, card: savedCard };
         } catch (err) {
           console.error('[Syntagma] Backend sync error:', err);
+          return { ok: false, error: (err as Error).message };
         }
       }
 
       return { ok: true };
+    }
+
+    case 'FETCH_FLASHCARDS': {
+      const settings = await getSettings();
+      if (!settings.authToken) {
+        return { ok: false, error: 'Not logged in' };
+      }
+      const apiBase = settings.apiBaseUrl || BACKEND_URL;
+      try {
+        const res = await fetch(`${apiBase}/api/flashcards?size=100&sort=createdAt,desc`, {
+          headers: getAuthHeaders(settings),
+        });
+        await refreshTokenIfNeeded(res);
+        if (!res.ok) {
+          return { ok: false, error: await getResponseError(res, `Server returned ${res.status}`) };
+        }
+        const json = await res.json();
+        const content = json.data?.content ?? json.data ?? [];
+        const baseCards = content.map(mapBackendFlashcard);
+        const cacheResult = await chrome.storage.local.get(MEDIA_URL_CACHE_KEY);
+        const mediaCache = (cacheResult[MEDIA_URL_CACHE_KEY] ?? {}) as MediaUrlCache;
+        const cards = await mapWithConcurrency(baseCards, 4, async (card: FlashcardPayload) => {
+          const urls = await getMediaUrls(apiBase, settings, card.id, mediaCache);
+          return {
+            ...card,
+            screenshotDataUrl: urls.screenshotUrl,
+            audioUrl: urls.audioUrl,
+          };
+        });
+        await chrome.storage.local.set({
+          flashcards: cards,
+          [MEDIA_URL_CACHE_KEY]: mediaCache,
+        });
+        return { ok: true, cards };
+      } catch (err) {
+        console.error('[Syntagma] Failed to fetch flashcards:', err);
+        return { ok: false, error: (err as Error).message };
+      }
+    }
+
+    case 'DELETE_FLASHCARD': {
+      const settings = await getSettings();
+      if (!settings.authToken) {
+        return { ok: false, error: 'Not logged in' };
+      }
+      const apiBase = settings.apiBaseUrl || BACKEND_URL;
+      try {
+        const res = await fetch(`${apiBase}/api/flashcards/${encodeURIComponent(msg.payload.id)}`, {
+          method: 'DELETE',
+          headers: getAuthHeaders(settings),
+        });
+        await refreshTokenIfNeeded(res);
+        if (!res.ok) {
+          return { ok: false, error: await getResponseError(res, `Server returned ${res.status}`) };
+        }
+        return { ok: true };
+      } catch (err) {
+        console.error('[Syntagma] Failed to delete flashcard:', err);
+        return { ok: false, error: (err as Error).message };
+      }
     }
 
     case 'EXPORT_TO_ANKI': {
@@ -458,6 +827,75 @@ onMessage(async (msg, sender) => {
         focused: true,
       });
       return { ok: true };
+    }
+
+    case 'UPLOAD_SENTENCE_AUDIO': {
+      const { flashcardId, audioDataUrl, mimeType, sentence, videoUrl } = msg.payload;
+      const settings = await getSettings();
+      if (!settings.authToken) return { ok: false, error: 'Not logged in' };
+
+      const apiBase = settings.apiBaseUrl || BACKEND_URL;
+      try {
+        // 1. Convert data URL → Blob
+        const resp = await fetch(audioDataUrl);
+        const blob = await resp.blob();
+        const ext = mimeType.includes('webm') ? 'webm' : 'ogg';
+        const fileName = `sentence_audio_${flashcardId}_${Date.now()}.${ext}`;
+
+        // 2. Get presigned upload URL from backend
+        const presignRes = await fetch(`${apiBase}/api/media/presign`, {
+          method: 'POST',
+          headers: getAuthHeaders(settings),
+          body: JSON.stringify({
+            flashcardId,
+            type: 'AUDIO',
+            fileName,
+            contentType: mimeType,
+            size: blob.size,
+          }),
+        });
+        await refreshTokenIfNeeded(presignRes);
+        if (!presignRes.ok) {
+          const errText = await presignRes.text();
+          return { ok: false, error: `Presign failed (${presignRes.status}): ${errText}` };
+        }
+        const presignData = await presignRes.json();
+        const { uploadUrl, objectKey } = presignData.data ?? presignData;
+
+        // 3. Upload audio blob directly to S3
+        const uploadRes = await fetch(uploadUrl, {
+          method: 'PUT',
+          headers: { 'Content-Type': mimeType },
+          body: blob,
+        });
+        if (!uploadRes.ok) {
+          return { ok: false, error: `S3 upload failed (${uploadRes.status})` };
+        }
+
+        // 4. Create media asset record in backend
+        const createRes = await fetch(`${apiBase}/api/media`, {
+          method: 'POST',
+          headers: getAuthHeaders(settings),
+          body: JSON.stringify({
+            flashcardId,
+            type: 'AUDIO',
+            objectKey,
+            originalFileName: fileName,
+            contentType: mimeType,
+            size: blob.size,
+          }),
+        });
+        await refreshTokenIfNeeded(createRes);
+        if (!createRes.ok) {
+          const errText = await createRes.text();
+          return { ok: false, error: `Media record creation failed (${createRes.status}): ${errText}` };
+        }
+        const createData = await createRes.json();
+        return { ok: true, mediaId: createData.data?.mediaId ?? createData.mediaId };
+      } catch (err) {
+        console.error('[Syntagma] Audio upload failed:', err);
+        return { ok: false, error: (err as Error).message };
+      }
     }
 
     default:

@@ -288,6 +288,27 @@ function WordPopupInner({
     if (cardSaved !== 'idle') return;
     setCardSaved('saving');
     try {
+      // Trigger on-demand audio capture: VideoOverlay will seek the video to
+      // the current subtitle's start, play through to the end, and record the
+      // tab audio. We wait for the result via a response event.
+      let sentenceAudioDataUrl: string | undefined;
+      try {
+        sentenceAudioDataUrl = await new Promise<string | undefined>((resolve) => {
+          const timeout = setTimeout(() => {
+            window.removeEventListener('syntagma:sentence-audio-ready', onReady);
+            resolve(undefined); // Give up after 35s (max cue = 30s + buffer)
+          }, 35_000);
+
+          const onReady = (e: Event) => {
+            clearTimeout(timeout);
+            window.removeEventListener('syntagma:sentence-audio-ready', onReady);
+            resolve((e as CustomEvent).detail?.audioDataUrl);
+          };
+          window.addEventListener('syntagma:sentence-audio-ready', onReady);
+          window.dispatchEvent(new CustomEvent('syntagma:capture-sentence-audio'));
+        });
+      } catch { /* not in video context or capture unavailable */ }
+
       const card = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
         lemma,
@@ -297,11 +318,16 @@ function WordPopupInner({
         sourceTitle: document.title,
         trMeaning: lexeme?.trMeaning ?? (translations[0] ?? ''),
         screenshotDataUrl: screenshot ?? undefined,
+        sentenceAudioDataUrl,
         createdAt: Date.now(),
         deckName: 'Syntagma',
         tags: ['syntagma'],
       };
-      await sendMessage({ type: 'CREATE_FLASHCARD', payload: card });
+      const result = await sendMessage<{ ok: boolean; error?: string }>({
+        type: 'CREATE_FLASHCARD',
+        payload: card,
+      });
+      if (!result.ok) throw new Error(result.error ?? 'Could not save flashcard');
       setCardSaved('done');
       setTimeout(() => setCardSaved('idle'), 2000);
     } catch {

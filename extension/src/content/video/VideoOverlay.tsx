@@ -633,29 +633,22 @@ export function VideoOverlay({
     }
   }, [liveCue, currentTarget, targetCues, video]);
 
-  // ── Voice Depot: initialize tab audio capture ─────────────────────────────
+  // ── Voice Depot: initialize audio capture from video element ───────────────
   useEffect(() => {
-    let destroyed = false;
-    sendMessage<{ streamId?: string; error?: string }>({ type: 'GET_TAB_CAPTURE_STREAM_ID', payload: null })
-      .then(async (res) => {
-        if (destroyed || !res.streamId) return;
-        const rec = new AudioRecorder({
-          onAudioReady: (cueIndex, dataUrl) => {
-            window.dispatchEvent(new CustomEvent('syntagma:audio-recorded', {
-              detail: { cueIndex, dataUrl },
-            }));
-          },
-        });
-        await rec.init(res.streamId);
-        if (!destroyed) recorderRef.current = rec;
-      })
-      .catch(() => { /* tabCapture unavailable or user denied */ });
+    const rec = new AudioRecorder({
+      onAudioReady: (cueIndex, dataUrl) => {
+        window.dispatchEvent(new CustomEvent('syntagma:audio-recorded', {
+          detail: { cueIndex, dataUrl },
+        }));
+      },
+    });
+    rec.initFromVideo(video);
+    recorderRef.current = rec;
     return () => {
-      destroyed = true;
-      recorderRef.current?.destroy();
+      rec.destroy();
       recorderRef.current = null;
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [video]);
 
   // ── Voice Depot: start/stop recording on cue transitions ──────────────────
   useEffect(() => {
@@ -671,6 +664,35 @@ export function VideoOverlay({
       prevRecCueRef.current = currentTarget.index;
     }
   }, [currentTarget]);
+
+  // ── Voice Depot: on-demand capture for flashcard save ───────────────────────
+  // When user saves a flashcard, WordPopup dispatches syntagma:capture-sentence-audio.
+  // We seek the video to the current cue's start, play through to the end,
+  // record the tab audio, then fire syntagma:sentence-audio-ready with the result.
+  useEffect(() => {
+    const handler = async () => {
+      const rec = recorderRef.current;
+      if (!rec || !currentTarget) {
+        window.dispatchEvent(new CustomEvent('syntagma:sentence-audio-ready', {
+          detail: { audioDataUrl: undefined, error: 'No recorder or cue' },
+        }));
+        return;
+      }
+      try {
+        const dataUrl = await rec.captureRange(video, currentTarget.startMs, currentTarget.endMs);
+        window.dispatchEvent(new CustomEvent('syntagma:sentence-audio-ready', {
+          detail: { audioDataUrl: dataUrl },
+        }));
+      } catch (err) {
+        console.warn('[Syntagma] Audio capture failed:', err);
+        window.dispatchEvent(new CustomEvent('syntagma:sentence-audio-ready', {
+          detail: { audioDataUrl: undefined, error: (err as Error).message },
+        }));
+      }
+    };
+    window.addEventListener('syntagma:capture-sentence-audio', handler);
+    return () => window.removeEventListener('syntagma:capture-sentence-audio', handler);
+  }, [currentTarget, video]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
