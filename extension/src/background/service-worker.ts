@@ -400,22 +400,6 @@ onMessage(async (msg, sender) => {
       return { ok: true, email };
     }
 
-    case 'FORGOT_PASSWORD': {
-      const { email } = msg.payload;
-      const s = await getSettings();
-      const apiBase = s.apiBaseUrl || BACKEND_URL;
-      try {
-        await fetch(`${apiBase}/api/auth/forgot-password`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email }),
-        });
-      } catch {
-        return { ok: false, error: 'Cannot reach server' };
-      }
-      return { ok: true };
-    }
-
     case 'LOGOUT': {
       const logoutPatch = { authToken: null, authEmail: null, authUserId: null };
       await setSettings(logoutPatch);
@@ -481,35 +465,6 @@ onMessage(async (msg, sender) => {
   }
 });
 
-// PDF redirect rule — registered both at module level and in onInstalled.
-// Module level handles dev reloads where onInstalled may not fire again.
-// onInstalled handles first install and version updates.
-function registerPdfRedirectRule() {
-  chrome.declarativeNetRequest.updateDynamicRules({
-    removeRuleIds: [9001],
-    addRules: [
-      {
-        id: 9001,
-        priority: 1,
-        action: {
-          type: 'redirect' as chrome.declarativeNetRequest.RuleActionType,
-          redirect: {
-            regexSubstitution: `chrome-extension://${chrome.runtime.id}/pdf-viewer.html?url=\\0`,
-          },
-        },
-        condition: {
-          // Match HTTP(S) URLs ending with .pdf (with optional query string or fragment)
-          regexFilter: '^https?://[^#]*\\.pdf(\\?[^#]*)?(#.*)?$',
-          resourceTypes: ['main_frame' as chrome.declarativeNetRequest.ResourceType],
-        },
-      },
-    ],
-  }).catch((err) => console.warn('[Syntagma] PDF redirect rule failed:', err));
-}
-
-// Run at every service worker startup
-registerPdfRedirectRule();
-
 // Context menu for "Look up in Syntagma"
 // Must be created inside onInstalled — not at module top level.
 // MV3 service workers restart on every event wakeup; calling
@@ -521,8 +476,6 @@ chrome.runtime.onInstalled.addListener(() => {
     title: 'Look up in Syntagma',
     contexts: ['selection'],
   });
-
-  registerPdfRedirectRule();
 });
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {

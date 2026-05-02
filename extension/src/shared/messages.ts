@@ -23,7 +23,6 @@ export type ExtensionMessage =
   | { type: 'OPEN_CARD_CREATOR'; payload: { word: string; sentence: string; sourceUrl: string; sourceTitle: string } }
   | { type: 'LOGIN'; payload: { email: string; password: string } }
   | { type: 'REGISTER'; payload: { email: string; password: string } }
-  | { type: 'FORGOT_PASSWORD'; payload: { email: string } }
   | { type: 'LOGOUT'; payload: null }
   | { type: 'OPEN_AUTH_PAGE'; payload: null }
   | { type: 'GET_TAB_CAPTURE_STREAM_ID'; payload: null }
