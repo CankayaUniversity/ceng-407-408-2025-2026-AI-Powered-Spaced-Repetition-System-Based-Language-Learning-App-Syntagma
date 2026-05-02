@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { UserSettings, LexemeEntry, FlashcardPayload } from '../shared/types';
 import { DEFAULT_SETTINGS } from '../shared/storage';
 import { sendMessage } from '../shared/messages';
@@ -421,6 +421,90 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
   );
 }
 
+// ─── Audio play button for flashcard rows ────────────────────────────────────
+
+function AudioPlayButton({ url }: { url: string }) {
+  const [playing, setPlaying] = useState(false);
+  const [error, setError] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const toggle = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (error) { setError(false); }
+
+    if (!audioRef.current) {
+      const audio = new Audio(url);
+      audio.onended = () => setPlaying(false);
+      audio.onerror = () => { setPlaying(false); setError(true); };
+      audioRef.current = audio;
+    }
+
+    if (playing) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      setPlaying(false);
+    } else {
+      audioRef.current.play().then(() => setPlaying(true)).catch(() => {
+        setPlaying(false);
+        setError(true);
+      });
+    }
+  }, [url, playing, error]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+    };
+  }, []);
+
+  return (
+    <button
+      onClick={toggle}
+      title={error ? 'Audio unavailable' : playing ? 'Stop' : 'Play sentence audio'}
+      style={{
+        width: '72px',
+        height: '22px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: '4px',
+        background: error ? C.red + '18' : playing ? C.green + '22' : C.blue + '18',
+        border: `1px solid ${error ? C.red + '55' : playing ? C.green + '55' : C.blue + '55'}`,
+        borderRadius: '4px',
+        color: error ? C.red : playing ? C.green : C.blue,
+        cursor: 'pointer',
+        fontSize: '10px',
+        fontWeight: 600,
+        padding: 0,
+        transition: 'all 0.15s',
+      }}
+    >
+      {error ? (
+        <>✕ Error</>
+      ) : playing ? (
+        <>
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor">
+            <rect x="6" y="4" width="4" height="16" rx="1"/>
+            <rect x="14" y="4" width="4" height="16" rx="1"/>
+          </svg>
+          Stop
+        </>
+      ) : (
+        <>
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor">
+            <polygon points="5,3 19,12 5,21"/>
+          </svg>
+          Audio
+        </>
+      )}
+    </button>
+  );
+}
+
 // ─── Tab: Flashcards ─────────────────────────────────────────────────────────
 
 function FlashcardsTab({ settings }: { settings: UserSettings }) {
@@ -561,20 +645,27 @@ function FlashcardsTab({ settings }: { settings: UserSettings }) {
                 onClick={e => e.stopPropagation()}
                 style={{ marginTop: '2px', flexShrink: 0 }}
               />
-              {card.screenshotDataUrl && (
-                <img
-                  src={card.screenshotDataUrl}
-                  alt=""
-                  style={{
-                    width: '72px',
-                    height: '48px',
-                    objectFit: 'cover',
-                    borderRadius: '4px',
-                    border: `1px solid ${C.surface1}`,
-                    background: C.base,
-                    flexShrink: 0,
-                  }}
-                />
+              {/* Media column: screenshot + audio button stacked */}
+              {(card.screenshotDataUrl || card.audioUrl) && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flexShrink: 0 }}>
+                  {card.screenshotDataUrl && (
+                    <img
+                      src={card.screenshotDataUrl}
+                      alt=""
+                      style={{
+                        width: '72px',
+                        height: '48px',
+                        objectFit: 'cover',
+                        borderRadius: '4px',
+                        border: `1px solid ${C.surface1}`,
+                        background: C.base,
+                      }}
+                    />
+                  )}
+                  {card.audioUrl && (
+                    <AudioPlayButton url={card.audioUrl} />
+                  )}
+                </div>
               )}
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>

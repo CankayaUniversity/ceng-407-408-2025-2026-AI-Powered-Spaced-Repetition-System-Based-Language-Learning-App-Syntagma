@@ -28,7 +28,8 @@ export type ExtensionMessage =
   | { type: 'LOGOUT'; payload: null }
   | { type: 'OPEN_AUTH_PAGE'; payload: null }
   | { type: 'GET_TAB_CAPTURE_STREAM_ID'; payload: null }
-  | { type: 'CAPTURE_TAB_SCREENSHOT'; payload: null };
+  | { type: 'CAPTURE_TAB_SCREENSHOT'; payload: null }
+  | { type: 'UPLOAD_SENTENCE_AUDIO'; payload: { flashcardId: number; audioDataUrl: string; mimeType: string; sentence: string; videoUrl: string } };
 
 export type BackgroundMessage =
   | { type: 'AI_STREAM_CHUNK'; payload: { requestId: string; chunk: string } }

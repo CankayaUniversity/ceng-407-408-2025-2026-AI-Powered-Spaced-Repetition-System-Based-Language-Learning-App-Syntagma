@@ -45,6 +45,7 @@ export interface FlashcardPayload {
   trMeaning: string;
   audioUrl?: string;
   screenshotDataUrl?: string;
+  sentenceAudioDataUrl?: string;
   videoTimestamp?: number;
   createdAt: number;
   deckName: string;
