@@ -5,7 +5,6 @@ import { sendMessage } from '../../shared/messages';
 import { lookupFrequency, getFrequencyBand } from '../../shared/frequency';
 import { StatusRow } from './StatusRow';
 import { PopupButtons } from './PopupButtons';
-import { CardCreator } from './CardCreator';
 
 const C = {
   base: '#F5F1E9',
@@ -31,6 +30,7 @@ interface WordPopupProps {
   anchorRect: DOMRect;
   lexeme: LexemeEntry | null;
   settings: UserSettings;
+  screenshotDataUrl?: string;
   onClose: () => void;
   onStatusChange: (lemma: string, status: WordStatus) => void;
 }
@@ -95,6 +95,7 @@ function WordPopupInner({
   anchorRect,
   lexeme,
   settings,
+  screenshotDataUrl,
   onClose,
   onStatusChange,
 }: WordPopupProps) {
@@ -103,9 +104,13 @@ function WordPopupInner({
   const [aiLoading, setAiLoading] = useState<AIActionType | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
-  const [showCardCreator, setShowCardCreator] = useState(false);
+  const [cardSaved, setCardSaved] = useState<'idle' | 'saving' | 'done' | 'error'>('idle');
+  const [screenshot] = useState<string | null>(screenshotDataUrl ?? null);
+  const [isDragging, setIsDragging] = useState(false);
   const popupRef = useRef<HTMLDivElement>(null);
   const requestIdRef = useRef<string | null>(null);
+  const isDraggingRef = useRef(false);
+  const dragOffsetRef = useRef({ x: 0, y: 0 });
 
   const freqEntry = lookupFrequency(lemma);
 
@@ -123,7 +128,8 @@ function WordPopupInner({
     }).catch(console.error);
   }, [lemma]);
 
-  // Calculate position
+  // Calculate position — anchorRect is always in viewport space (from getBoundingClientRect).
+  // The popup is position:fixed so top/left are also viewport-relative; no scroll offset needed.
   useEffect(() => {
     const popup = popupRef.current;
     if (!popup) return;
@@ -133,26 +139,68 @@ function WordPopupInner({
     const popupH = popup.offsetHeight || 300;
     const popupW = popup.offsetWidth || 340;
 
-    let top = anchorRect.bottom + window.scrollY + 6;
-    let left = anchorRect.left + window.scrollX;
+    // Default: open below the word
+    let top = anchorRect.bottom + 6;
+    let left = anchorRect.left;
 
-    // Flip above if near bottom
-    if (anchorRect.bottom + popupH + 20 > viewportH) {
-      top = anchorRect.top + window.scrollY - popupH - 6;
+    // Flip above if popup would overflow the bottom of the viewport
+    if (top + popupH + 20 > viewportH) {
+      top = anchorRect.top - popupH - 6;
     }
+
+    // Clamp so popup never goes above the topbar or below the viewport
+    if (top < 6) top = 6;
+    if (top + popupH > viewportH - 6) top = viewportH - popupH - 6;
 
     // Clamp horizontally
-    if (left + popupW > viewportW - 12) {
-      left = viewportW - popupW - 12;
-    }
+    if (left + popupW > viewportW - 12) left = viewportW - popupW - 12;
     if (left < 12) left = 12;
 
     setPosition({ top, left });
   }, [anchorRect]);
 
+  // Drag-and-drop
+  const handleDragStart = useCallback((e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    isDraggingRef.current = true;
+    setIsDragging(true);
+    dragOffsetRef.current = {
+      x: e.clientX - (position?.left ?? 0),
+      y: e.clientY - (position?.top ?? 0),
+    };
+    e.preventDefault();
+  }, [position]);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDraggingRef.current || !popupRef.current) return;
+      const newLeft = e.clientX - dragOffsetRef.current.x;
+      const newTop = e.clientY - dragOffsetRef.current.y;
+      const popupW = popupRef.current.offsetWidth;
+      const popupH = popupRef.current.offsetHeight;
+      setPosition({
+        top: Math.max(0, Math.min(newTop, window.innerHeight - popupH)),
+        left: Math.max(0, Math.min(newLeft, window.innerWidth - popupW)),
+      });
+    };
+    const handleMouseUp = () => {
+      if (isDraggingRef.current) {
+        isDraggingRef.current = false;
+        setIsDragging(false);
+      }
+    };
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, []);
+
   // Close on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
+      if (isDraggingRef.current) return;
       if (popupRef.current && !popupRef.current.contains(e.target as Node)) {
         onClose();
       }
@@ -236,8 +284,34 @@ function WordPopupInner({
     }
   }, [lemma, sentence, settings.learnerLevel]);
 
+  const handleSaveCard = useCallback(async () => {
+    if (cardSaved !== 'idle') return;
+    setCardSaved('saving');
+    try {
+      const card = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        lemma,
+        surfaceForm: surface,
+        sentence,
+        sourceUrl: window.location.href,
+        sourceTitle: document.title,
+        trMeaning: lexeme?.trMeaning ?? (translations[0] ?? ''),
+        screenshotDataUrl: screenshot ?? undefined,
+        createdAt: Date.now(),
+        deckName: 'Syntagma',
+        tags: ['syntagma'],
+      };
+      await sendMessage({ type: 'CREATE_FLASHCARD', payload: card });
+      setCardSaved('done');
+      setTimeout(() => setCardSaved('idle'), 2000);
+    } catch {
+      setCardSaved('error');
+      setTimeout(() => setCardSaved('idle'), 2000);
+    }
+  }, [cardSaved, lemma, surface, sentence, lexeme, translations]);
+
   const popupStyle: React.CSSProperties = {
-    position: 'absolute',
+    position: 'fixed',
     zIndex: 2147483645,
     background: C.overlay,
     backdropFilter: 'blur(12px)',
@@ -250,10 +324,34 @@ function WordPopupInner({
     fontSize: '13px',
     color: C.text,
     ...(position ? { top: position.top, left: position.left } : { top: -9999, left: -9999, visibility: 'hidden' as const }),
+    ...(isDragging ? { userSelect: 'none' as const, cursor: 'grabbing' } : {}),
   };
 
   return (
     <div ref={popupRef} style={popupStyle}>
+      {/* Drag handle */}
+      <div
+        onMouseDown={handleDragStart}
+        style={{
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          height: '14px',
+          marginBottom: '6px',
+          marginTop: '-4px',
+          cursor: isDragging ? 'grabbing' : 'grab',
+          borderRadius: '4px',
+        }}
+      >
+        <svg width="24" height="8" viewBox="0 0 24 8" fill={C.surface2}>
+          <circle cx="7" cy="2" r="1.5"/>
+          <circle cx="12" cy="2" r="1.5"/>
+          <circle cx="17" cy="2" r="1.5"/>
+          <circle cx="7" cy="6" r="1.5"/>
+          <circle cx="12" cy="6" r="1.5"/>
+          <circle cx="17" cy="6" r="1.5"/>
+        </svg>
+      </div>
       {/* Header row */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '8px' }}>
         <div>
@@ -274,8 +372,9 @@ function WordPopupInner({
         </div>
         <div style={{ display: 'flex', gap: '6px' }}>
           <button
-            onClick={() => setShowCardCreator(v => !v)}
-            title="Create flashcard"
+            onClick={handleSaveCard}
+            title={!settings.authToken ? 'Log in to save cards' : cardSaved === 'done' ? 'Card saved!' : cardSaved === 'error' ? 'Save failed' : 'Add to flashcards'}
+            disabled={!settings.authToken || cardSaved === 'saving'}
             style={{
               width: '32px',
               height: '32px',
@@ -283,16 +382,20 @@ function WordPopupInner({
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              background: showCardCreator ? C.amber : C.mauve,
+              background: cardSaved === 'done' ? C.green : cardSaved === 'error' ? C.red : C.mauve,
               color: C.base,
               border: 'none',
-              cursor: 'pointer',
+              cursor: cardSaved === 'idle' ? 'pointer' : 'default',
               padding: 0,
-              transition: 'all 0.15s',
+              transition: 'background 0.2s',
               flexShrink: 0,
             }}
           >
-            {showCardCreator ? (
+            {cardSaved === 'done' ? (
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
+            ) : cardSaved === 'error' ? (
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="18" y1="6" x2="6" y2="18"></line>
                 <line x1="6" y1="6" x2="18" y2="18"></line>
@@ -309,6 +412,20 @@ function WordPopupInner({
         </div>
       </div>
 
+      {/* Card save feedback */}
+      {(cardSaved === 'done' || cardSaved === 'error') && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '6px',
+          background: cardSaved === 'done' ? C.green + '22' : C.red + '22',
+          border: `1px solid ${cardSaved === 'done' ? C.green : C.red}`,
+          borderRadius: '5px', padding: '5px 9px',
+          marginBottom: '8px', fontSize: '12px', fontWeight: 600,
+          color: cardSaved === 'done' ? C.green : C.red,
+        }}>
+          {cardSaved === 'done' ? '✓ Card saved to your flashcards!' : '✕ Failed to save card. Try again.'}
+        </div>
+      )}
+
       {/* Sentence context */}
       {sentence && (
         <div style={{
@@ -322,6 +439,17 @@ function WordPopupInner({
           fontStyle: 'italic',
         }}>
           {sentence.length > 180 ? sentence.slice(0, 180) + '…' : sentence}
+        </div>
+      )}
+
+      {/* Video screenshot */}
+      {screenshot && (
+        <div style={{ marginBottom: '8px', borderRadius: '5px', overflow: 'hidden', lineHeight: 0 }}>
+          <img
+            src={screenshot}
+            alt="video frame"
+            style={{ width: '100%', display: 'block', borderRadius: '5px' }}
+          />
         </div>
       )}
 
@@ -362,18 +490,6 @@ function WordPopupInner({
         />
       </div>
 
-      {/* Card creator */}
-      {showCardCreator && (
-        <CardCreator
-          lemma={lemma}
-          surface={surface}
-          sentence={sentence}
-          lexeme={lexeme}
-          translations={translations}
-          onSaved={() => setShowCardCreator(false)}
-          onCancel={() => setShowCardCreator(false)}
-        />
-      )}
     </div>
   );
 }
@@ -383,13 +499,23 @@ function WordPopupInner({
 let popupRoot: ReturnType<typeof createRoot> | null = null;
 let popupContainer: HTMLElement | null = null;
 
-export function mountWordPopup(props: WordPopupProps): void {
+export function mountWordPopup(props: WordPopupProps, opts?: { zIndex?: number }): void {
   dismissWordPopup();
 
   popupContainer = document.createElement('div');
   popupContainer.id = 'syntagma-popup-root';
   popupContainer.setAttribute('data-syntagma', '');
-  document.body.appendChild(popupContainer);
+  if (opts?.zIndex !== undefined) {
+    popupContainer.style.position = 'fixed';
+    popupContainer.style.zIndex = String(opts.zIndex);
+    popupContainer.style.top = '0';
+    popupContainer.style.left = '0';
+    popupContainer.style.width = '0';
+    popupContainer.style.height = '0';
+    popupContainer.style.overflow = 'visible';
+  }
+  // Append to <html> to avoid CSS transform containment issues on YouTube/Netflix body.
+  document.documentElement.appendChild(popupContainer);
 
   popupRoot = createRoot(popupContainer);
   popupRoot.render(<WordPopupInner {...props} />);

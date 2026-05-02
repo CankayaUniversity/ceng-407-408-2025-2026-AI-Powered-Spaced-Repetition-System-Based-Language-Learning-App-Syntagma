@@ -20,14 +20,22 @@ export const DEFAULT_SETTINGS: UserSettings = {
   subtitleDualMode: false,
   targetSubtitleObscure: 'off',
   secondarySubtitleObscure: 'off',
-  targetSubtitleSize: 90,
-  secondarySubtitleSize: 100,
-  subtitleOverlayOpacity: 0.6,
+  targetSubtitleSize: 150,
+  secondarySubtitleSize: 120,
+  subtitleOverlayOpacity: 0.15,
   pauseOnWordInteraction: true,
   resumeAfterInteraction: true,
   resumeDelayMs: 1000,
   sceneSkipMode: 'off',
   removeBracketedSubtitles: true,
+  revealOnPause: true,
+  revealOnHover: true,
+  revealByKnownStatus: true,
+  autoPauseDelayToleranceMs: 0,
+  targetSubtitleOffsetMs: 0,
+  secondarySubtitleOffsetMs: 0,
+  interactionDelayMs: 0,
+  showSubtitleSidebar: true,
   aiModel: 'meta-llama/llama-3.3-70b-instruct:free',
   aiApiKey: null,
   forvoApiKey: null,
@@ -35,7 +43,17 @@ export const DEFAULT_SETTINGS: UserSettings = {
   ankiDeckName: 'Syntagma',
   apiBaseUrl: '',
   authToken: null,
+  authEmail: null,
+  authUserId: null,
 };
+
+export function getAuthHeaders(settings: UserSettings): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (settings.authToken) {
+    headers['Authorization'] = `Bearer ${settings.authToken}`;
+  }
+  return headers;
+}
 
 export async function getSettings(): Promise<UserSettings> {
   const result = await chrome.storage.local.get('userSettings');

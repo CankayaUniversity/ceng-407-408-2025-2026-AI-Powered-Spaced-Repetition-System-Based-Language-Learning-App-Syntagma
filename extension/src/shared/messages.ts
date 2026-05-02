@@ -18,13 +18,22 @@ export type ExtensionMessage =
   | { type: 'CREATE_FLASHCARD'; payload: FlashcardPayload }
   | { type: 'EXPORT_TO_ANKI'; payload: { cardIds: string[] } }
   | { type: 'GET_SETTINGS'; payload: null }
-  | { type: 'SET_SETTINGS'; payload: Partial<UserSettings> };
+  | { type: 'SET_SETTINGS'; payload: Partial<UserSettings> }
+  | { type: 'OPEN_OPTIONS_PAGE'; payload: null }
+  | { type: 'OPEN_CARD_CREATOR'; payload: { word: string; sentence: string; sourceUrl: string; sourceTitle: string } }
+  | { type: 'LOGIN'; payload: { email: string; password: string } }
+  | { type: 'REGISTER'; payload: { email: string; password: string } }
+  | { type: 'LOGOUT'; payload: null }
+  | { type: 'OPEN_AUTH_PAGE'; payload: null }
+  | { type: 'GET_TAB_CAPTURE_STREAM_ID'; payload: null }
+  | { type: 'CAPTURE_TAB_SCREENSHOT'; payload: null };
 
 export type BackgroundMessage =
   | { type: 'AI_STREAM_CHUNK'; payload: { requestId: string; chunk: string } }
   | { type: 'AI_STREAM_DONE'; payload: { requestId: string } }
   | { type: 'AI_STREAM_ERROR'; payload: { requestId: string; error: string } }
   | { type: 'STATUS_CHANGED'; payload: { lemma: string; status: WordStatus } }
+  | { type: 'BULK_STATUS_CHANGED'; payload: { lemmas: string[]; status: WordStatus } }
   | { type: 'SETTINGS_UPDATED'; payload: Partial<UserSettings> };
 
 export function sendMessage<T>(msg: ExtensionMessage): Promise<T> {
@@ -37,8 +46,16 @@ export function onMessage(
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const result = handler(msg as ExtensionMessage, sender);
     if (result instanceof Promise) {
-      result.then(sendResponse);
-      return true;
+      // MUST handle rejection: without .catch, sendResponse is never called
+      // when the handler throws, causing Chrome to log "The message channel
+      // closed before a response was received" for every async handler.
+      result
+        .then(sendResponse)
+        .catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : String(err);
+          sendResponse({ error: message });
+        });
+      return true; // keep channel open for async response
     }
     if (result !== undefined) {
       sendResponse(result);

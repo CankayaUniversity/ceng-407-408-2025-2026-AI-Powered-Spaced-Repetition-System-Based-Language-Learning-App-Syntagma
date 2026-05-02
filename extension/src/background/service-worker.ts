@@ -7,6 +7,7 @@ import {
   setSettings,
   saveFlashcard,
   getFlashcards,
+  getAuthHeaders,
 } from '../shared/storage';
 import { callAI } from '../shared/ai';
 import type { LexemeEntry } from '../shared/types';
@@ -15,10 +16,21 @@ import { populateDictionary, lookupTranslation } from './dictionary-db';
 // Initialize the massive IndexedDB dictionary
 populateDictionary().catch(console.error);
 
-// Keep alive for MV3 service workers
-const keepAlive = () => setInterval(chrome.runtime.getPlatformInfo, 20e3);
-chrome.runtime.onStartup.addListener(keepAlive);
-keepAlive();
+// Keep the MV3 service worker alive via a periodic no-op.
+// The direct call covers every SW wakeup (module code re-runs each time).
+// The onStartup listener was redundant — module-level keepAlive() already
+// runs when the browser starts and wakes the SW, so it was creating a second
+// concurrent interval on every browser startup.
+setInterval(chrome.runtime.getPlatformInfo, 20e3);
+
+const BACKEND_URL = 'https://syntagma.omerhanyigit.online';
+
+async function refreshTokenIfNeeded(response: Response): Promise<void> {
+  const newToken = response.headers.get('X-Refreshed-Token');
+  if (newToken) {
+    await setSettings({ authToken: newToken });
+  }
+}
 
 function _computeComprehension(entries: LexemeEntry[], totalTokenCount: number): number {
   const known = entries.filter(e => e.status === 'known').length;
@@ -54,20 +66,19 @@ onMessage(async (msg, sender) => {
       const { lemma, status } = msg.payload;
       await setLexemeStatus(lemma, status);
 
-      // Sync to backend
-      const BACKEND_URL = 'https://syntagma.omerhanyigit.online';
-      const DEFAULT_USER_ID = '3';
       const s = await getSettings();
-      const apiBase = s.apiBaseUrl || BACKEND_URL;
-      const uid = s.authToken || DEFAULT_USER_ID;
-      try {
-        await fetch(`${apiBase}/api/word-knowledge/${encodeURIComponent(lemma)}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json', 'X-User-Id': uid },
-          body: JSON.stringify({ status: status.toUpperCase() }),
-        });
-      } catch (err) {
-        console.warn('[Syntagma] Word knowledge sync error:', err);
+      if (s.authToken) {
+        const apiBase = s.apiBaseUrl || BACKEND_URL;
+        try {
+          const res = await fetch(`${apiBase}/api/word-knowledge/${encodeURIComponent(lemma)}`, {
+            method: 'PUT',
+            headers: getAuthHeaders(s),
+            body: JSON.stringify({ status: status.toUpperCase() }),
+          });
+          await refreshTokenIfNeeded(res);
+        } catch (err) {
+          console.warn('[Syntagma] Word knowledge sync error:', err);
+        }
       }
 
       // Broadcast status change to all tabs
@@ -87,33 +98,31 @@ onMessage(async (msg, sender) => {
       const { lemmas, status } = msg.payload;
       await bulkSetLexemeStatus(lemmas, status);
 
-      // Sync to backend
-      const BACKEND_URL2 = 'https://syntagma.omerhanyigit.online';
-      const DEFAULT_UID2 = '3';
       const s2 = await getSettings();
-      const apiBase2 = s2.apiBaseUrl || BACKEND_URL2;
-      const uid2 = s2.authToken || DEFAULT_UID2;
-      try {
-        await fetch(`${apiBase2}/api/word-knowledge/batch`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-User-Id': uid2 },
-          body: JSON.stringify({
-            entries: lemmas.map((l: string) => ({ lemma: l, status: status.toUpperCase() })),
-          }),
-        });
-      } catch (err) {
-        console.warn('[Syntagma] Bulk word knowledge sync error:', err);
+      if (s2.authToken) {
+        const apiBase2 = s2.apiBaseUrl || BACKEND_URL;
+        try {
+          const res = await fetch(`${apiBase2}/api/word-knowledge/batch`, {
+            method: 'POST',
+            headers: getAuthHeaders(s2),
+            body: JSON.stringify({
+              entries: lemmas.map((l: string) => ({ lemma: l, status: status.toUpperCase() })),
+            }),
+          });
+          await refreshTokenIfNeeded(res);
+        } catch (err) {
+          console.warn('[Syntagma] Bulk word knowledge sync error:', err);
+        }
       }
 
+      // Send one BULK_STATUS_CHANGED per tab instead of O(tabs × lemmas) messages.
       const tabs = await chrome.tabs.query({});
       for (const tab of tabs) {
         if (tab.id) {
-          for (const lemma of lemmas) {
-            chrome.tabs.sendMessage(tab.id, {
-              type: 'STATUS_CHANGED',
-              payload: { lemma, status },
-            }).catch(() => {});
-          }
+          chrome.tabs.sendMessage(tab.id, {
+            type: 'BULK_STATUS_CHANGED',
+            payload: { lemmas, status },
+          }).catch(() => {});
         }
       }
       return { ok: true };
@@ -255,42 +264,31 @@ onMessage(async (msg, sender) => {
     }
 
     case 'CREATE_FLASHCARD': {
-      const card = msg.payload;
-      console.log('[Syntagma] CREATE_FLASHCARD received:', card.lemma);
-      // Save locally first
-      await saveFlashcard(card);
-      console.log('[Syntagma] Saved locally.');
-
-      // Sync to Spring Boot backend
-      const BACKEND_URL = 'https://syntagma.omerhanyigit.online';
-      const DEFAULT_USER_ID = '3'; // Default test user
-
       const settings = await getSettings();
-      const apiBase = settings.apiBaseUrl || BACKEND_URL;
-      const userId = settings.authToken || DEFAULT_USER_ID; // authToken stores the userId for now
-
-      const payload = {
-        lemma: card.lemma,
-        translation: card.trMeaning || '',
-        sourceSentence: card.sentence || '',
-        exampleSentence: `${card.surfaceForm} — from ${card.sourceTitle || 'web'}`,
-        knowledgeStatus: 'LEARNING',
-      };
-      console.log('[Syntagma] Syncing to:', apiBase, 'userId:', userId, 'payload:', JSON.stringify(payload));
-
-      try {
-        const res = await fetch(`${apiBase}/api/flashcards`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-User-Id': userId,
-          },
-          body: JSON.stringify(payload),
-        });
-        const responseText = await res.text();
-        console.log('[Syntagma] Backend response:', res.status, responseText);
-      } catch (err) {
-        console.error('[Syntagma] Backend sync error:', err);
+      if (!settings.authToken) {
+        return { ok: false, error: 'Not logged in' };
+      }
+      const card = msg.payload;
+      await saveFlashcard(card);
+      if (settings.authToken) {
+        const apiBase = settings.apiBaseUrl || BACKEND_URL;
+        const payload = {
+          lemma: card.lemma,
+          translation: card.trMeaning || '',
+          sourceSentence: card.sentence || '',
+          exampleSentence: `${card.surfaceForm} — from ${card.sourceTitle || 'web'}`,
+          knowledgeStatus: 'LEARNING',
+        };
+        try {
+          const res = await fetch(`${apiBase}/api/flashcards`, {
+            method: 'POST',
+            headers: getAuthHeaders(settings),
+            body: JSON.stringify(payload),
+          });
+          await refreshTokenIfNeeded(res);
+        } catch (err) {
+          console.error('[Syntagma] Backend sync error:', err);
+        }
       }
 
       return { ok: true };
@@ -325,16 +323,159 @@ onMessage(async (msg, sender) => {
       }
     }
 
+    case 'OPEN_OPTIONS_PAGE': {
+      chrome.windows.create({
+        url: chrome.runtime.getURL('options.html'),
+        type: 'popup',
+        width: 820,
+        height: 680,
+        focused: true,
+      });
+      return { ok: true };
+    }
+
+    case 'LOGIN': {
+      const { email, password } = msg.payload;
+      const s = await getSettings();
+      const apiBase = s.apiBaseUrl || BACKEND_URL;
+      let res: Response;
+      try {
+        res = await fetch(`${apiBase}/api/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
+        });
+      } catch {
+        return { ok: false, error: 'Cannot reach server' };
+      }
+      const text = await res.text();
+      let json: any;
+      try { json = JSON.parse(text); } catch { return { ok: false, error: `Server error (${res.status})` }; }
+      if (!res.ok) {
+        return { ok: false, error: json?.message ?? `Login failed (${res.status})` };
+      }
+      const token: string = json.data?.token;
+      const userEmail: string = json.data?.email ?? email;
+      const userId: string = String(json.data?.userId ?? '');
+      await setSettings({ authToken: token, authEmail: userEmail, authUserId: userId });
+      return { ok: true, email: userEmail };
+    }
+
+    case 'REGISTER': {
+      const { email, password } = msg.payload;
+      const s = await getSettings();
+      const apiBase = s.apiBaseUrl || BACKEND_URL;
+      let res: Response;
+      try {
+        res = await fetch(`${apiBase}/api/auth/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
+        });
+      } catch {
+        return { ok: false, error: 'Cannot reach server' };
+      }
+      const text = await res.text();
+      let json: any;
+      try { json = JSON.parse(text); } catch { return { ok: false, error: `Server error (${res.status})` }; }
+      if (!res.ok) {
+        return { ok: false, error: json?.message ?? `Registration failed (${res.status})` };
+      }
+      // Auto-login after successful registration
+      try {
+        const loginRes = await fetch(`${apiBase}/api/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
+        });
+        if (loginRes.ok) {
+          const loginJson = await loginRes.json();
+          const token: string = loginJson.data?.token;
+          const userEmail: string = loginJson.data?.email ?? email;
+          const userId: string = String(loginJson.data?.userId ?? '');
+          await setSettings({ authToken: token, authEmail: userEmail, authUserId: userId });
+          return { ok: true, email: userEmail };
+        }
+      } catch { /* ignore login error after successful register */ }
+      return { ok: true, email };
+    }
+
+    case 'LOGOUT': {
+      const logoutPatch = { authToken: null, authEmail: null, authUserId: null };
+      await setSettings(logoutPatch);
+      const logoutTabs = await chrome.tabs.query({});
+      for (const tab of logoutTabs) {
+        if (tab.id) {
+          chrome.tabs.sendMessage(tab.id, { type: 'SETTINGS_UPDATED', payload: logoutPatch }).catch(() => {});
+        }
+      }
+      return { ok: true };
+    }
+
+    case 'OPEN_AUTH_PAGE': {
+      chrome.windows.create({
+        url: chrome.runtime.getURL('auth.html'),
+        type: 'popup',
+        width: 400,
+        height: 520,
+        focused: true,
+      });
+      return { ok: true };
+    }
+
+    case 'CAPTURE_TAB_SCREENSHOT': {
+      const tabId = sender.tab?.id;
+      if (!tabId) return { error: 'No tab ID' };
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        chrome.tabs.captureVisibleTab({ format: 'jpeg', quality: 85 }, (url) => {
+          if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+          else resolve(url);
+        });
+      });
+      return { dataUrl };
+    }
+
+    case 'GET_TAB_CAPTURE_STREAM_ID': {
+      const tabId = sender.tab?.id;
+      if (!tabId) return { error: 'No tab ID in sender' };
+      const streamId = await new Promise<string>((resolve, reject) => {
+        chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }, (id) => {
+          if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+          else resolve(id);
+        });
+      });
+      return { streamId };
+    }
+
+    case 'OPEN_CARD_CREATOR': {
+      const { word, sentence, sourceUrl, sourceTitle } = msg.payload;
+      const params = new URLSearchParams({ word, sentence, sourceUrl, sourceTitle });
+      chrome.windows.create({
+        url: chrome.runtime.getURL(`card-creator.html?${params}`),
+        type: 'popup',
+        width: 900,
+        height: 640,
+        focused: true,
+      });
+      return { ok: true };
+    }
+
     default:
       return;
   }
 });
 
 // Context menu for "Look up in Syntagma"
-chrome.contextMenus.create({
-  id: 'syntagma-lookup',
-  title: 'Look up in Syntagma',
-  contexts: ['selection'],
+// Must be created inside onInstalled — not at module top level.
+// MV3 service workers restart on every event wakeup; calling
+// contextMenus.create at module scope causes "Cannot create item with
+// duplicate id syntagma-lookup" errors on every restart after the first.
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.contextMenus.create({
+    id: 'syntagma-lookup',
+    title: 'Look up in Syntagma',
+    contexts: ['selection'],
+  });
 });
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
