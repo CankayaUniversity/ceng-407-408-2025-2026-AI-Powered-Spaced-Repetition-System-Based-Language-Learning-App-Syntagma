@@ -5,8 +5,6 @@ import com.syntagma.backend.dto.request.UserRegisterRequest;
 import com.syntagma.backend.dto.response.UserResponse;
 import com.syntagma.backend.exception.DuplicateResourceException;
 import com.syntagma.backend.service.UserService;
-import com.syntagma.backend.security.JwtAuthenticationFilter;
-import com.syntagma.backend.security.JwtService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -20,12 +18,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
-import com.syntagma.backend.config.SecurityConfig;
-import org.springframework.context.annotation.Import;
 
 @WebMvcTest(AuthController.class)
-@Import(SecurityConfig.class)
 class AuthControllerTest {
 
     @Autowired
@@ -37,9 +31,6 @@ class AuthControllerTest {
     @MockBean
     private UserService userService;
 
-    @MockBean
-    private JwtService jwtService;
-
     @Test
     void register_Success() throws Exception {
         UserRegisterRequest request = new UserRegisterRequest("test@example.com", "password123");
@@ -48,7 +39,6 @@ class AuthControllerTest {
         when(userService.register(any(UserRegisterRequest.class))).thenReturn(mockResponse);
 
         mockMvc.perform(post("/api/auth/register")
-                        .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isCreated())
@@ -62,7 +52,6 @@ class AuthControllerTest {
         UserRegisterRequest request = new UserRegisterRequest("invalid-email", "");
 
         mockMvc.perform(post("/api/auth/register")
-                        .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isBadRequest())

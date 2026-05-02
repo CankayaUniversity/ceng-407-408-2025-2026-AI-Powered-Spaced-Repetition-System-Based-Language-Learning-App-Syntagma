@@ -44,7 +44,7 @@ class SrsServiceTest {
         state.setFlashcard(flashcard);
         state.setStability(2.5f);
         state.setDifficulty(4.0f);
-        state.setRetrievability(0.9f);
+        state.setRetrievable(0.9f);
         state.setLastReviewedAt(LocalDateTime.now().minusDays(1));
         state.setNextReviewAt(LocalDateTime.now().plusDays(2));
 

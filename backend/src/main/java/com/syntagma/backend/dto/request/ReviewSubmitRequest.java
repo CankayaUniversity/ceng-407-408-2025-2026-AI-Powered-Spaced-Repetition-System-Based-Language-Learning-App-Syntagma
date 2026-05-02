@@ -2,12 +2,11 @@ package com.syntagma.backend.dto.request;
 
 import com.syntagma.backend.entity.enums.DeviceType;
 import jakarta.validation.constraints.NotNull;
-import java.time.OffsetDateTime;
+import java.time.LocalDateTime;
 
 public record ReviewSubmitRequest(
         @NotNull Long flashcardId,
-        Boolean known,
-        Integer result,
+        @NotNull Integer result,
         DeviceType device,
-        OffsetDateTime clientTimestamp
+        LocalDateTime clientTimestamp
 ) {}

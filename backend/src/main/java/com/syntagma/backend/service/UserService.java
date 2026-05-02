@@ -7,10 +7,8 @@ import com.syntagma.backend.dto.response.UserResponse;
 import com.syntagma.backend.entity.User;
 import com.syntagma.backend.exception.DuplicateResourceException;
 import com.syntagma.backend.repository.UserRepository;
-import com.syntagma.backend.security.JwtService;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
@@ -20,8 +18,6 @@ import java.time.LocalDateTime;
 public class UserService {
 
     private final UserRepository userRepository;
-    private final PasswordEncoder passwordEncoder;
-    private final JwtService jwtService;
 
     @Transactional
     public UserResponse register(UserRegisterRequest request) {
@@ -31,7 +27,8 @@ public class UserService {
 
         User user = new User();
         user.setEmail(request.email());
-        user.setPasswordHash(passwordEncoder.encode(request.password()));
+        // TODO: Use BCrypt when Spring Security is added
+        user.setPasswordHash(request.password());
         user.setCreatedAt(LocalDateTime.now());
         user.setStreakCount(0);
 
@@ -43,14 +40,16 @@ public class UserService {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new IllegalArgumentException("Invalid email or password"));
 
-        if (!passwordEncoder.matches(password, user.getPasswordHash())) {
+        // TODO: Use BCrypt password matching when Spring Security is added
+        if (!user.getPasswordHash().equals(password)) {
             throw new IllegalArgumentException("Invalid email or password");
         }
 
         user.setLastLoginAt(LocalDateTime.now());
         userRepository.save(user);
 
-        String token = jwtService.generateToken(user.getUserId());
+        // TODO: Generate real JWT token
+        String token = "jwt-placeholder-token";
         return new AuthResponse(token, user.getUserId(), user.getEmail());
     }
 

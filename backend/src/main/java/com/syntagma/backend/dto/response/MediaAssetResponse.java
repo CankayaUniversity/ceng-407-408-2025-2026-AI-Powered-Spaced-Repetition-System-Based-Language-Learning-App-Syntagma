@@ -9,7 +9,5 @@ public record MediaAssetResponse(
         MediaType type,
         String storageKey,
         String mimeType,
-        String originalFileName,
-        Long sizeBytes,
         LocalDateTime createdAt
 ) {}

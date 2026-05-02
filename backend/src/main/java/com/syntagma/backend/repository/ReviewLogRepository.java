@@ -30,7 +30,4 @@ public interface ReviewLogRepository extends JpaRepository<ReviewLog, Long> {
            "WHERE r.user.userId = :userId AND r.reviewedAt >= :since " +
            "GROUP BY CAST(r.reviewedAt AS date) ORDER BY reviewDate DESC")
     java.util.List<Object[]> countReviewsByDay(@Param("userId") Long userId, @Param("since") LocalDateTime since);
-
-    @Query("SELECT COUNT(r) FROM ReviewLog r WHERE r.user.userId = :userId AND r.reviewedAt >= :since")
-    long countByUserIdSince(@Param("userId") Long userId, @Param("since") LocalDateTime since);
 }
