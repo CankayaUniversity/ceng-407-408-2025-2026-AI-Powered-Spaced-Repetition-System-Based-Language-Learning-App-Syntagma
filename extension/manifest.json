@@ -3,7 +3,7 @@
   "name": "Syntagma",
   "version": "0.1.0",
   "description": "AI-powered English vocabulary learning for Turkish speakers",
-  "permissions": ["storage", "activeTab", "scripting", "tabs", "contextMenus", "unlimitedStorage"],
+  "permissions": ["storage", "activeTab", "scripting", "tabs", "contextMenus", "unlimitedStorage", "windows", "tabCapture"],
   "host_permissions": ["<all_urls>", "https://openrouter.ai/*", "https://api.dictionaryapi.dev/*", "http://localhost/*"],
   "background": {
     "service_worker": "background/service-worker.js",
@@ -13,7 +13,7 @@
     {
       "matches": ["<all_urls>"],
       "js": ["content/index.js"],
-      "run_at": "document_idle"
+      "run_at": "document_start"
     }
   ],
   "action": {
@@ -26,7 +26,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["assets/*", "chunks/*"],
+      "resources": ["assets/*", "chunks/*", "dictionary.json"],
       "matches": ["<all_urls>"]
     }
   ]

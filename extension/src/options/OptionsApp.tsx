@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { UserSettings, LexemeEntry, FlashcardPayload } from '../shared/types';
 import { DEFAULT_SETTINGS } from '../shared/storage';
 import { sendMessage } from '../shared/messages';
@@ -194,122 +194,7 @@ function GeneralTab({ settings, onUpdate }: { settings: UserSettings; onUpdate: 
   );
 }
 
-// ─── Tab: AI Settings ────────────────────────────────────────────────────────
-
-function AISettingsTab({ settings, onUpdate }: { settings: UserSettings; onUpdate: (p: Partial<UserSettings>) => void }) {
-  const [showKey, setShowKey] = useState(false);
-
-  return (
-    <div>
-      <SectionTitle>OpenRouter API</SectionTitle>
-      <div style={{ padding: '10px 0', borderBottom: `1px solid ${C.surface1}` }}>
-        <label style={{ display: 'block', fontSize: '14px', color: C.text, marginBottom: '6px' }}>
-          API Key
-        </label>
-        <div style={{ fontSize: '12px', color: C.subtext, marginBottom: '6px' }}>
-          Get a free key at{' '}
-          <a
-            href="https://openrouter.ai"
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ color: C.blue }}
-          >
-            openrouter.ai
-          </a>
-          . The free tier includes Llama 3.3 70B.
-        </div>
-        <div style={{ display: 'flex', gap: '6px' }}>
-          <input
-            type={showKey ? 'text' : 'password'}
-            value={settings.aiApiKey ?? ''}
-            onChange={e => onUpdate({ aiApiKey: e.target.value || null })}
-            placeholder="sk-or-v1-..."
-            style={{
-              flex: 1,
-              background: C.surface0,
-              border: `1px solid ${C.surface1}`,
-              borderRadius: '6px',
-              padding: '8px 10px',
-              color: C.text,
-              fontSize: '13px',
-              outline: 'none',
-            }}
-          />
-          <button
-            onClick={() => setShowKey(v => !v)}
-            style={{
-              background: C.surface0,
-              border: `1px solid ${C.surface1}`,
-              borderRadius: '6px',
-              padding: '8px 10px',
-              color: C.subtext,
-              cursor: 'pointer',
-              fontSize: '12px',
-            }}
-          >
-            {showKey ? 'Hide' : 'Show'}
-          </button>
-        </div>
-      </div>
-
-      <Select
-        label="AI Model"
-        value={settings.aiModel}
-        onChange={v => onUpdate({ aiModel: v })}
-        options={[
-          { value: 'meta-llama/llama-3.3-70b-instruct:free', label: 'Llama 3.3 70B (Free)' },
-          { value: 'meta-llama/llama-3.1-8b-instruct:free', label: 'Llama 3.1 8B (Free)' },
-          { value: 'google/gemma-2-9b-it:free', label: 'Gemma 2 9B (Free)' },
-          { value: 'openai/gpt-4o-mini', label: 'GPT-4o Mini (Paid)' },
-          { value: 'openai/gpt-4o', label: 'GPT-4o (Paid)' },
-          { value: 'anthropic/claude-3-haiku', label: 'Claude 3 Haiku (Paid)' },
-          { value: 'anthropic/claude-3.5-sonnet', label: 'Claude 3.5 Sonnet (Paid)' },
-        ]}
-      />
-
-      <SectionTitle>Audio (Forvo)</SectionTitle>
-      <TextInput
-        label="Forvo API Key (optional)"
-        value={settings.forvoApiKey ?? ''}
-        onChange={v => onUpdate({ forvoApiKey: v || null })}
-        type="password"
-        placeholder="Leave empty to use free TTS fallback"
-        description="For native speaker pronunciation audio"
-      />
-
-      <SectionTitle>Anki Connect</SectionTitle>
-      <TextInput
-        label="AnkiConnect URL"
-        value={settings.ankiConnectUrl}
-        onChange={v => onUpdate({ ankiConnectUrl: v })}
-        placeholder="http://localhost:8765"
-      />
-      <TextInput
-        label="Default Deck Name"
-        value={settings.ankiDeckName}
-        onChange={v => onUpdate({ ankiDeckName: v })}
-        placeholder="Syntagma"
-      />
-
-      <SectionTitle>Backend API (Spring Boot)</SectionTitle>
-      <TextInput
-        label="API Base URL"
-        value={settings.apiBaseUrl}
-        onChange={v => onUpdate({ apiBaseUrl: v })}
-        placeholder="http://localhost:8080"
-        description="Your Syntagma Spring Boot backend. Cards will be synced here automatically."
-      />
-      <TextInput
-        label="Auth Token (JWT)"
-        value={settings.authToken ?? ''}
-        onChange={v => onUpdate({ authToken: v || null })}
-        type="password"
-        placeholder="Leave empty if no auth required"
-        description="Bearer token sent in Authorization header with each API request."
-      />
-    </div>
-  );
-}
+const BACKEND_URL = 'https://syntagma.omerhanyigit.online';
 
 // ─── Tab: Word Browser ───────────────────────────────────────────────────────
 
@@ -327,22 +212,38 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState<'lemma' | 'status' | 'updatedAt'>('lemma');
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const BACKEND_URL = 'https://syntagma.omerhanyigit.online';
-  const DEFAULT_USER_ID = '3';
+  const [source, setSource] = useState<'server' | 'local'>('local');
 
   const apiBase = settings.apiBaseUrl || BACKEND_URL;
-  const userId = settings.authToken || DEFAULT_USER_ID;
+  const authHeader: Record<string, string> = settings.authToken
+    ? { 'Authorization': `Bearer ${settings.authToken}`, 'Content-Type': 'application/json' }
+    : {};
+
+  const loadFromLocal = useCallback(async () => {
+    const result = await chrome.storage.local.get('lexemes');
+    const entries = Object.values(result.lexemes ?? {}) as LexemeEntry[];
+    setWords(entries.map(e => ({
+      lemma: e.lemma,
+      status: e.status,
+      updatedAt: e.lastSeenAt || 0,
+    })));
+    setSource('local');
+  }, []);
 
   const fetchWords = useCallback(async () => {
     setLoading(true);
-    setError(null);
+    if (!settings.authToken) {
+      await loadFromLocal();
+      setLoading(false);
+      return;
+    }
     try {
       const statusParam = filter !== 'all' ? `&status=${filter.toUpperCase()}` : '';
-      const res = await fetch(`${apiBase}/api/word-knowledge?size=200&sort=updatedAt,desc${statusParam}`, {
-        headers: { 'X-User-Id': userId },
+      const res = await fetch(`${apiBase}/api/word-knowledge?size=200${statusParam}`, {
+        headers: authHeader,
       });
+      const newToken = res.headers.get('X-Refreshed-Token');
+      if (newToken) sendMessage({ type: 'SET_SETTINGS', payload: { authToken: newToken } }).catch(() => {});
       if (!res.ok) throw new Error(`Server returned ${res.status}`);
       const json = await res.json();
       const content = json.data?.content ?? json.data ?? [];
@@ -352,21 +253,14 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
         updatedAt: wk.updatedAt ? new Date(wk.updatedAt).getTime() : 0,
       }));
       setWords(mapped);
-    } catch (err) {
-      console.error('[Syntagma] Failed to fetch word knowledge:', err);
-      setError((err as Error).message);
-      // Fallback to local storage
-      const result = await chrome.storage.local.get('lexemes');
-      const entries = Object.values(result.lexemes ?? {}) as LexemeEntry[];
-      setWords(entries.map(e => ({
-        lemma: e.lemma,
-        status: e.status,
-        updatedAt: e.lastSeenAt || 0,
-      })));
+      setSource('server');
+    } catch {
+      // Server unavailable — fall back to local storage silently
+      await loadFromLocal();
     } finally {
       setLoading(false);
     }
-  }, [apiBase, userId, filter]);
+  }, [apiBase, settings.authToken, filter, loadFromLocal]);
 
   useEffect(() => { fetchWords(); }, [fetchWords]);
 
@@ -386,30 +280,10 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
     return C.subtext;
   };
 
-  if (loading) return <div style={{ color: C.subtext, padding: '20px', textAlign: 'center' }}>Loading words from server…</div>;
+  if (loading) return <div style={{ color: C.subtext, padding: '20px', textAlign: 'center' }}>Loading words…</div>;
 
   return (
     <div>
-      {/* Error banner */}
-      {error && (
-        <div style={{
-          background: C.red + '20',
-          border: `1px solid ${C.red}`,
-          borderRadius: '6px',
-          padding: '8px 12px',
-          marginBottom: '12px',
-          fontSize: '12px',
-          color: C.red,
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-        }}>
-          <span>⚠ Could not fetch from server ({error}). Showing local words.</span>
-          <button onClick={fetchWords} style={{ background: C.red, color: C.base, border: 'none', borderRadius: '4px', padding: '4px 8px', cursor: 'pointer', fontSize: '11px' }}>
-            Retry
-          </button>
-        </div>
-      )}
 
       {/* Controls */}
       <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
@@ -473,7 +347,9 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
 
       <div style={{ fontSize: '12px', color: C.subtext, marginBottom: '8px' }}>
         {filtered.length} words · {words.filter(e => e.status === 'known').length} known · {words.filter(e => e.status === 'learning').length} learning
-        {!error && <span style={{ color: C.green, marginLeft: '6px' }}>● Live</span>}
+        <span style={{ color: source === 'server' ? C.green : C.amber, marginLeft: '6px' }}>
+          ● {source === 'server' ? 'Live' : 'Local'}
+        </span>
       </div>
 
       {/* Word table */}
@@ -539,9 +415,93 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
       }}>
         Server: <span style={{ color: C.text }}>{apiBase}</span>
         <br />
-        User ID: <span style={{ color: C.text }}>{userId}</span>
+        Account: <span style={{ color: C.text }}>{settings.authEmail ?? 'Not logged in'}</span>
       </div>
     </div>
+  );
+}
+
+// ─── Audio play button for flashcard rows ────────────────────────────────────
+
+function AudioPlayButton({ url }: { url: string }) {
+  const [playing, setPlaying] = useState(false);
+  const [error, setError] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const toggle = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (error) { setError(false); }
+
+    if (!audioRef.current) {
+      const audio = new Audio(url);
+      audio.onended = () => setPlaying(false);
+      audio.onerror = () => { setPlaying(false); setError(true); };
+      audioRef.current = audio;
+    }
+
+    if (playing) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      setPlaying(false);
+    } else {
+      audioRef.current.play().then(() => setPlaying(true)).catch(() => {
+        setPlaying(false);
+        setError(true);
+      });
+    }
+  }, [url, playing, error]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+    };
+  }, []);
+
+  return (
+    <button
+      onClick={toggle}
+      title={error ? 'Audio unavailable' : playing ? 'Stop' : 'Play sentence audio'}
+      style={{
+        width: '72px',
+        height: '22px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: '4px',
+        background: error ? C.red + '18' : playing ? C.green + '22' : C.blue + '18',
+        border: `1px solid ${error ? C.red + '55' : playing ? C.green + '55' : C.blue + '55'}`,
+        borderRadius: '4px',
+        color: error ? C.red : playing ? C.green : C.blue,
+        cursor: 'pointer',
+        fontSize: '10px',
+        fontWeight: 600,
+        padding: 0,
+        transition: 'all 0.15s',
+      }}
+    >
+      {error ? (
+        <>✕ Error</>
+      ) : playing ? (
+        <>
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor">
+            <rect x="6" y="4" width="4" height="16" rx="1"/>
+            <rect x="14" y="4" width="4" height="16" rx="1"/>
+          </svg>
+          Stop
+        </>
+      ) : (
+        <>
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor">
+            <polygon points="5,3 19,12 5,21"/>
+          </svg>
+          Audio
+        </>
+      )}
+    </button>
   );
 }
 
@@ -552,37 +512,19 @@ function FlashcardsTab({ settings }: { settings: UserSettings }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [exportStatus, setExportStatus] = useState<'idle' | 'exporting' | 'done' | 'error'>('idle');
-
-  const BACKEND_URL = 'https://syntagma.omerhanyigit.online';
-  const DEFAULT_USER_ID = '3';
 
   const apiBase = settings.apiBaseUrl || BACKEND_URL;
-  const userId = settings.authToken || DEFAULT_USER_ID;
 
   const fetchCards = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${apiBase}/api/flashcards?size=100&sort=createdAt,desc`, {
-        headers: { 'X-User-Id': userId },
+      const result = await sendMessage<{ ok: boolean; cards?: FlashcardPayload[]; error?: string }>({
+        type: 'FETCH_FLASHCARDS',
+        payload: null,
       });
-      if (!res.ok) throw new Error(`Server returned ${res.status}`);
-      const json = await res.json();
-      const content = json.data?.content ?? json.data ?? [];
-      const mapped: FlashcardPayload[] = content.map((fc: any) => ({
-        id: String(fc.flashcardId),
-        lemma: fc.lemma ?? '',
-        surfaceForm: fc.lemma ?? '',
-        sentence: fc.sourceSentence ?? '',
-        sourceUrl: '',
-        sourceTitle: fc.exampleSentence ?? '',
-        trMeaning: fc.translation ?? '',
-        createdAt: new Date(fc.createdAt).getTime(),
-        deckName: 'Syntagma',
-        tags: ['syntagma'],
-      }));
-      setCards(mapped);
+      if (!result.ok) throw new Error(result.error ?? 'Could not fetch flashcards');
+      setCards(result.cards ?? []);
     } catch (err) {
       console.error('[Syntagma] Failed to fetch flashcards:', err);
       setError((err as Error).message);
@@ -592,7 +534,7 @@ function FlashcardsTab({ settings }: { settings: UserSettings }) {
     } finally {
       setLoading(false);
     }
-  }, [apiBase, userId]);
+  }, [settings.authUserId, settings.apiBaseUrl]);
 
   useEffect(() => { fetchCards(); }, [fetchCards]);
 
@@ -608,28 +550,14 @@ function FlashcardsTab({ settings }: { settings: UserSettings }) {
   const selectAll = () => setSelected(new Set(cards.map(c => c.id)));
   const clearAll = () => setSelected(new Set());
 
-  const handleExportAnki = async () => {
-    const ids = selected.size > 0 ? [...selected] : cards.map(c => c.id);
-    if (ids.length === 0) return;
-
-    setExportStatus('exporting');
-    try {
-      await sendMessage({ type: 'EXPORT_TO_ANKI', payload: { cardIds: ids } });
-      setExportStatus('done');
-      setTimeout(() => setExportStatus('idle'), 2000);
-    } catch {
-      setExportStatus('error');
-      setTimeout(() => setExportStatus('idle'), 3000);
-    }
-  };
-
   const handleDeleteCard = async (id: string) => {
     // Delete from backend
     try {
-      await fetch(`${apiBase}/api/flashcards/${id}`, {
-        method: 'DELETE',
-        headers: { 'X-User-Id': userId },
+      const result = await sendMessage<{ ok: boolean; error?: string }>({
+        type: 'DELETE_FLASHCARD',
+        payload: { id },
       });
+      if (!result.ok) throw new Error(result.error ?? 'Delete failed');
     } catch (err) {
       console.warn('[Syntagma] Backend delete failed:', err);
     }
@@ -639,11 +567,6 @@ function FlashcardsTab({ settings }: { settings: UserSettings }) {
   };
 
   if (loading) return <div style={{ color: C.subtext, padding: '20px', textAlign: 'center' }}>Loading flashcards from server…</div>;
-
-  const exportLabel = exportStatus === 'exporting' ? 'Exporting…'
-    : exportStatus === 'done' ? 'Exported!'
-      : exportStatus === 'error' ? 'Error!'
-        : `Export to Anki (${selected.size > 0 ? selected.size : cards.length})`;
 
   return (
     <div>
@@ -682,22 +605,6 @@ function FlashcardsTab({ settings }: { settings: UserSettings }) {
         </button>
         <button onClick={clearAll} style={{ background: C.surface0, border: `1px solid ${C.surface1}`, borderRadius: '4px', padding: '4px 8px', color: C.text, cursor: 'pointer', fontSize: '12px' }}>
           None
-        </button>
-        <button
-          onClick={handleExportAnki}
-          disabled={exportStatus === 'exporting' || cards.length === 0}
-          style={{
-            background: exportStatus === 'done' ? C.green : exportStatus === 'error' ? C.red : C.blue,
-            color: C.base,
-            border: 'none',
-            borderRadius: '4px',
-            padding: '4px 12px',
-            cursor: 'pointer',
-            fontSize: '12px',
-            fontWeight: 600,
-          }}
-        >
-          {exportLabel}
         </button>
       </div>
 
@@ -738,6 +645,28 @@ function FlashcardsTab({ settings }: { settings: UserSettings }) {
                 onClick={e => e.stopPropagation()}
                 style={{ marginTop: '2px', flexShrink: 0 }}
               />
+              {/* Media column: screenshot + audio button stacked */}
+              {(card.screenshotDataUrl || card.audioUrl) && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flexShrink: 0 }}>
+                  {card.screenshotDataUrl && (
+                    <img
+                      src={card.screenshotDataUrl}
+                      alt=""
+                      style={{
+                        width: '72px',
+                        height: '48px',
+                        objectFit: 'cover',
+                        borderRadius: '4px',
+                        border: `1px solid ${C.surface1}`,
+                        background: C.base,
+                      }}
+                    />
+                  )}
+                  {card.audioUrl && (
+                    <AudioPlayButton url={card.audioUrl} />
+                  )}
+                </div>
+              )}
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
                   <span style={{ fontWeight: 700, color: C.text, fontSize: '14px' }}>{card.lemma}</span>
@@ -782,7 +711,7 @@ function FlashcardsTab({ settings }: { settings: UserSettings }) {
       }}>
         Server: <span style={{ color: C.text }}>{apiBase}</span>
         <br />
-        User ID: <span style={{ color: C.text }}>{userId}</span>
+        Account: <span style={{ color: C.text }}>{settings.authEmail ?? 'Not logged in'}</span>
       </div>
     </div>
   );
@@ -790,13 +719,104 @@ function FlashcardsTab({ settings }: { settings: UserSettings }) {
 
 // ─── Main OptionsApp ─────────────────────────────────────────────────────────
 
-type TabId = 'general' | 'ai' | 'words' | 'flashcards';
+// ─── Tab: Video ──────────────────────────────────────────────────────────────
+
+function SliderRow({ label, value, min, max, step, unit, onChange }: {
+  label: string; value: number; min: number; max: number; step: number;
+  unit?: string; onChange: (v: number) => void;
+}) {
+  return (
+    <div style={{ padding: '10px 0', borderBottom: `1px solid ${C.surface1}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px' }}>
+      <span style={{ fontSize: '14px', color: C.text }}>{label}</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <input
+          type="range" min={min} max={max} step={step} value={value}
+          onChange={e => onChange(+e.target.value)}
+          style={{ width: '120px', accentColor: C.blue, cursor: 'pointer' }}
+        />
+        <span style={{ fontSize: '12px', color: C.subtext, minWidth: '52px', textAlign: 'right' }}>
+          {value}{unit ?? ''}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function VideoTab({ settings, onUpdate }: { settings: UserSettings; onUpdate: (p: Partial<UserSettings>) => void }) {
+  return (
+    <div>
+      <SectionTitle>Subtitles</SectionTitle>
+      <SliderRow label="Target subtitle size" value={settings.targetSubtitleSize} min={50} max={300} step={10} unit="%" onChange={v => onUpdate({ targetSubtitleSize: v })} />
+      <SliderRow label="Secondary subtitle size" value={settings.secondarySubtitleSize} min={50} max={300} step={10} unit="%" onChange={v => onUpdate({ secondarySubtitleSize: v })} />
+      <SliderRow label="Target timing offset" value={settings.targetSubtitleOffsetMs} min={-5000} max={5000} step={50} unit="ms" onChange={v => onUpdate({ targetSubtitleOffsetMs: v })} />
+      <SliderRow label="Secondary timing offset" value={settings.secondarySubtitleOffsetMs} min={-5000} max={5000} step={50} unit="ms" onChange={v => onUpdate({ secondarySubtitleOffsetMs: v })} />
+      <Select
+        label="Obscure target subtitle"
+        value={settings.targetSubtitleObscure}
+        onChange={v => onUpdate({ targetSubtitleObscure: v as UserSettings['targetSubtitleObscure'] })}
+        options={[
+          { value: 'off', label: 'Off' },
+          { value: 'blur', label: 'Blur until revealed' },
+          { value: 'hide', label: 'Hide until revealed' },
+        ]}
+      />
+      {settings.targetSubtitleObscure !== 'off' && <>
+        <Toggle value={settings.revealOnPause} onChange={v => onUpdate({ revealOnPause: v })} label="Reveal on pause" />
+        <Toggle value={settings.revealOnHover} onChange={v => onUpdate({ revealOnHover: v })} label="Reveal on hover" />
+        <Toggle value={settings.revealByKnownStatus} onChange={v => onUpdate({ revealByKnownStatus: v })} label="Reveal if all words known" />
+      </>}
+      <Toggle value={settings.removeBracketedSubtitles} onChange={v => onUpdate({ removeBracketedSubtitles: v })} label="Strip [bracketed] subtitles" description="Remove sound effects like [music]" />
+
+      <SectionTitle>Auto-Pause</SectionTitle>
+      <Select
+        label="Auto-pause mode"
+        value={settings.autoPauseMode}
+        onChange={v => onUpdate({ autoPauseMode: v as UserSettings['autoPauseMode'] })}
+        options={[
+          { value: 'off', label: 'Off' },
+          { value: 'before', label: 'Before subtitle' },
+          { value: 'after', label: 'After subtitle' },
+          { value: 'before-and-after', label: 'Before & after' },
+          { value: 'rewind-and-pause', label: 'Rewind & pause' },
+        ]}
+      />
+      {(settings.autoPauseMode === 'after' || settings.autoPauseMode === 'before-and-after') && (
+        <SliderRow label="End tolerance" value={settings.autoPauseDelayToleranceMs} min={0} max={2000} step={50} unit="ms" onChange={v => onUpdate({ autoPauseDelayToleranceMs: v })} />
+      )}
+
+      <SectionTitle>Scene Skipping</SectionTitle>
+      <Select
+        label="Silent gaps"
+        value={settings.sceneSkipMode}
+        onChange={v => onUpdate({ sceneSkipMode: v as UserSettings['sceneSkipMode'] })}
+        options={[
+          { value: 'off', label: 'Off' },
+          { value: '2x', label: '2× speed' },
+          { value: '4x', label: '4× speed' },
+          { value: '6x', label: '6× speed' },
+          { value: '8x', label: '8× speed' },
+          { value: 'jump', label: 'Jump to next subtitle' },
+        ]}
+      />
+
+      <SectionTitle>Word Interaction</SectionTitle>
+      <Toggle value={settings.pauseOnWordInteraction} onChange={v => onUpdate({ pauseOnWordInteraction: v })} label="Pause on word click" />
+      <Toggle value={settings.resumeAfterInteraction} onChange={v => onUpdate({ resumeAfterInteraction: v })} label="Resume after closing popup" />
+      {settings.resumeAfterInteraction && (
+        <SliderRow label="Resume delay" value={settings.resumeDelayMs} min={0} max={3000} step={100} unit="ms" onChange={v => onUpdate({ resumeDelayMs: v })} />
+      )}
+      <SliderRow label="Click delay" value={settings.interactionDelayMs} min={0} max={3000} step={100} unit="ms" onChange={v => onUpdate({ interactionDelayMs: v })} />
+    </div>
+  );
+}
+
+type TabId = 'general' | 'words' | 'flashcards' | 'video';
 
 const TABS: Array<{ id: TabId; label: string }> = [
   { id: 'general', label: 'General' },
-  { id: 'ai', label: 'AI Settings' },
   { id: 'words', label: 'Word Browser' },
   { id: 'flashcards', label: 'Flashcards' },
+  { id: 'video', label: 'Video' },
 ];
 
 export function OptionsApp() {
@@ -809,6 +829,15 @@ export function OptionsApp() {
     sendMessage<UserSettings>({ type: 'GET_SETTINGS', payload: null })
       .then(s => { setSettings(s); setLoading(false); })
       .catch(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    const onChanged = (changes: Record<string, chrome.storage.StorageChange>, areaName: string) => {
+      if (areaName !== 'local' || !changes.userSettings?.newValue) return;
+      setSettings({ ...DEFAULT_SETTINGS, ...(changes.userSettings.newValue as Partial<UserSettings>) });
+    };
+    chrome.storage.onChanged.addListener(onChanged);
+    return () => chrome.storage.onChanged.removeListener(onChanged);
   }, []);
 
   const handleUpdate = useCallback(async (patch: Partial<UserSettings>) => {
@@ -905,9 +934,9 @@ export function OptionsApp() {
         {/* Content */}
         <div style={{ maxWidth: '700px', margin: '0 auto', padding: '24px' }}>
           {activeTab === 'general' && <GeneralTab settings={settings} onUpdate={handleUpdate} />}
-          {activeTab === 'ai' && <AISettingsTab settings={settings} onUpdate={handleUpdate} />}
           {activeTab === 'words' && <WordBrowserTab settings={settings} />}
           {activeTab === 'flashcards' && <FlashcardsTab settings={settings} />}
+          {activeTab === 'video' && <VideoTab settings={settings} onUpdate={handleUpdate} />}
         </div>
       </div>
     </>

@@ -96,3 +96,16 @@ target/
 
 # Test coverage
 coverage/
+Plan.md
+changes.diff
+diff_report.txt
+.claude/settings.local.json
+
+# Large local-only files
+extension/dictionary.json
+.codex
+/backend
+/backend
+/backend
+/backend
+/backend
