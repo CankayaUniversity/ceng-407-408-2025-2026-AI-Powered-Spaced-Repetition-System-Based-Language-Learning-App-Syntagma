@@ -1,7 +1,9 @@
 package com.syntagma.backend.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.syntagma.backend.dto.request.AiTranslateRequest;
 import com.syntagma.backend.dto.request.AiWordExplainRequest;
+import com.syntagma.backend.dto.response.AiTranslateResponse;
 import com.syntagma.backend.dto.response.AiWordExplainResponse;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -72,6 +74,57 @@ public class AiService {
             log.warn("AI response parsing failed. Raw content: {}", content);
             throw new IllegalArgumentException("AI response parsing failed");
         }
+    }
+
+    public AiTranslateResponse translate(AiTranslateRequest request) {
+        if (!StringUtils.hasText(apiKey)) {
+            throw new IllegalStateException("AI API key is not configured");
+        }
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("model", model);
+        body.put("max_tokens", maxTokens);
+        body.put("stream", false);
+        body.put("messages", buildTranslateMessages(request));
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setBearerAuth(apiKey);
+        headers.add("X-Title", "Syntagma");
+
+        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
+        ResponseEntity<Map> response = aiRestTemplate.postForEntity(apiUrl, entity, Map.class);
+
+        if (!response.getStatusCode().is2xxSuccessful()) {
+            throw new IllegalArgumentException("AI request failed with status: " + response.getStatusCode());
+        }
+
+        String content = extractContent(response.getBody());
+        String json = extractJson(content);
+
+        try {
+            return objectMapper.readValue(json, AiTranslateResponse.class);
+        } catch (Exception ex) {
+            log.warn("AI translate response parsing failed. Raw content: {}", content);
+            throw new IllegalArgumentException("AI response parsing failed");
+        }
+    }
+
+    private List<Map<String, String>> buildTranslateMessages(AiTranslateRequest request) {
+        String system = "You translate English sentences to Turkish for a Turkish-speaking English learner. "
+                + "Return JSON only (no markdown). All fields must be filled and in Turkish. "
+                + "naturalTranslation: fluent, idiomatic Turkish. "
+                + "literalTranslation: word-by-word literal Turkish (may sound awkward). "
+                + "alternativeTranslation: a different valid Turkish phrasing. "
+                + "JSON schema: {\"naturalTranslation\":\"...\","
+                + "\"literalTranslation\":\"...\",\"alternativeTranslation\":\"...\"}";
+
+        String user = "Sentence: \"" + request.sentence() + "\"";
+
+        List<Map<String, String>> messages = new ArrayList<>();
+        messages.add(Map.of("role", "system", "content", system));
+        messages.add(Map.of("role", "user", "content", user));
+        return messages;
     }
 
     private List<Map<String, String>> buildMessages(AiWordExplainRequest request, int exampleCount) {

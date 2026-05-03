@@ -1,6 +1,8 @@
 package com.syntagma.backend.controller;
 
+import com.syntagma.backend.dto.request.AiTranslateRequest;
 import com.syntagma.backend.dto.request.AiWordExplainRequest;
+import com.syntagma.backend.dto.response.AiTranslateResponse;
 import com.syntagma.backend.dto.response.AiWordExplainResponse;
 import com.syntagma.backend.dto.response.ApiResponse;
 import com.syntagma.backend.service.AiService;
@@ -23,6 +25,13 @@ public class AiController {
     public ResponseEntity<ApiResponse<AiWordExplainResponse>> explainWord(
             @Valid @RequestBody AiWordExplainRequest request) {
         AiWordExplainResponse response = aiService.explainWord(request);
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
+    @PostMapping("/translate")
+    public ResponseEntity<ApiResponse<AiTranslateResponse>> translate(
+            @Valid @RequestBody AiTranslateRequest request) {
+        AiTranslateResponse response = aiService.translate(request);
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 }
