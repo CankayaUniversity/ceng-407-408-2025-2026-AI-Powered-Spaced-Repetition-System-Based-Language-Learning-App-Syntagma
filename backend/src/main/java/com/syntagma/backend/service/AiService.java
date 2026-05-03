@@ -1,8 +1,10 @@
 package com.syntagma.backend.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.syntagma.backend.dto.request.AiSentenceExplainRequest;
 import com.syntagma.backend.dto.request.AiTranslateRequest;
 import com.syntagma.backend.dto.request.AiWordExplainRequest;
+import com.syntagma.backend.dto.response.AiSentenceExplainResponse;
 import com.syntagma.backend.dto.response.AiTranslateResponse;
 import com.syntagma.backend.dto.response.AiWordExplainResponse;
 import java.util.ArrayList;
@@ -127,6 +129,68 @@ public class AiService {
         return messages;
     }
 
+    public AiSentenceExplainResponse explainSentence(AiSentenceExplainRequest request) {
+        if (!StringUtils.hasText(apiKey)) {
+            throw new IllegalStateException("AI API key is not configured");
+        }
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("model", model);
+        body.put("max_tokens", 800);
+        body.put("stream", false);
+        body.put("messages", buildSentenceExplainMessages(request));
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setBearerAuth(apiKey);
+        headers.add("X-Title", "Syntagma");
+
+        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
+        ResponseEntity<Map> response = aiRestTemplate.postForEntity(apiUrl, entity, Map.class);
+
+        if (!response.getStatusCode().is2xxSuccessful()) {
+            throw new IllegalArgumentException("AI request failed with status: " + response.getStatusCode());
+        }
+
+        String content = extractContent(response.getBody());
+        String json = extractJson(content);
+
+        try {
+            return objectMapper.readValue(json, AiSentenceExplainResponse.class);
+        } catch (Exception ex) {
+            log.warn("AI sentence-explain response parsing failed. Raw content: {}", content);
+            throw new IllegalArgumentException("AI response parsing failed");
+        }
+    }
+
+    private List<Map<String, String>> buildSentenceExplainMessages(AiSentenceExplainRequest request) {
+        StringBuilder user = new StringBuilder();
+        user.append("Sentence: \"").append(request.sentence()).append("\"\n");
+        if (StringUtils.hasText(request.context())) {
+            user.append("Context: \"").append(request.context()).append("\"\n");
+        }
+        if (StringUtils.hasText(request.level())) {
+            user.append("Learner level: ").append(request.level());
+        }
+
+        String system = "You explain English sentence grammar to a Turkish-speaking English learner. "
+                + "Return JSON only (no markdown). All text fields must be in Turkish. "
+                + "parts: list of {chunk, function} where chunk is an English fragment from the sentence "
+                + "and function is its grammatical role in Turkish (e.g., \"özne\", \"yardımcı fiil\", \"nesne\"). "
+                + "turkishMeaning: clause-by-clause Turkish translation. "
+                + "grammarStructure: tense, aspect, voice, clause structure in Turkish. "
+                + "whyThisStructure: why this construction is used (in Turkish). "
+                + "learnerTip: a concrete tip for Turkish learners (in Turkish). "
+                + "JSON schema: {\"parts\":[{\"chunk\":\"...\",\"function\":\"...\"}],"
+                + "\"turkishMeaning\":\"...\",\"grammarStructure\":\"...\","
+                + "\"whyThisStructure\":\"...\",\"learnerTip\":\"...\"}";
+
+        List<Map<String, String>> messages = new ArrayList<>();
+        messages.add(Map.of("role", "system", "content", system));
+        messages.add(Map.of("role", "user", "content", user.toString()));
+        return messages;
+    }
+
     private List<Map<String, String>> buildMessages(AiWordExplainRequest request, int exampleCount) {
         StringBuilder user = new StringBuilder();
         user.append("Word: \"").append(request.word()).append("\"\n");
@@ -175,8 +239,13 @@ public class AiService {
             int start = trimmed.indexOf('\n');
             int end = trimmed.lastIndexOf("```");
             if (start != -1 && end > start) {
-                return trimmed.substring(start, end).trim();
+                trimmed = trimmed.substring(start, end).trim();
             }
+        }
+        int firstBrace = trimmed.indexOf('{');
+        int lastBrace = trimmed.lastIndexOf('}');
+        if (firstBrace != -1 && lastBrace > firstBrace) {
+            return trimmed.substring(firstBrace, lastBrace + 1);
         }
         return trimmed;
     }

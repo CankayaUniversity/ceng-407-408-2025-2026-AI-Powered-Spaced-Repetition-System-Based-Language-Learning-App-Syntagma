@@ -46,6 +46,6 @@ ai:
   api:
     url: ${AI_API_URL:https://openrouter.ai/api/v1/chat/completions}
     key: ${AI_API_KEY:}
-  model: ${AI_MODEL:openrouter/auto}
+  model: ${AI_MODEL:google/gemini-3-flash-preview}
   word-explain:
     max-tokens: ${AI_WORD_EXPLAIN_MAX_TOKENS:500}
