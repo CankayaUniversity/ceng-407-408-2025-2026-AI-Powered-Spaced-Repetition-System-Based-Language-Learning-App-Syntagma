@@ -11,6 +11,7 @@ import {
 import LoginScreen from './src/screens/LoginScreen';
 import MainTabs from './src/navigation/MainTabs';
 import SessionSummaryScreen from './src/screens/SessionSummaryScreen';
+import { ThemeProvider } from './src/shared/theme';
 
 const AppStack = createNativeStackNavigator();
 
@@ -27,12 +28,14 @@ export default function App() {
   }
 
   return (
-    <NavigationContainer>
-      <AppStack.Navigator screenOptions={{ headerShown: false }}>
-        <AppStack.Screen name="Login" component={LoginScreen} />
-        <AppStack.Screen name="MainTabs" component={MainTabs} />
-        <AppStack.Screen name="SessionSummaryScreen" component={SessionSummaryScreen} />
-      </AppStack.Navigator>
-    </NavigationContainer>
+    <ThemeProvider>
+      <NavigationContainer>
+        <AppStack.Navigator screenOptions={{ headerShown: false }}>
+          <AppStack.Screen name="Login" component={LoginScreen} />
+          <AppStack.Screen name="MainTabs" component={MainTabs} />
+          <AppStack.Screen name="SessionSummaryScreen" component={SessionSummaryScreen} />
+        </AppStack.Navigator>
+      </NavigationContainer>
+    </ThemeProvider>
   );
 }

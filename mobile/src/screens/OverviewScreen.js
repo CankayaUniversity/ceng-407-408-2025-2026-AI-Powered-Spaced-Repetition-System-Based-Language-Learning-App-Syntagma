@@ -1,33 +1,96 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
+import { ActivityIndicator, StyleSheet, Text, View, Pressable } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { StyleSheet, Text, View, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
+import { fetchReviewStats } from '../shared/api';
+import { useTheme } from '../shared/theme';
 
-const TABS = ['WEEK', 'MONTH', 'YEAR'];
-
-const CHART_DATA = {
-  WEEK: [50, 70, 65, 85, 60, 40, 90],
-  MONTH: [],
-  YEAR: [],
-};
+const TABS = ['WEEK', 'MONTH'];
 
 const WEEK_DAYS = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 
-const TOTAL_BY_TAB = {
-  WEEK: '1,248 Words',
-  MONTH: '-',
-  YEAR: '-',
-};
+function getDayLabel(dateStr) {
+  try {
+    const d = new Date(dateStr + 'T00:00:00');
+    const day = d.getDay();
+    // JS getDay: 0=Sun,1=Mon…6=Sat → map to WEEK_DAYS
+    return WEEK_DAYS[day === 0 ? 6 : day - 1];
+  } catch {
+    return dateStr;
+  }
+}
 
 export default function OverviewScreen() {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [activeTab, setActiveTab] = useState('WEEK');
-  const [selectedDayIndex, setSelectedDayIndex] = useState(null);
-  const bars = useMemo(() => CHART_DATA[activeTab], [activeTab]);
+  const [selectedBarIndex, setSelectedBarIndex] = useState(null);
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  const selectedDayText =
-    selectedDayIndex === null
-      ? 'Tap a day to see words spoken'
-      : `${WEEK_DAYS[selectedDayIndex]}: ${CHART_DATA.WEEK[selectedDayIndex]} words`;
+  const loadStats = useCallback(async (period) => {
+    try {
+      setLoading(true);
+      setError('');
+      const data = await fetchReviewStats(period.toLowerCase());
+      setStats(data);
+    } catch (err) {
+      setError(err?.message || 'Stats could not be loaded.');
+      setStats(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadStats(activeTab);
+    }, [activeTab, loadStats])
+  );
+
+  const handleTabChange = (tab) => {
+    setActiveTab(tab);
+    setSelectedBarIndex(null);
+  };
+
+  const dailyCounts = useMemo(() => {
+    if (!stats?.reviewsByDay) {
+      return [];
+    }
+    return stats.reviewsByDay.map((entry) => ({
+      date: entry.date,
+      label: getDayLabel(entry.date),
+      count: entry.count || 0,
+    }));
+  }, [stats]);
+
+  const maxCount = useMemo(() => {
+    if (!dailyCounts.length) {
+      return 1;
+    }
+    const m = Math.max(...dailyCounts.map((d) => d.count));
+    return m > 0 ? m : 1;
+  }, [dailyCounts]);
+
+  const totalWords = useMemo(() => {
+    if (!stats) {
+      return '-';
+    }
+    if (activeTab === 'WEEK') {
+      return formatNumber(stats.weeklyCount ?? 0);
+    }
+    return formatNumber(stats.monthlyCount ?? 0);
+  }, [activeTab, stats]);
+
+  const selectedBarText = useMemo(() => {
+    if (selectedBarIndex === null || !dailyCounts[selectedBarIndex]) {
+      return 'Tap a bar to see details';
+    }
+    const item = dailyCounts[selectedBarIndex];
+    return `${item.label}: ${item.count} reviews`;
+  }, [dailyCounts, selectedBarIndex]);
 
   return (
     <SafeAreaView style={styles.screen}>
@@ -38,21 +101,28 @@ export default function OverviewScreen() {
         </View>
 
         <View style={styles.summaryCard}>
-          <Text style={styles.mutedCaps}>SESSION SUMMARY</Text>
-          <Text style={styles.bigNumber}>142</Text>
-          <Text style={styles.wordsReviewed}>words reviewed</Text>
+          <Text style={styles.mutedCaps}>TOTAL REVIEWS</Text>
+          {loading && !stats ? (
+            <ActivityIndicator size="small" color={colors.accent} style={{ marginTop: 12, marginBottom: 12 }} />
+          ) : (
+            <>
+              <Text style={styles.bigNumber}>{stats ? formatNumber(stats.totalReviews ?? 0) : '-'}</Text>
+              <Text style={styles.wordsReviewed}>words reviewed</Text>
+            </>
+          )}
 
           <View style={styles.divider} />
 
-          <Text style={styles.mutedCaps}>TIME</Text>
-          <Text style={styles.timeValue}>12m 04s</Text>
+          <Text style={styles.mutedCaps}>STREAK</Text>
+          <Text style={styles.streakValue}>
+            {stats?.streakCount != null ? `🔥 ${stats.streakCount} days` : '-'}
+          </Text>
         </View>
 
         <View style={styles.weeklyHeader}>
-          <Text style={styles.weeklyTitle}>Weekly Progress</Text>
-          <Pressable>
-            <Text style={styles.insightsLink}>View Insights</Text>
-          </Pressable>
+          <Text style={styles.weeklyTitle}>
+            {activeTab === 'WEEK' ? 'Weekly Progress' : 'Monthly Progress'}
+          </Text>
         </View>
 
         <View style={styles.segmentedControl}>
@@ -61,12 +131,7 @@ export default function OverviewScreen() {
             return (
               <Pressable
                 key={tab}
-                onPress={() => {
-                  setActiveTab(tab);
-                  if (tab !== 'WEEK') {
-                    setSelectedDayIndex(null);
-                  }
-                }}
+                onPress={() => handleTabChange(tab)}
                 style={[styles.segmentButton, isActive && styles.segmentButtonActive]}
               >
                 <Text style={[styles.segmentText, isActive && styles.segmentTextActive]}>{tab}</Text>
@@ -76,51 +141,72 @@ export default function OverviewScreen() {
         </View>
 
         <View style={styles.chartCard}>
-          <View style={styles.chartArea}>
-            {activeTab === 'WEEK' ? (
-              bars.map((value, index) => {
-                const isSelected = selectedDayIndex === index;
+          {error ? (
+            <View style={styles.emptyChartWrap}>
+              <Text style={styles.emptyChartText}>{error}</Text>
+            </View>
+          ) : loading ? (
+            <View style={styles.emptyChartWrap}>
+              <ActivityIndicator size="small" color={colors.accent} />
+            </View>
+          ) : dailyCounts.length > 0 ? (
+            <View style={styles.chartArea}>
+              {dailyCounts.map((item, index) => {
+                const isSelected = selectedBarIndex === index;
+                const heightPct = Math.max(5, (item.count / maxCount) * 100);
                 return (
                   <Pressable
-                    key={WEEK_DAYS[index]}
+                    key={item.date}
                     style={styles.barColumn}
-                    onPress={() => setSelectedDayIndex(index)}
+                    onPress={() => setSelectedBarIndex(index)}
                   >
                     <LinearGradient
-                      colors={isSelected ? ['#DEB48D', '#B07142'] : ['#C8956C', '#A0673A']}
+                      colors={
+                        isSelected
+                          ? [colors.accentStrong, colors.accent]
+                          : [colors.accentSoft, colors.accent]
+                      }
                       start={{ x: 0.5, y: 0 }}
                       end={{ x: 0.5, y: 1 }}
-                      style={[styles.bar, { height: `${value}%` }, isSelected && styles.barSelected]}
+                      style={[styles.bar, { height: `${heightPct}%` }, isSelected && styles.barSelected]}
                     />
                     <Text style={[styles.dayLabel, isSelected && styles.dayLabelSelected]}>
-                      {WEEK_DAYS[index]}
+                      {item.label}
                     </Text>
                   </Pressable>
                 );
-              })
-            ) : (
-              <View style={styles.emptyChartWrap}>
-                <Text style={styles.emptyChartText}>No data yet</Text>
-              </View>
-            )}
-          </View>
+              })}
+            </View>
+          ) : (
+            <View style={styles.emptyChartWrap}>
+              <Text style={styles.emptyChartText}>No review data yet</Text>
+            </View>
+          )}
 
           <View style={styles.divider} />
 
-          <Text style={styles.mutedCaps}>
-            {activeTab === 'WEEK' ? selectedDayText : 'Data will be loaded from backend'}
-          </Text>
-          <Text style={styles.totalWords}>{TOTAL_BY_TAB[activeTab]}</Text>
+          <Text style={styles.mutedCaps}>{selectedBarText}</Text>
+          <Text style={styles.totalWords}>{`${totalWords} Reviews`}</Text>
         </View>
       </View>
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
+function formatNumber(n) {
+  if (n == null) {
+    return '-';
+  }
+  if (n >= 1000) {
+    return n.toLocaleString('en-US');
+  }
+  return String(n);
+}
+
+const createStyles = (colors) => StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: '#F5F0EA',
+    backgroundColor: colors.background,
   },
   container: {
     flex: 1,
@@ -138,7 +224,7 @@ const styles = StyleSheet.create({
     fontFamily: 'PlayfairDisplay_700Bold',
     fontSize: 30,
     letterSpacing: 1.4,
-    color: '#5C3D1E',
+    color: colors.accent,
     marginTop: 6,
   },
   brandTitle: {
@@ -146,17 +232,17 @@ const styles = StyleSheet.create({
     left: 0,
     top: -4,
     fontSize: 18,
-    color: '#6F543A',
+    color: colors.textSecondary,
     fontFamily: 'PlayfairDisplay_700Bold',
   },
   summaryCard: {
     alignItems: 'center',
     borderRadius: 20,
-    backgroundColor: '#EDE8E0',
+    backgroundColor: colors.card,
     paddingHorizontal: 22,
     paddingVertical: 16,
     marginBottom: 16,
-    shadowColor: '#5C3D1E',
+    shadowColor: colors.accent,
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.08,
     shadowRadius: 12,
@@ -166,7 +252,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 1.4,
     fontSize: 11,
-    color: '#8E7A66',
+    color: colors.textSecondary,
     fontFamily: 'DMSans_400Regular',
   },
   bigNumber: {
@@ -174,26 +260,26 @@ const styles = StyleSheet.create({
     fontFamily: 'DMSans_600SemiBold',
     fontSize: 68,
     lineHeight: 72,
-    color: '#5C3D1E',
+    color: colors.accent,
     textAlign: 'center',
   },
   wordsReviewed: {
     marginTop: 2,
     fontFamily: 'DMSans_400Regular',
     fontSize: 20,
-    color: '#5C3D1E',
+    color: colors.textPrimary,
   },
   divider: {
     alignSelf: 'stretch',
     marginVertical: 12,
     height: 1,
-    backgroundColor: '#D7CCC0',
+    backgroundColor: colors.border,
   },
-  timeValue: {
+  streakValue: {
     marginTop: 6,
     fontFamily: 'DMSans_600SemiBold',
     fontSize: 26,
-    color: '#5C3D1E',
+    color: colors.textPrimary,
     textAlign: 'center',
   },
   weeklyHeader: {
@@ -205,17 +291,12 @@ const styles = StyleSheet.create({
   weeklyTitle: {
     fontFamily: 'DMSans_600SemiBold',
     fontSize: 22,
-    color: '#5C3D1E',
-  },
-  insightsLink: {
-    fontFamily: 'DMSans_400Regular',
-    fontSize: 13,
-    color: '#5C3D1E',
+    color: colors.textPrimary,
   },
   segmentedControl: {
     flexDirection: 'row',
     borderRadius: 16,
-    backgroundColor: '#EAE1D6',
+    backgroundColor: colors.mutedSurface,
     padding: 4,
     marginBottom: 12,
   },
@@ -227,26 +308,26 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   segmentButtonActive: {
-    backgroundColor: '#F2A96E',
+    backgroundColor: colors.accentStrong,
   },
   segmentText: {
     fontFamily: 'DMSans_400Regular',
     fontSize: 12,
     letterSpacing: 1,
-    color: '#6B5844',
+    color: colors.textSecondary,
   },
   segmentTextActive: {
-    color: '#5C3D1E',
+    color: colors.textPrimary,
     fontFamily: 'DMSans_600SemiBold',
   },
   chartCard: {
     flex: 1,
     minHeight: 0,
     borderRadius: 20,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.card,
     paddingHorizontal: 16,
     paddingVertical: 14,
-    shadowColor: '#5C3D1E',
+    shadowColor: colors.accent,
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.07,
     shadowRadius: 10,
@@ -262,7 +343,8 @@ const styles = StyleSheet.create({
   },
   barColumn: {
     alignItems: 'center',
-    width: 34,
+    flex: 1,
+    maxWidth: 42,
   },
   bar: {
     width: 22,
@@ -279,10 +361,10 @@ const styles = StyleSheet.create({
     fontFamily: 'DMSans_400Regular',
     fontSize: 10,
     letterSpacing: 0.7,
-    color: '#7F6E5B',
+    color: colors.textSecondary,
   },
   dayLabelSelected: {
-    color: '#5C3D1E',
+    color: colors.textPrimary,
     fontFamily: 'DMSans_600SemiBold',
   },
   emptyChartWrap: {
@@ -294,13 +376,13 @@ const styles = StyleSheet.create({
   emptyChartText: {
     fontFamily: 'DMSans_400Regular',
     fontSize: 14,
-    color: '#9A8772',
+    color: colors.textSecondary,
   },
   totalWords: {
     marginTop: 6,
     fontFamily: 'DMSans_600SemiBold',
     fontSize: 30,
     lineHeight: 34,
-    color: '#5C3D1E',
+    color: colors.textPrimary,
   },
 });
