@@ -1,5 +1,8 @@
 package com.syntagma.backend.controller;
 
+import com.syntagma.backend.dto.request.KnownWordsIntakeRequest;
+import com.syntagma.backend.dto.request.LevelKnownWordsRequest;
+import com.syntagma.backend.dto.request.WordKnowledgeBatchEntry;
 import com.syntagma.backend.dto.request.WordKnowledgeBatchRequest;
 import com.syntagma.backend.dto.request.WordKnowledgeUpdateRequest;
 import com.syntagma.backend.dto.response.ApiResponse;
@@ -14,6 +17,7 @@ import org.springframework.data.web.PageableDefault;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -54,6 +58,25 @@ public class WordKnowledgeController {
             @RequestHeader("X-User-Id") Long userId,
             @Valid @RequestBody WordKnowledgeBatchRequest request) {
         int updated = wordKnowledgeService.batchUpdate(userId, request.entries());
+        return ResponseEntity.ok(ApiResponse.success(Map.of("updated", updated)));
+    }
+
+    @PostMapping("/known-words")
+    public ResponseEntity<ApiResponse<Map<String, Integer>>> intakeKnownWords(
+            @RequestHeader("X-User-Id") Long userId,
+            @Valid @RequestBody KnownWordsIntakeRequest request) {
+        List<WordKnowledgeBatchEntry> entries = request.knownWords().stream()
+                .map(word -> new WordKnowledgeBatchEntry(word, KnowledgeStatus.KNOWN))
+                .toList();
+        int updated = wordKnowledgeService.batchUpdate(userId, entries);
+        return ResponseEntity.ok(ApiResponse.success(Map.of("updated", updated)));
+    }
+
+    @PostMapping("/level")
+    public ResponseEntity<ApiResponse<Map<String, Integer>>> intakeKnownWordsByLevel(
+            @RequestHeader("X-User-Id") Long userId,
+            @Valid @RequestBody LevelKnownWordsRequest request) {
+        int updated = wordKnowledgeService.markKnownByLevel(userId, request.level());
         return ResponseEntity.ok(ApiResponse.success(Map.of("updated", updated)));
     }
 }

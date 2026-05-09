@@ -7,5 +7,6 @@ public record UserResponse(
         String email,
         LocalDateTime createdAt,
         LocalDateTime lastLoginAt,
-        Integer streakCount
+        Integer streakCount,
+        Integer dailyNewCardLimit
 ) {}
