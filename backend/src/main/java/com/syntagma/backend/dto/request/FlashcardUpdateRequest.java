@@ -7,5 +7,7 @@ public record FlashcardUpdateRequest(
         String translation,
         String sourceSentence,
         String exampleSentence,
+        Long collectionId,
+        Boolean clearCollection,
         KnowledgeStatus knowledgeStatus
 ) {}

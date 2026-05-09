@@ -10,6 +10,7 @@ public record FlashcardResponse(
         String translation,
         String sourceSentence,
         String exampleSentence,
+        Long collectionId,
         KnowledgeStatus knowledgeStatus,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
