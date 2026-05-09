@@ -3,6 +3,7 @@
     "name": "Syntagma",
     "slug": "syntagma",
     "version": "1.0.0",
+    "icon": "./assets/maskot.jpg",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "assetBundlePatterns": [
@@ -10,6 +11,22 @@
     ],
     "plugins": [
       "expo-font"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "68a50f57-65a2-4916-a224-6a798b5abae9"
+      }
+    },
+    "owner": "alpylmz4",
+    "android": {
+      "package": "com.alpylmz4.syntagma",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/maskot.jpg",
+        "backgroundColor": "#FFF8F0"
+      },
+      "notification": {
+        "color": "#8B6508"
+      }
+    }
   }
 }
