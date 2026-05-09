@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { WordStatus, LexemeEntry, UserSettings } from '../../shared/types';
 import { sendMessage } from '../../shared/messages';
+import type { AiResultData } from '../../shared/backend-ai';
 import { lookupFrequency, getFrequencyBand } from '../../shared/frequency';
 import { StatusRow } from './StatusRow';
 import { PopupButtons } from './PopupButtons';
@@ -58,32 +59,99 @@ function FreqBadge({ rank }: { rank?: number }) {
   );
 }
 
-function AIPanel({ content, loading, error }: { content: string; loading: boolean; error?: string | null }) {
-  if (!content && !loading && !error) return null;
-
+function Field({ label, value }: { label: string; value?: string | null }) {
+  if (!value) return null;
   return (
-    <div style={{
-      background: C.surface0,
-      borderRadius: '6px',
-      padding: '8px 10px',
-      marginBottom: '8px',
-      fontSize: '12px',
-      color: C.text,
-      lineHeight: 1.6,
-      maxHeight: '200px',
-      overflowY: 'auto',
-      whiteSpace: 'pre-wrap',
-    }}>
-      {error ? (
-        <span style={{ color: C.red }}>{error}</span>
-      ) : loading && !content ? (
-        <span style={{ color: C.subtext }}>Thinking…</span>
-      ) : (
-        <span>{content}</span>
+    <div style={{ marginBottom: '6px' }}>
+      <div style={{ fontSize: '10px', fontWeight: 700, color: C.subtext, textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: '2px' }}>
+        {label}
+      </div>
+      <div style={{ color: C.text }}>{value}</div>
+    </div>
+  );
+}
+
+function AIPanel({ result, loading, error }: { result: AiResultData | null; loading: boolean; error?: string | null }) {
+  if (!result && !loading && !error) return null;
+
+  const wrap: React.CSSProperties = {
+    background: C.surface0,
+    borderRadius: '6px',
+    padding: '10px 12px',
+    marginBottom: '8px',
+    fontSize: '12px',
+    color: C.text,
+    lineHeight: 1.55,
+    maxHeight: '260px',
+    overflowY: 'auto',
+  };
+
+  if (error) {
+    return <div style={wrap}><span style={{ color: C.red }}>{error}</span></div>;
+  }
+
+  if (loading && !result) {
+    return <div style={wrap}><span style={{ color: C.subtext }}>Thinking…</span></div>;
+  }
+
+  if (!result) return null;
+
+  if (result.kind === 'explain-word') {
+    const d = result.data;
+    return (
+      <div style={wrap}>
+        <Field label="Meaning" value={d.meaning} />
+        <Field label="Part of Speech" value={d.partOfSpeech} />
+        <Field label="Usage Note" value={d.usageNote} />
+        <Field label="Common Mistake" value={d.commonMistake} />
+        {d.examples?.length > 0 && (
+          <div>
+            <div style={{ fontSize: '10px', fontWeight: 700, color: C.subtext, textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: '2px' }}>
+              Examples
+            </div>
+            <ul style={{ margin: 0, paddingLeft: '18px' }}>
+              {d.examples.map((ex, i) => <li key={i} style={{ marginBottom: '2px' }}>{ex}</li>)}
+            </ul>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (result.kind === 'translate') {
+    const d = result.data;
+    return (
+      <div style={wrap}>
+        <Field label="Natural" value={d.naturalTranslation} />
+        <Field label="Literal" value={d.literalTranslation} />
+        <Field label="Alternative" value={d.alternativeTranslation} />
+      </div>
+    );
+  }
+
+  // explain-sentence
+  const d = result.data;
+  return (
+    <div style={wrap}>
+      {d.parts?.length > 0 && (
+        <div style={{ marginBottom: '6px' }}>
+          <div style={{ fontSize: '10px', fontWeight: 700, color: C.subtext, textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: '2px' }}>
+            Parts
+          </div>
+          <ul style={{ margin: 0, paddingLeft: '18px' }}>
+            {d.parts.map((p, i) => (
+              <li key={i} style={{ marginBottom: '2px' }}>
+                <span style={{ fontWeight: 600 }}>{p.chunk}</span>
+                <span style={{ color: C.subtext }}> — {p.function}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
-      {loading && content && (
-        <span style={{ color: C.subtext, animation: 'none' }}>▊</span>
-      )}
+      <Field label="Turkish Meaning" value={d.turkishMeaning} />
+      <Field label="Grammar" value={d.grammarStructure} />
+      <Field label="Why This Structure" value={d.whyThisStructure} />
+      <Field label="Learner Tip" value={d.learnerTip} />
     </div>
   );
 }
@@ -100,7 +168,7 @@ function WordPopupInner({
   onStatusChange,
 }: WordPopupProps) {
   const [currentStatus, setCurrentStatus] = useState<WordStatus>(lexeme?.status ?? 'unknown');
-  const [aiContent, setAiContent] = useState('');
+  const [aiResult, setAiResult] = useState<AiResultData | null>(null);
   const [aiLoading, setAiLoading] = useState<AIActionType | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
@@ -222,15 +290,14 @@ function WordPopupInner({
     return () => document.removeEventListener('keydown', handler);
   }, [onClose]);
 
-  // Listen for AI stream messages
+  // Listen for AI result messages
   useEffect(() => {
-    const handler = (msg: { type: string; payload: { requestId: string; chunk?: string; error?: string } }) => {
+    const handler = (msg: { type: string; payload: { requestId: string; result?: AiResultData; error?: string } }) => {
       if (!requestIdRef.current) return;
       if (msg.payload?.requestId !== requestIdRef.current) return;
 
-      if (msg.type === 'AI_STREAM_CHUNK') {
-        setAiContent(prev => prev + (msg.payload.chunk ?? ''));
-      } else if (msg.type === 'AI_STREAM_DONE') {
+      if (msg.type === 'AI_RESULT' && msg.payload.result) {
+        setAiResult(msg.payload.result);
         setAiLoading(null);
         requestIdRef.current = null;
       } else if (msg.type === 'AI_STREAM_ERROR') {
@@ -253,7 +320,7 @@ function WordPopupInner({
   const handleAIAction = useCallback((type: AIActionType) => {
     const reqId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     requestIdRef.current = reqId;
-    setAiContent('');
+    setAiResult(null);
     setAiError(null);
     setAiLoading(type);
 
@@ -506,7 +573,7 @@ function WordPopupInner({
       )}
 
       {/* AI output panel */}
-      <AIPanel content={aiContent} loading={aiLoading !== null} error={aiError} />
+      <AIPanel result={aiResult} loading={aiLoading !== null} error={aiError} />
 
       {/* Status row */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', borderTop: `1px solid ${C.surface1}`, paddingTop: '10px' }}>

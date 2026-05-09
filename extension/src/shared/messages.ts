@@ -1,4 +1,5 @@
 import type { WordStatus, LearnerLevel, UserSettings, FlashcardPayload } from './types';
+import type { AiResultData } from './backend-ai';
 
 export type ExtensionMessage =
   | { type: 'PARSE_PAGE_FOR_COMPREHENSION'; payload: { tabId: number; pageUrl: string } }
@@ -35,6 +36,7 @@ export type BackgroundMessage =
   | { type: 'AI_STREAM_CHUNK'; payload: { requestId: string; chunk: string } }
   | { type: 'AI_STREAM_DONE'; payload: { requestId: string } }
   | { type: 'AI_STREAM_ERROR'; payload: { requestId: string; error: string } }
+  | { type: 'AI_RESULT'; payload: { requestId: string; result: AiResultData } }
   | { type: 'STATUS_CHANGED'; payload: { lemma: string; status: WordStatus } }
   | { type: 'BULK_STATUS_CHANGED'; payload: { lemmas: string[]; status: WordStatus } }
   | { type: 'SETTINGS_UPDATED'; payload: Partial<UserSettings> };
