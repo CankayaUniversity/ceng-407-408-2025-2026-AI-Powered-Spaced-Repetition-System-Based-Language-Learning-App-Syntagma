@@ -2,6 +2,7 @@ import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useFonts } from 'expo-font';
+import * as Notifications from 'expo-notifications';
 import { DMSans_400Regular, DMSans_600SemiBold } from '@expo-google-fonts/dm-sans';
 import {
   PlayfairDisplay_700Bold,
@@ -14,6 +15,15 @@ import SessionSummaryScreen from './src/screens/SessionSummaryScreen';
 import { ThemeProvider } from './src/shared/theme';
 
 const AppStack = createNativeStackNavigator();
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
 
 export default function App() {
   const [fontsLoaded] = useFonts({

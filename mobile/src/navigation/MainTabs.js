@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 import HomePage from '../screens/HomePage';
 import FlashcardReviewScreen from '../screens/FlashcardReviewScreen';
+import FlashcardLibraryScreen from '../screens/FlashcardLibraryScreen';
 import OverviewScreen from '../screens/OverviewScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import { useTheme } from '../shared/theme';
@@ -73,7 +74,7 @@ export default function MainTabs() {
       />
       <Tab.Screen
         name="Library"
-        component={FlashcardReviewScreen}
+        component={FlashcardLibraryScreen}
         listeners={{ tabPress: () => {} }}
       />
       <Tab.Screen

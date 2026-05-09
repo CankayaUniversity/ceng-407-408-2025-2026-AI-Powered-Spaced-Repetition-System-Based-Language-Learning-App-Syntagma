@@ -94,3 +94,42 @@ export async function getThemePreference() {
     return null;
   }
 }
+
+const NOTIFICATIONS_KEY = 'syntagma.notifications';
+const REMINDER_HOUR_KEY = 'syntagma.reminder.hour';
+
+export async function saveNotificationPreference(enabled) {
+  await AsyncStorage.setItem(NOTIFICATIONS_KEY, JSON.stringify({ enabled: !!enabled }));
+}
+
+export async function getNotificationPreference() {
+  const stored = await AsyncStorage.getItem(NOTIFICATIONS_KEY);
+  if (!stored) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(stored);
+    return typeof parsed?.enabled === 'boolean' ? parsed.enabled : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+export async function saveReminderHour(hour) {
+  await AsyncStorage.setItem(REMINDER_HOUR_KEY, JSON.stringify({ hour }));
+}
+
+export async function getReminderHour() {
+  const stored = await AsyncStorage.getItem(REMINDER_HOUR_KEY);
+  if (!stored) {
+    return 9; // default 09:00
+  }
+
+  try {
+    const parsed = JSON.parse(stored);
+    return Number.isFinite(parsed?.hour) ? parsed.hour : 9;
+  } catch (err) {
+    return 9;
+  }
+}

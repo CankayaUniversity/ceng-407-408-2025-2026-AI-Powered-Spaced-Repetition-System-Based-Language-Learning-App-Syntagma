@@ -92,3 +92,14 @@ export async function submitReview(review) {
     body: review,
   });
 }
+
+export async function updateWordKnowledge(lemma, status) {
+  return apiRequest(`/api/word-knowledge/${encodeURIComponent(lemma)}`, {
+    method: 'PUT',
+    body: { status },
+  });
+}
+
+export async function fetchDueCards(limit = 20) {
+  return apiRequest(`/api/srs/due?limit=${limit}`);
+}

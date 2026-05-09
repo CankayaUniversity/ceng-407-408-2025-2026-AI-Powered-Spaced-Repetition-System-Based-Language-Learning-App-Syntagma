@@ -1,10 +1,29 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import {
+  Alert,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { fetchCurrentUser } from '../shared/api';
-import { getAuth } from '../shared/storage';
+import * as Notifications from 'expo-notifications';
+import { fetchCurrentUser, fetchReviewStats } from '../shared/api';
+import {
+  getAuth,
+  getNotificationPreference,
+  getReminderHour,
+  saveNotificationPreference,
+  saveReminderHour,
+} from '../shared/storage';
 import { useTheme } from '../shared/theme';
+
+// ── Small reusable components ──────────────────────────────────────
 
 function SectionLabel({ children, styles }) {
   return <Text style={styles.sectionLabel}>{children}</Text>;
@@ -39,18 +58,134 @@ function ToggleRow({ icon, label, value, onChange, colors, styles }) {
   );
 }
 
+function ActionRow({ icon, label, subtitle, onPress, colors, styles }) {
+  return (
+    <Pressable style={styles.toggleRow} onPress={onPress}>
+      <View style={styles.iconBadge}>
+        <Ionicons name={icon} size={16} color={colors.accent} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.toggleLabel}>{label}</Text>
+        {subtitle ? <Text style={styles.actionSubtitle}>{subtitle}</Text> : null}
+      </View>
+      <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
+    </Pressable>
+  );
+}
+
+// ── Notification helpers ───────────────────────────────────────────
+
+const REMINDER_MESSAGES = [
+  { title: '🔥 Don\'t break your streak!', body: 'You have cards waiting — keep your streak alive!' },
+  { title: '📚 Time to study!', body: 'A few minutes of review will make a big difference.' },
+  { title: '🧠 Your brain will thank you', body: 'Quick review session to reinforce your vocabulary?' },
+  { title: '💪 Stay consistent!', body: 'Consistency beats intensity. Review your cards now!' },
+  { title: '🎯 Daily goal reminder', body: 'Don\'t forget your vocabulary review today!' },
+];
+
+function getRandomReminder() {
+  return REMINDER_MESSAGES[Math.floor(Math.random() * REMINDER_MESSAGES.length)];
+}
+
+async function requestNotificationPermission() {
+  const { status: existingStatus } = await Notifications.getPermissionsAsync();
+  if (existingStatus === 'granted') {
+    return true;
+  }
+
+  const { status } = await Notifications.requestPermissionsAsync();
+  return status === 'granted';
+}
+
+async function scheduleSmartReminder(hour) {
+  await Notifications.cancelAllScheduledNotificationsAsync();
+
+  const reminder = getRandomReminder();
+
+  // Main daily study reminder
+  await Notifications.scheduleNotificationAsync({
+    content: {
+      title: reminder.title,
+      body: reminder.body,
+      sound: true,
+    },
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.DAILY,
+      hour: hour,
+      minute: 0,
+    },
+  });
+
+  // Streak-break warning: 2 hours after main reminder
+  const streakHour = (hour + 2) % 24;
+  await Notifications.scheduleNotificationAsync({
+    content: {
+      title: '⚠️ Streak at risk!',
+      body: 'You haven\'t studied today yet. Don\'t let your streak break!',
+      sound: true,
+    },
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.DAILY,
+      hour: streakHour,
+      minute: 0,
+    },
+  });
+}
+
+async function cancelAllReminders() {
+  await Notifications.cancelAllScheduledNotificationsAsync();
+}
+
+// ── Available hours for the picker ─────────────────────────────────
+
+const HOURS = Array.from({ length: 24 }, (_, i) => i);
+
+function formatHour(h) {
+  const hh = h % 12 === 0 ? 12 : h % 12;
+  const ampm = h < 12 ? 'AM' : 'PM';
+  return `${hh}:00 ${ampm}`;
+}
+
+// ── Main component ─────────────────────────────────────────────────
+
 export default function SettingsScreen({ navigation }) {
   const { colors, isDark, setIsDark } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [isDarkMode, setIsDarkMode] = useState(isDark);
-  const [isNotificationsOn, setIsNotificationsOn] = useState(true);
+  const [isNotificationsOn, setIsNotificationsOn] = useState(false);
+  const [reminderHour, setReminderHour] = useState(20); // default 20:00 (8 PM)
   const [profileName, setProfileName] = useState('');
   const [profileEmail, setProfileEmail] = useState('');
+  const [timePickerVisible, setTimePickerVisible] = useState(false);
+  const [streakCount, setStreakCount] = useState(null);
 
   useEffect(() => {
     setIsDarkMode(isDark);
   }, [isDark]);
 
+  // Load saved preferences
+  useEffect(() => {
+    let isMounted = true;
+
+    const load = async () => {
+      const savedNotif = await getNotificationPreference();
+      const savedHour = await getReminderHour();
+
+      if (!isMounted) return;
+
+      if (typeof savedNotif === 'boolean') {
+        setIsNotificationsOn(savedNotif);
+      }
+      if (Number.isFinite(savedHour)) {
+        setReminderHour(savedHour);
+      }
+    };
+
+    load();
+    return () => { isMounted = false; };
+  }, []);
+
+  // Load profile + streak
   useEffect(() => {
     let isMounted = true;
 
@@ -62,9 +197,7 @@ export default function SettingsScreen({ navigation }) {
 
       try {
         const user = await fetchCurrentUser();
-        if (!isMounted) {
-          return;
-        }
+        if (!isMounted) return;
 
         if (user?.fullName) {
           setProfileName(user.fullName);
@@ -79,17 +212,23 @@ export default function SettingsScreen({ navigation }) {
           setProfileName(deriveNameFromEmail(auth.email));
         }
       }
+
+      // Fetch streak
+      try {
+        const stats = await fetchReviewStats('week');
+        if (isMounted && stats?.streakCount != null) {
+          setStreakCount(stats.streakCount);
+        }
+      } catch (err) {
+        // Streak is optional, don't fail
+      }
     };
 
     loadProfile();
-
-    return () => {
-      isMounted = false;
-    };
+    return () => { isMounted = false; };
   }, []);
 
   const handleSignOut = () => {
-    // Placeholder sign-out flow: return to auth screen.
     navigation.getParent()?.replace('Login');
   };
 
@@ -98,25 +237,101 @@ export default function SettingsScreen({ navigation }) {
     setIsDark(value);
   };
 
-  const handleToggleNotifications = (value) => {
-    // Placeholder handler for notification settings.
-    setIsNotificationsOn(value);
-  };
+  const handleToggleNotifications = useCallback(async (value) => {
+    if (value) {
+      const granted = await requestNotificationPermission();
+      if (!granted) {
+        Alert.alert(
+          'Permission Required',
+          'Please enable notifications in your device settings to receive study reminders.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+
+      await scheduleSmartReminder(reminderHour);
+      setIsNotificationsOn(true);
+      await saveNotificationPreference(true);
+    } else {
+      await cancelAllReminders();
+      setIsNotificationsOn(false);
+      await saveNotificationPreference(false);
+    }
+  }, [reminderHour]);
+
+  const handleSelectHour = useCallback(async (hour) => {
+    setReminderHour(hour);
+    setTimePickerVisible(false);
+    await saveReminderHour(hour);
+
+    if (isNotificationsOn) {
+      await scheduleSmartReminder(hour);
+    }
+  }, [isNotificationsOn]);
+
+  const handleTestNotification = useCallback(async () => {
+    const granted = await requestNotificationPermission();
+    if (!granted) {
+      Alert.alert('Permission Required', 'Please enable notifications in your device settings.');
+      return;
+    }
+
+    // Try to get real due count for the test message
+    let dueText = 'You have cards waiting for review!';
+    try {
+      const { fetchDueCards } = require('../shared/api');
+      const due = await fetchDueCards(100);
+      if (due?.dueCount > 0) {
+        dueText = `You have ${due.dueCount} cards due for review!`;
+      }
+    } catch (err) {
+      // Use default text
+    }
+
+    const streakText = streakCount != null && streakCount > 0
+      ? ` Your streak: ${streakCount} days 🔥`
+      : '';
+
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: '🔥 Don\'t break your streak!',
+        body: `${dueText}${streakText}`,
+        sound: true,
+      },
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+        seconds: 2,
+      },
+    });
+
+    Alert.alert('Sent!', 'A test notification will arrive in about 2 seconds.');
+  }, [streakCount]);
 
   return (
     <SafeAreaView style={styles.screen}>
-      <View style={styles.container}>
+      <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
         <View style={styles.headerRow}>
-          <Pressable onPress={() => console.log('Paw icon tapped')} hitSlop={10}>
+          <Pressable onPress={() => {}} hitSlop={10}>
             <Ionicons name="paw-outline" size={24} color={colors.accent} />
           </Pressable>
 
           <Text style={styles.headerTitle}>Syntagma</Text>
 
-          <Pressable onPress={() => console.log('Gear icon tapped')} hitSlop={10}>
+          <Pressable onPress={() => {}} hitSlop={10}>
             <Ionicons name="settings-outline" size={24} color={colors.accent} />
           </Pressable>
         </View>
+
+        {/* Streak banner */}
+        {streakCount != null && streakCount > 0 && (
+          <View style={styles.streakBanner}>
+            <Text style={styles.streakEmoji}>🔥</Text>
+            <View>
+              <Text style={styles.streakCount}>{streakCount} day streak</Text>
+              <Text style={styles.streakHint}>Keep it going!</Text>
+            </View>
+          </View>
+        )}
 
         <SectionLabel styles={styles}>ACCOUNT</SectionLabel>
         <View style={styles.card}>
@@ -136,12 +351,12 @@ export default function SettingsScreen({ navigation }) {
           />
 
           <Pressable style={styles.signOutButton} onPress={handleSignOut}>
-            <Ionicons name="arrow-forward-outline" size={16} color="#6B4226" />
+            <Ionicons name="arrow-forward-outline" size={16} color={colors.accent} />
             <Text style={styles.signOutText}>Sign out</Text>
           </Pressable>
         </View>
 
-        <SectionLabel styles={styles}>GENERAL</SectionLabel>
+        <SectionLabel styles={styles}>APPEARANCE</SectionLabel>
         <View style={styles.card}>
           <ToggleRow
             icon="moon-outline"
@@ -151,17 +366,86 @@ export default function SettingsScreen({ navigation }) {
             colors={colors}
             styles={styles}
           />
-          <View style={styles.rowDivider} />
+        </View>
+
+        <SectionLabel styles={styles}>NOTIFICATIONS</SectionLabel>
+        <View style={styles.card}>
           <ToggleRow
             icon="notifications-outline"
-            label="Notifications"
+            label="Study Reminders"
             value={isNotificationsOn}
             onChange={handleToggleNotifications}
             colors={colors}
             styles={styles}
           />
+
+          {isNotificationsOn && (
+            <>
+              <View style={styles.rowDivider} />
+              <ActionRow
+                icon="time-outline"
+                label="Reminder Time"
+                subtitle={formatHour(reminderHour)}
+                onPress={() => setTimePickerVisible(true)}
+                colors={colors}
+                styles={styles}
+              />
+              <Text style={styles.reminderHint}>
+                {`Daily reminder at ${formatHour(reminderHour)}`}
+                {'\n'}
+                {`Streak warning at ${formatHour((reminderHour + 2) % 24)}`}
+              </Text>
+            </>
+          )}
+
+          <View style={styles.rowDivider} />
+          <ActionRow
+            icon="paper-plane-outline"
+            label="Send Test Notification"
+            subtitle="Verify notifications work"
+            onPress={handleTestNotification}
+            colors={colors}
+            styles={styles}
+          />
         </View>
-      </View>
+      </ScrollView>
+
+      {/* Time picker modal */}
+      <Modal visible={timePickerVisible} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Reminder Time</Text>
+            <Text style={styles.modalSubtitle}>Choose when you want to be reminded</Text>
+
+            <ScrollView style={styles.hourList} showsVerticalScrollIndicator={false}>
+              {HOURS.map((h) => {
+                const isSelected = h === reminderHour;
+                return (
+                  <Pressable
+                    key={h}
+                    style={[styles.hourItem, isSelected && styles.hourItemSelected]}
+                    onPress={() => handleSelectHour(h)}
+                  >
+                    <Text style={[styles.hourText, isSelected && styles.hourTextSelected]}>
+                      {formatHour(h)}
+                    </Text>
+                    {isSelected && (
+                      <Ionicons name="checkmark" size={20} color={colors.surface} />
+                    )}
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+
+            <Pressable
+              style={styles.modalCancel}
+              onPress={() => setTimePickerVisible(false)}
+            >
+              <Text style={styles.modalCancelText}>Cancel</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -197,6 +481,33 @@ const createStyles = (colors) => StyleSheet.create({
     fontSize: 30,
     fontFamily: 'PlayfairDisplay_700Bold',
   },
+  // Streak banner
+  streakBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: colors.card,
+    borderRadius: 20,
+    borderWidth: 0.5,
+    borderColor: colors.border,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    marginBottom: 18,
+  },
+  streakEmoji: {
+    fontSize: 32,
+  },
+  streakCount: {
+    color: colors.accent,
+    fontSize: 20,
+    fontFamily: 'DMSans_600SemiBold',
+  },
+  streakHint: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontFamily: 'DMSans_400Regular',
+  },
+  // Section label
   sectionLabel: {
     textTransform: 'uppercase',
     letterSpacing: 1.4,
@@ -272,9 +583,86 @@ const createStyles = (colors) => StyleSheet.create({
     color: colors.textPrimary,
     fontSize: 16,
   },
+  actionSubtitle: {
+    fontFamily: 'DMSans_400Regular',
+    color: colors.textMuted,
+    fontSize: 12,
+    marginTop: 1,
+  },
   rowDivider: {
     height: 1,
     backgroundColor: colors.border,
     marginVertical: 6,
+  },
+  reminderHint: {
+    marginTop: 4,
+    marginLeft: 44,
+    fontFamily: 'DMSans_400Regular',
+    color: colors.textMuted,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  // Time picker modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: colors.overlay,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  modalCard: {
+    width: '100%',
+    maxHeight: '70%',
+    borderRadius: 22,
+    backgroundColor: colors.card,
+    padding: 22,
+    borderWidth: 0.5,
+    borderColor: colors.border,
+  },
+  modalTitle: {
+    color: colors.accent,
+    fontSize: 20,
+    fontFamily: 'PlayfairDisplay_700Bold',
+    marginBottom: 4,
+  },
+  modalSubtitle: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontFamily: 'DMSans_400Regular',
+    marginBottom: 16,
+  },
+  hourList: {
+    maxHeight: 300,
+  },
+  hourItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderRadius: 14,
+    marginBottom: 4,
+  },
+  hourItemSelected: {
+    backgroundColor: colors.accent,
+  },
+  hourText: {
+    color: colors.textPrimary,
+    fontSize: 16,
+    fontFamily: 'DMSans_600SemiBold',
+  },
+  hourTextSelected: {
+    color: colors.surface,
+  },
+  modalCancel: {
+    marginTop: 14,
+    alignSelf: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+  },
+  modalCancelText: {
+    color: colors.textSecondary,
+    fontSize: 14,
+    fontFamily: 'DMSans_400Regular',
   },
 });
