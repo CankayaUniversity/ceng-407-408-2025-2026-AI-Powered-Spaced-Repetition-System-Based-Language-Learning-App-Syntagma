@@ -96,7 +96,6 @@ export default function OverviewScreen() {
     <SafeAreaView style={styles.screen}>
       <View style={styles.container}>
         <View style={styles.headerRow}>
-          <Text style={styles.brandTitle}>Syntagma</Text>
           <Text style={styles.overviewLabel}>OVERVIEW</Text>
         </View>
 
@@ -226,14 +225,6 @@ const createStyles = (colors) => StyleSheet.create({
     letterSpacing: 1.4,
     color: colors.accent,
     marginTop: 6,
-  },
-  brandTitle: {
-    position: 'absolute',
-    left: 0,
-    top: -4,
-    fontSize: 18,
-    color: colors.textSecondary,
-    fontFamily: 'PlayfairDisplay_700Bold',
   },
   summaryCard: {
     alignItems: 'center',

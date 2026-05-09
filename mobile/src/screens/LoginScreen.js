@@ -90,7 +90,7 @@ export default function LoginScreen({ navigation }) {
 
           <View style={styles.imageCard}>
             <Image
-              source={require('../../assets/capybara-illustration.jpg')}
+              source={require('../../assets/maskot.jpg')}
               style={styles.image}
               resizeMode="cover"
             />

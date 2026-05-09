@@ -132,18 +132,11 @@ export default function HomePage({ navigation }) {
         ListHeaderComponent={
           <>
             <View style={styles.topNav}>
-              <Image source={require('../../assets/capybara-avatar.jpg')} style={styles.avatar} />
+              <Image source={require('../../assets/maskot.jpg')} style={styles.avatar} />
               <Text style={styles.brandName}>Syntagma</Text>
             </View>
 
             <View style={styles.welcomeCard}>
-              <View style={styles.floatIllustrationWrap}>
-                <Image
-                  source={require('../../assets/capybara-illustration.jpg')}
-                  style={styles.floatIllustration}
-                />
-              </View>
-
               <Text style={styles.welcomeTitle}>Welcome Back</Text>
               <Text style={styles.welcomeSubtitle}>Ready for your daily linguistic dip?</Text>
             </View>
@@ -208,20 +201,6 @@ const createStyles = (colors) => StyleSheet.create({
     paddingTop: 28,
     paddingBottom: 20,
     position: 'relative',
-  },
-  floatIllustrationWrap: {
-    position: 'absolute',
-    top: -36,
-    right: 16,
-    width: 88,
-    height: 88,
-    borderRadius: 16,
-    backgroundColor: colors.accentStrong,
-    overflow: 'hidden',
-  },
-  floatIllustration: {
-    width: '100%',
-    height: '100%',
   },
   welcomeTitle: {
     marginTop: 8,

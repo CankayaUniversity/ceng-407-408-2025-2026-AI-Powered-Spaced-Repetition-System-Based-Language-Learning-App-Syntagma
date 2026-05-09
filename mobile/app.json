@@ -10,7 +10,15 @@
       "**/*"
     ],
     "plugins": [
-      "expo-font"
+      "expo-font",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/maskot.jpg",
+          "color": "#8B6508",
+          "defaultChannel": "default"
+        }
+      ]
     ],
     "extra": {
       "eas": {
@@ -25,6 +33,7 @@
         "backgroundColor": "#FFF8F0"
       },
       "notification": {
+        "icon": "./assets/maskot.jpg",
         "color": "#8B6508"
       }
     }
