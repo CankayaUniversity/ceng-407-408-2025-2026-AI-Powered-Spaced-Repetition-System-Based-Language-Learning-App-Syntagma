@@ -6,6 +6,7 @@ import com.syntagma.backend.entity.Flashcard;
 import com.syntagma.backend.entity.ReviewLog;
 import com.syntagma.backend.entity.SrsState;
 import com.syntagma.backend.entity.User;
+import com.syntagma.backend.entity.enums.KnowledgeStatus;
 import com.syntagma.backend.entity.enums.Rating;
 import com.syntagma.backend.repository.*;
 import jakarta.persistence.EntityNotFoundException;
@@ -29,6 +30,10 @@ public class ReviewService {
     private final UserRepository userRepository;
     private final SrsService srsService;
     private final FsrsAlgorithm fsrsAlgorithm;
+        private final WordKnowledgeService wordKnowledgeService;
+
+        private static final int KNOWN_INTERVAL_DAYS = 25;
+        private static final int MIN_SUCCESS_REVIEWS_FOR_KNOWN = 3;
 
     @Transactional
     public ReviewResultResponse submitReview(Long userId, ReviewSubmitRequest request) {
@@ -79,6 +84,7 @@ public class ReviewService {
         fsrsAlgorithm.processReview(srsState, rating, now);
 
         SrsState savedSrs = srsStateRepository.save(srsState);
+        maybeMarkKnownWord(flashcard, savedSrs, rating);
         log.info("Review saved: reviewId={}, nextReviewAt={}",
                 savedLog.getReviewId(), savedSrs.getNextReviewAt());
 
@@ -90,6 +96,31 @@ public class ReviewService {
                 srsService.toResponse(savedSrs)
         );
     }
+
+        private void maybeMarkKnownWord(Flashcard flashcard, SrsState srsState, Rating rating) {
+                if (flashcard.getKnowledgeStatus() == KnowledgeStatus.KNOWN) {
+                        return;
+                }
+                if (rating == Rating.AGAIN) {
+                        return;
+                }
+
+                Integer scheduledDays = srsState.getScheduledDays();
+                Integer reps = srsState.getReps();
+                if (scheduledDays != null
+                                && reps != null
+                                && scheduledDays > KNOWN_INTERVAL_DAYS
+                                && reps >= MIN_SUCCESS_REVIEWS_FOR_KNOWN) {
+                        flashcard.setKnowledgeStatus(KnowledgeStatus.KNOWN);
+                        flashcard.setUpdatedAt(LocalDateTime.now());
+                        flashcardRepository.save(flashcard);
+                        wordKnowledgeService.update(
+                                        flashcard.getUser().getUserId(),
+                                        flashcard.getLemma(),
+                                        KnowledgeStatus.KNOWN
+                        );
+                }
+        }
 
     public Page<ReviewLogResponse> getReviews(Long userId, Long flashcardId,
                                                LocalDateTime startDate, LocalDateTime endDate,

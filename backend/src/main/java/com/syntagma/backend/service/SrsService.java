@@ -4,6 +4,7 @@ import com.syntagma.backend.dto.response.DueCardsResponse;
 import com.syntagma.backend.dto.response.SrsStateResponse;
 import com.syntagma.backend.entity.Flashcard;
 import com.syntagma.backend.entity.SrsState;
+import com.syntagma.backend.entity.enums.KnowledgeStatus;
 import com.syntagma.backend.repository.FlashcardRepository;
 import com.syntagma.backend.repository.SrsStateRepository;
 import jakarta.persistence.EntityNotFoundException;
@@ -33,7 +34,11 @@ public class SrsService {
     }
 
     public DueCardsResponse getDueCards(Long userId, int limit) {
-        List<SrsState> dueStates = srsStateRepository.findDueCards(userId, LocalDateTime.now());
+        List<SrsState> dueStates = srsStateRepository.findDueCards(
+            userId,
+            LocalDateTime.now(),
+            KnowledgeStatus.KNOWN
+        );
 
         List<DueCardsResponse.DueCardItem> cards = dueStates.stream()
                 .limit(limit)
