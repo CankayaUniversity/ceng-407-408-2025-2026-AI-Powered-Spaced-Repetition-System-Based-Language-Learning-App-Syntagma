@@ -7,6 +7,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import java.util.List;
 
 public interface FlashcardRepository extends JpaRepository<Flashcard, Long> {
 
@@ -20,4 +21,11 @@ public interface FlashcardRepository extends JpaRepository<Flashcard, Long> {
     Page<Flashcard> searchByUserIdAndTerm(@Param("userId") Long userId,
                                           @Param("search") String search,
                                           Pageable pageable);
+
+    @Query("SELECT f FROM Flashcard f WHERE f.user.userId = :userId " +
+           "AND (f.knowledgeStatus IS NULL OR f.knowledgeStatus <> :knownStatus) " +
+           "AND NOT EXISTS (SELECT 1 FROM SrsState s WHERE s.flashcard = f) " +
+           "ORDER BY f.createdAt ASC")
+    List<Flashcard> findNewCards(@Param("userId") Long userId,
+                                 @Param("knownStatus") KnowledgeStatus knownStatus);
 }

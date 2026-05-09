@@ -34,6 +34,7 @@ public class UserService {
         user.setPasswordHash(passwordEncoder.encode(request.password()));
         user.setCreatedAt(LocalDateTime.now());
         user.setStreakCount(0);
+        user.setDailyNewCardLimit(10);
 
         User saved = userRepository.save(user);
         return toResponse(saved);
@@ -72,6 +73,10 @@ public class UserService {
             user.setEmail(request.email());
         }
 
+        if (request.dailyNewCardLimit() != null) {
+            user.setDailyNewCardLimit(request.dailyNewCardLimit());
+        }
+
         User saved = userRepository.save(user);
         return toResponse(saved);
     }
@@ -82,7 +87,8 @@ public class UserService {
                 user.getEmail(),
                 user.getCreatedAt(),
                 user.getLastLoginAt(),
-                user.getStreakCount()
+            user.getStreakCount(),
+            user.getDailyNewCardLimit()
         );
     }
 }

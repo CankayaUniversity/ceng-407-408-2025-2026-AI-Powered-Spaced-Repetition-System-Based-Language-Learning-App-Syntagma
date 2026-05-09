@@ -1,6 +1,7 @@
 package com.syntagma.backend.controller;
 
 import com.syntagma.backend.dto.response.ApiResponse;
+import com.syntagma.backend.dto.response.DailyCardsResponse;
 import com.syntagma.backend.dto.response.DueCardsResponse;
 import com.syntagma.backend.dto.response.SrsStateResponse;
 import com.syntagma.backend.security.SecurityUtils;
@@ -28,6 +29,14 @@ public class SrsController {
             @RequestParam(defaultValue = "20") int limit) {
         Long userId = SecurityUtils.getAuthenticatedUserId();
         DueCardsResponse response = srsService.getDueCards(userId, limit);
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
+    @GetMapping("/api/srs/daily")
+    public ResponseEntity<ApiResponse<DailyCardsResponse>> getDailyCards(
+            @RequestParam(required = false) Integer newLimit) {
+        Long userId = SecurityUtils.getAuthenticatedUserId();
+        DailyCardsResponse response = srsService.getDailyCards(userId, newLimit);
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 }
