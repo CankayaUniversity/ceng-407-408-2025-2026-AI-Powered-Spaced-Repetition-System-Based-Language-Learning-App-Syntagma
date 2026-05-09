@@ -9,7 +9,11 @@ import {
   getFlashcards,
   getAuthHeaders,
 } from '../shared/storage';
-import { callAI } from '../shared/ai';
+import {
+  explainWord as backendExplainWord,
+  translateSentence as backendTranslate,
+  explainSentence as backendExplainSentence,
+} from '../shared/backend-ai';
 import type { FlashcardPayload, LexemeEntry } from '../shared/types';
 import { populateDictionary, lookupTranslation } from './dictionary-db';
 
@@ -423,43 +427,12 @@ onMessage(async (msg, sender) => {
       const { word, sentence, context, level, requestId } = msg.payload;
       const tabId = sender.tab?.id;
       if (!tabId) return;
-
       try {
-        const stream = await callAI({
-          type: 'explain-word',
-          payload: { word, sentence, context: context ?? '', level },
-          stream: true,
-          requestId,
-        });
-
-        if (typeof stream === 'string') {
-          chrome.tabs.sendMessage(tabId, {
-            type: 'AI_STREAM_CHUNK',
-            payload: { requestId, chunk: stream },
-          }).catch(() => {});
-          chrome.tabs.sendMessage(tabId, {
-            type: 'AI_STREAM_DONE',
-            payload: { requestId },
-          }).catch(() => {});
-        } else {
-          const reader = (stream as ReadableStream<string>).getReader();
-          const pump = async (): Promise<void> => {
-            const { done, value } = await reader.read();
-            if (done) {
-              chrome.tabs.sendMessage(tabId, {
-                type: 'AI_STREAM_DONE',
-                payload: { requestId },
-              }).catch(() => {});
-              return;
-            }
-            chrome.tabs.sendMessage(tabId, {
-              type: 'AI_STREAM_CHUNK',
-              payload: { requestId, chunk: value },
-            }).catch(() => {});
-            await pump();
-          };
-          await pump();
-        }
+        const data = await backendExplainWord({ word, sentence, context, level });
+        chrome.tabs.sendMessage(tabId, {
+          type: 'AI_RESULT',
+          payload: { requestId, result: { kind: 'explain-word', data } },
+        }).catch(() => {});
       } catch (error) {
         chrome.tabs.sendMessage(tabId, {
           type: 'AI_STREAM_ERROR',
@@ -473,33 +446,17 @@ onMessage(async (msg, sender) => {
       const { sentence, level, requestId } = msg.payload;
       const tabId = sender.tab?.id;
       if (!tabId) return;
-
       try {
-        const stream = await callAI({
-          type: 'explain-sentence',
-          payload: { sentence, level },
-          stream: true,
-          requestId,
-        });
-
-        if (typeof stream === 'string') {
-          chrome.tabs.sendMessage(tabId, { type: 'AI_STREAM_CHUNK', payload: { requestId, chunk: stream } }).catch(() => {});
-          chrome.tabs.sendMessage(tabId, { type: 'AI_STREAM_DONE', payload: { requestId } }).catch(() => {});
-        } else {
-          const reader = (stream as ReadableStream<string>).getReader();
-          const pump = async (): Promise<void> => {
-            const { done, value } = await reader.read();
-            if (done) {
-              chrome.tabs.sendMessage(tabId, { type: 'AI_STREAM_DONE', payload: { requestId } }).catch(() => {});
-              return;
-            }
-            chrome.tabs.sendMessage(tabId, { type: 'AI_STREAM_CHUNK', payload: { requestId, chunk: value } }).catch(() => {});
-            await pump();
-          };
-          await pump();
-        }
+        const data = await backendExplainSentence({ sentence, level });
+        chrome.tabs.sendMessage(tabId, {
+          type: 'AI_RESULT',
+          payload: { requestId, result: { kind: 'explain-sentence', data } },
+        }).catch(() => {});
       } catch (error) {
-        chrome.tabs.sendMessage(tabId, { type: 'AI_STREAM_ERROR', payload: { requestId, error: (error as Error).message } }).catch(() => {});
+        chrome.tabs.sendMessage(tabId, {
+          type: 'AI_STREAM_ERROR',
+          payload: { requestId, error: (error as Error).message },
+        }).catch(() => {});
       }
       return { ok: true };
     }
@@ -508,18 +465,17 @@ onMessage(async (msg, sender) => {
       const { sentence, requestId } = msg.payload;
       const tabId = sender.tab?.id;
       if (!tabId) return;
-
       try {
-        const result = await callAI({
-          type: 'translate-sentence',
-          payload: { sentence },
-          stream: false,
-          requestId,
-        });
-        chrome.tabs.sendMessage(tabId, { type: 'AI_STREAM_CHUNK', payload: { requestId, chunk: result as string } }).catch(() => {});
-        chrome.tabs.sendMessage(tabId, { type: 'AI_STREAM_DONE', payload: { requestId } }).catch(() => {});
+        const data = await backendTranslate(sentence);
+        chrome.tabs.sendMessage(tabId, {
+          type: 'AI_RESULT',
+          payload: { requestId, result: { kind: 'translate', data } },
+        }).catch(() => {});
       } catch (error) {
-        chrome.tabs.sendMessage(tabId, { type: 'AI_STREAM_ERROR', payload: { requestId, error: (error as Error).message } }).catch(() => {});
+        chrome.tabs.sendMessage(tabId, {
+          type: 'AI_STREAM_ERROR',
+          payload: { requestId, error: (error as Error).message },
+        }).catch(() => {});
       }
       return { ok: true };
     }
