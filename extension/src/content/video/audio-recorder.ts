@@ -34,17 +34,28 @@ export class AudioRecorder {
    */
   initFromVideo(video: HTMLVideoElement): void {
     this.video = video;
-    // captureStream() returns a live MediaStream from the video element.
-    // We extract only the audio tracks from it.
-    const fullStream = (video as any).captureStream() as MediaStream;
-    const audioTracks = fullStream.getAudioTracks();
-    if (audioTracks.length === 0) {
-      console.warn('[Syntagma] Video has no audio tracks for capture');
-      return;
-    }
-    // Create a stream with only audio tracks
-    this.stream = new MediaStream(audioTracks);
-    console.log('[Syntagma] AudioRecorder initialized from video element');
+    const tryAttach = (): boolean => {
+      const fullStream = (video as any).captureStream?.() as MediaStream | undefined;
+      if (!fullStream) return false;
+      const audioTracks = fullStream.getAudioTracks();
+      if (audioTracks.length === 0) return false;
+      this.stream = new MediaStream(audioTracks);
+      console.log('[Syntagma] AudioRecorder initialized from video element');
+      return true;
+    };
+    if (tryAttach()) return;
+
+    // captureStream() may not expose audio tracks until playback has actually
+    // begun (YouTube uses MediaSource Extensions; tracks attach asynchronously).
+    // Retry on play and addtrack events for up to 30 s.
+    console.warn('[Syntagma] No audio tracks yet — will retry when video plays');
+    let attempts = 0;
+    const interval = setInterval(() => {
+      attempts++;
+      if (this.stream || tryAttach() || attempts > 30) clearInterval(interval);
+    }, 1000);
+    const onPlay = () => { tryAttach(); };
+    video.addEventListener('playing', onPlay, { once: false });
   }
 
   /** Whether an on-demand capture is currently in progress. */
@@ -117,22 +128,27 @@ export class AudioRecorder {
     const wasPaused = video.paused;
 
     try {
-      console.log(`[Syntagma] Capturing audio: ${startMs}ms → ${endMs}ms (${durationMs}ms)`);
+      // Seek 1 s before the target to warm up YouTube's MSE audio decoder.
+      // captureStream() doesn't deliver samples immediately after a seek +
+      // play — the decoder needs ~0.5-1 s to start producing frames. The
+      // pre-roll is played (and recorded) but the extra silence/audio at the
+      // head is harmless; without it the first 1-2 words are lost.
+      const PREROLL_MS = 1000;
+      const seekMs = Math.max(0, startMs - PREROLL_MS);
+      console.log(`[Syntagma] Capturing audio: ${startMs}ms → ${endMs}ms (pre-roll from ${seekMs}ms)`);
 
-      // Seek to the start of the sentence
-      video.currentTime = startMs / 1000;
+      video.currentTime = seekMs / 1000;
 
       // Wait for seek to complete
       await new Promise<void>((resolve, reject) => {
         const onSeeked = () => { video.removeEventListener('seeked', onSeeked); clearTimeout(t); resolve(); };
         const t = setTimeout(() => { video.removeEventListener('seeked', onSeeked); reject(new Error('Seek timed out')); }, 5000);
         video.addEventListener('seeked', onSeeked);
-        if (Math.abs(video.currentTime - startMs / 1000) < 0.05) {
+        if (Math.abs(video.currentTime - seekMs / 1000) < 0.05) {
           clearTimeout(t); video.removeEventListener('seeked', onSeeked); resolve();
         }
       });
 
-      // Start recording
       const captureChunks: Blob[] = [];
       const rec = new MediaRecorder(this.stream, { mimeType: this.mimeType });
       rec.ondataavailable = (e) => {
@@ -143,22 +159,37 @@ export class AudioRecorder {
         rec.onstop = () => resolve(new Blob(captureChunks, { type: this.mimeType }));
       });
 
-      rec.start();
-      console.log('[Syntagma] Recording started, playing video...');
-
-      // Play the video
+      // Play from pre-roll position to warm up the audio decoder
       await video.play();
 
-      // Wait until video reaches end of sentence
+      // Wait until currentTime reaches the actual sentence start before
+      // starting the recorder — the pre-roll lets the decoder produce
+      // samples but we don't want that audio in the clip.
+      const startSec = startMs / 1000;
+      await new Promise<void>((resolve) => {
+        const check = setInterval(() => {
+          if (video.currentTime >= startSec || video.ended) {
+            clearInterval(check);
+            resolve();
+          }
+        }, 30);
+        setTimeout(() => { clearInterval(check); resolve(); }, PREROLL_MS + 2000);
+      });
+
+      rec.start();
+      console.log('[Syntagma] Recording started at sentence start');
+
+      // Wait until video reaches end of sentence.
       await new Promise<void>((resolve) => {
         const endSec = endMs / 1000;
         const check = setInterval(() => {
-          if (video.currentTime >= endSec || video.paused || video.ended) {
+          if (video.currentTime >= endSec || video.ended) {
             clearInterval(check);
             resolve();
           }
         }, 50);
-        setTimeout(() => { clearInterval(check); resolve(); }, durationMs + 2000);
+        const safetyMs = Math.max(durationMs * 4, 15_000);
+        setTimeout(() => { clearInterval(check); resolve(); }, safetyMs);
       });
 
       // Stop recording

@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type { UserSettings, LexemeEntry, WordStatus, SubtitleCue } from '../../shared/types';
 import { sendMessage } from '../../shared/messages';
 import { SubtitleDisplay } from './SubtitleDisplay';
 import { AudioRecorder } from './audio-recorder';
+import { buildSentences, findSentenceByCueIndex } from './sentence-grouping';
 import {
   captureYouTubeSubtitles,
   getYouTubeAvailableLanguages,
@@ -99,6 +100,7 @@ export function VideoOverlay({
   const [currentTarget, setCurrentTarget] = useState<SubtitleCue | null>(null);
   const [currentSecondary, setCurrentSecondary] = useState<SubtitleCue | null>(null);
   const [liveCue, setLiveCue] = useState<SubtitleCue | null>(null);
+  const sentences = useMemo(() => buildSentences(targetCues), [targetCues]);
   const [isPaused, setIsPaused] = useState(video.paused);
   const [showSubtitles, setShowSubtitles] = useState(true);
 
@@ -378,9 +380,15 @@ export function VideoOverlay({
   const handleWordClick = useCallback((
     lemma: string,
     surface: string,
-    sentence: string,
+    _cueText: string,
     rect: DOMRect,
   ) => {
+    // Look up the full grouped sentence instead of using the raw cue text
+    const sg = currentTarget ? findSentenceByCueIndex(sentences, currentTarget.index) : null;
+    const sentence = sg?.text ?? _cueText;
+    const sentenceStartMs = sg?.startMs;
+    const sentenceEndMs = sg?.endMs;
+
     const doOpen = (screenshotDataUrl?: string) => {
       if (settings.pauseOnWordInteraction && !video.paused) video.pause();
 
@@ -389,6 +397,8 @@ export function VideoOverlay({
         lexeme: lexemes[lemma] ?? null,
         settings,
         screenshotDataUrl,
+        sentenceStartMs,
+        sentenceEndMs,
         onClose: () => {
           dismissWordPopup();
           if (settings.resumeAfterInteraction) {
@@ -452,7 +462,7 @@ export function VideoOverlay({
     } else {
       captureAndOpen();
     }
-  }, [lexemes, settings, video, onStatusChange]);
+  }, [lexemes, settings, video, onStatusChange, sentences, currentTarget]);
 
   // ── Subtitle import handlers ────────────────────────────────────────────────
   const handleTargetImport = useCallback((cues: SubtitleCue[], _fileName: string) => {
@@ -536,7 +546,9 @@ export function VideoOverlay({
       }
 
       // ── Scene skip ──────────────────────────────────────────────────────
-      if (settings.sceneSkipMode !== 'off' && targetCues.length > 0) {
+      // Suppress during audio capture — a jump or speed change would skip
+      // or garble words in the recorded clip.
+      if (settings.sceneSkipMode !== 'off' && targetCues.length > 0 && !recorderRef.current?.isCapturing()) {
         const inCue = isInAnyCue(targetCues, ms, tOffset);
         if (!inCue) {
           const nextCue = findNextCue(targetCues, ms, tOffset);
@@ -568,7 +580,15 @@ export function VideoOverlay({
       }
 
       // ── Auto-pause ──────────────────────────────────────────────────────
-      if (settings.autoPauseMode === 'off' || ap.userJustPlayed || targetCues.length === 0) {
+      // Suppress auto-pause while an on-demand audio capture is in flight,
+      // otherwise the recorder gets cut off at the first cue boundary inside
+      // a multi-cue sentence.
+      if (
+        settings.autoPauseMode === 'off' ||
+        ap.userJustPlayed ||
+        targetCues.length === 0 ||
+        recorderRef.current?.isCapturing()
+      ) {
         ap.prevCue = newTarget;
         return;
       }
@@ -670,16 +690,35 @@ export function VideoOverlay({
   // We seek the video to the current cue's start, play through to the end,
   // record the tab audio, then fire syntagma:sentence-audio-ready with the result.
   useEffect(() => {
-    const handler = async () => {
+    const handler = async (e: Event) => {
       const rec = recorderRef.current;
-      if (!rec || !currentTarget) {
+      // Prefer an explicit range from the event (sent by transcript-driven
+      // popups so we capture the full sentence span), otherwise fall back to
+      // the on-screen cue.
+      const detail = (e as CustomEvent<{ startMs?: number; endMs?: number }>).detail ?? {};
+      const startMs = detail.startMs ?? currentTarget?.startMs;
+      const endMs = detail.endMs ?? currentTarget?.endMs;
+      if (!rec || startMs === undefined || endMs === undefined) {
         window.dispatchEvent(new CustomEvent('syntagma:sentence-audio-ready', {
-          detail: { audioDataUrl: undefined, error: 'No recorder or cue' },
+          detail: { audioDataUrl: undefined, error: 'No recorder or range' },
         }));
         return;
       }
       try {
-        const dataUrl = await rec.captureRange(video, currentTarget.startMs, currentTarget.endMs);
+        // Shift caption start → actual speech start. YouTube auto-CC opens
+        // the caption window 1–4 s before the words are spoken, so we push
+        // startMs forward by the auto-detected offset.
+        // Caption *end* already aligns with (or slightly lags) the real
+        // speech end, so we only add a small tail pad — applying the full
+        // offset to endMs would bleed into the next sentence.
+        // Use raw cue timing — no auto-offset adjustment. The global offset
+        // is calibrated from a single cue and drifts across the video, causing
+        // some sentences to start late and others to clip words. Raw cue times
+        // may include brief silence before speech but never miss words.
+        const manualOffsetMs = settings.targetSubtitleOffsetMs ?? 0;
+        const adjStartMs = Math.max(0, startMs + manualOffsetMs);
+        const adjEndMs = endMs + manualOffsetMs;
+        const dataUrl = await rec.captureRange(video, adjStartMs, adjEndMs);
         window.dispatchEvent(new CustomEvent('syntagma:sentence-audio-ready', {
           detail: { audioDataUrl: dataUrl },
         }));
