@@ -11,7 +11,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
-import { fetchCollectionById, fetchCollections } from '../shared/api';
+import { fetchCollectionById, fetchCollections, fetchReviewStats } from '../shared/api';
+import { getBadgeState, saveBadgeState } from '../shared/storage';
+import { BADGE_TIERS, computeBadgeState } from '../shared/badges';
 import { useTheme } from '../shared/theme';
 
 export default function HomePage({ navigation }) {
@@ -21,6 +23,7 @@ export default function HomePage({ navigation }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [startingId, setStartingId] = useState(null);
+  const [badgeState, setBadgeState] = useState(null);
 
   const loadCollections = useCallback(async () => {
     try {
@@ -46,6 +49,27 @@ export default function HomePage({ navigation }) {
   useFocusEffect(
     useCallback(() => {
       loadCollections();
+
+      let isMounted = true;
+      const loadBadge = async () => {
+        const cached = await getBadgeState();
+        if (isMounted && cached) {
+          setBadgeState(computeBadgeState(cached.totalReviews));
+        }
+
+        try {
+          const stats = await fetchReviewStats('all');
+          const totalReviews = stats?.totalReviews ?? stats?.total ?? stats?.reviewCount ?? 0;
+          if (isMounted && Number.isFinite(totalReviews)) {
+            await saveBadgeState({ totalReviews });
+            setBadgeState(computeBadgeState(totalReviews));
+          }
+        } catch (err) {
+          // badge is non-critical
+        }
+      };
+      loadBadge();
+      return () => { isMounted = false; };
     }, [loadCollections])
   );
 
@@ -140,6 +164,24 @@ export default function HomePage({ navigation }) {
               <Text style={styles.welcomeTitle}>Welcome Back</Text>
               <Text style={styles.welcomeSubtitle}>Ready for your daily linguistic dip?</Text>
             </View>
+
+            {badgeState && (
+              <View style={styles.badgeCard}>
+                <Image
+                  source={badgeState.currentTier?.image ?? BADGE_TIERS[0].image}
+                  style={[styles.badgeImage, !badgeState.currentTier && styles.badgeImageLocked]}
+                />
+                <View style={styles.badgeInfo}>
+                  <Text style={styles.badgeLabel}>
+                    {badgeState.currentTier ? badgeState.currentTier.label : 'No badge yet'}
+                  </Text>
+                  <Text style={styles.badgeProgressText}>{badgeState.progressText}</Text>
+                  <View style={styles.progressTrack}>
+                    <View style={[styles.progressFill, { width: `${Math.round(badgeState.progress * 100)}%` }]} />
+                  </View>
+                </View>
+              </View>
+            )}
 
             <View style={styles.startLearningRow}>
               <Text style={styles.startLearningLabel}>Collections</Text>
@@ -328,5 +370,51 @@ const createStyles = (colors) => StyleSheet.create({
     color: colors.textSecondary,
     fontSize: 13,
     fontFamily: 'DMSans_400Regular',
+  },
+  badgeCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    marginHorizontal: 16,
+    marginBottom: 20,
+    borderRadius: 20,
+    backgroundColor: colors.card,
+    borderWidth: 0.5,
+    borderColor: colors.border,
+    padding: 16,
+  },
+  badgeImage: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+  },
+  badgeImageLocked: {
+    opacity: 0.35,
+  },
+  badgeInfo: {
+    flex: 1,
+  },
+  badgeLabel: {
+    color: colors.accent,
+    fontSize: 16,
+    fontFamily: 'DMSans_600SemiBold',
+    marginBottom: 2,
+  },
+  badgeProgressText: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontFamily: 'DMSans_400Regular',
+    marginBottom: 6,
+  },
+  progressTrack: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.mutedSurface,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.accent,
   },
 });

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import {
   Alert,
+  Image,
   Modal,
   Platform,
   Pressable,
@@ -16,11 +17,14 @@ import * as Notifications from 'expo-notifications';
 import { fetchCurrentUser, fetchReviewStats } from '../shared/api';
 import {
   getAuth,
+  getBadgeState,
   getNotificationPreference,
   getReminderHour,
+  saveBadgeState,
   saveNotificationPreference,
   saveReminderHour,
 } from '../shared/storage';
+import { BADGE_TIERS, computeBadgeState } from '../shared/badges';
 import { useTheme } from '../shared/theme';
 
 // ── Small reusable components ──────────────────────────────────────
@@ -158,6 +162,7 @@ export default function SettingsScreen({ navigation }) {
   const [profileEmail, setProfileEmail] = useState('');
   const [timePickerVisible, setTimePickerVisible] = useState(false);
   const [streakCount, setStreakCount] = useState(null);
+  const [badgeState, setBadgeState] = useState(null);
 
   useEffect(() => {
     setIsDarkMode(isDark);
@@ -190,6 +195,12 @@ export default function SettingsScreen({ navigation }) {
     let isMounted = true;
 
     const loadProfile = async () => {
+      // Show cached badge immediately while network loads
+      const cached = await getBadgeState();
+      if (isMounted && cached) {
+        setBadgeState(computeBadgeState(cached.totalReviews));
+      }
+
       const auth = await getAuth();
       if (isMounted && auth?.email) {
         setProfileEmail(auth.email);
@@ -213,14 +224,20 @@ export default function SettingsScreen({ navigation }) {
         }
       }
 
-      // Fetch streak
+      // Fetch streak + badge
       try {
         const stats = await fetchReviewStats('week');
         if (isMounted && stats?.streakCount != null) {
           setStreakCount(stats.streakCount);
         }
+
+        const totalReviews = stats?.totalReviews ?? stats?.total ?? stats?.reviewCount ?? 0;
+        if (isMounted && Number.isFinite(totalReviews)) {
+          await saveBadgeState({ totalReviews });
+          setBadgeState(computeBadgeState(totalReviews));
+        }
       } catch (err) {
-        // Streak is optional, don't fail
+        // Streak and badge are optional, don't fail
       }
     };
 
@@ -331,6 +348,37 @@ export default function SettingsScreen({ navigation }) {
               <Text style={styles.streakHint}>Keep it going!</Text>
             </View>
           </View>
+        )}
+
+        {badgeState && (
+          <>
+            <SectionLabel styles={styles}>BADGES</SectionLabel>
+            <View style={styles.card}>
+              <Text style={styles.badgeProgressText}>{badgeState.progressText}</Text>
+              <View style={styles.progressTrack}>
+                <View style={[styles.progressFill, { width: `${Math.round(badgeState.progress * 100)}%` }]} />
+              </View>
+              <View style={styles.badgeGallery}>
+                {BADGE_TIERS.map(tier => {
+                  const unlocked = badgeState.unlockedIds.includes(tier.id);
+                  return (
+                    <View key={tier.id} style={styles.badgeGalleryItem}>
+                      <Image
+                        source={tier.image}
+                        style={[styles.galleryImage, !unlocked && styles.galleryImageLocked]}
+                      />
+                      <Text style={[styles.galleryLabel, !unlocked && styles.galleryLabelLocked]}>
+                        {tier.label}
+                      </Text>
+                      {!unlocked && (
+                        <Text style={styles.lockedHint}>{tier.threshold} reviews</Text>
+                      )}
+                    </View>
+                  );
+                })}
+              </View>
+            </View>
+          </>
         )}
 
         <SectionLabel styles={styles}>ACCOUNT</SectionLabel>
@@ -663,6 +711,54 @@ const createStyles = (colors) => StyleSheet.create({
   modalCancelText: {
     color: colors.textSecondary,
     fontSize: 14,
+    fontFamily: 'DMSans_400Regular',
+  },
+  badgeProgressText: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontFamily: 'DMSans_400Regular',
+    marginBottom: 8,
+  },
+  progressTrack: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.mutedSurface,
+    overflow: 'hidden',
+    marginBottom: 16,
+  },
+  progressFill: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.accent,
+  },
+  badgeGallery: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    paddingTop: 4,
+  },
+  badgeGalleryItem: {
+    alignItems: 'center',
+    gap: 4,
+  },
+  galleryImage: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+  },
+  galleryImageLocked: {
+    opacity: 0.3,
+  },
+  galleryLabel: {
+    color: colors.textPrimary,
+    fontSize: 13,
+    fontFamily: 'DMSans_600SemiBold',
+  },
+  galleryLabelLocked: {
+    color: colors.textMuted,
+  },
+  lockedHint: {
+    color: colors.textMuted,
+    fontSize: 10,
     fontFamily: 'DMSans_400Regular',
   },
 });

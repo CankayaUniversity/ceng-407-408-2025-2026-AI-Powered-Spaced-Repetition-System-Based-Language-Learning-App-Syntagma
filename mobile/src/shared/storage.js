@@ -133,3 +133,27 @@ export async function getReminderHour() {
     return 9;
   }
 }
+
+const BADGE_KEY = 'syntagma.badge';
+
+export async function saveBadgeState({ totalReviews }) {
+  if (!Number.isFinite(totalReviews)) {
+    return;
+  }
+
+  await AsyncStorage.setItem(BADGE_KEY, JSON.stringify({ totalReviews }));
+}
+
+export async function getBadgeState() {
+  const stored = await AsyncStorage.getItem(BADGE_KEY);
+  if (!stored) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(stored);
+    return Number.isFinite(parsed?.totalReviews) ? parsed : null;
+  } catch (err) {
+    return null;
+  }
+}
