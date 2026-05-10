@@ -2,6 +2,8 @@ import { useState, useEffect, useRef, useCallback, memo, useMemo } from 'react';
 import type { SubtitleCue, LexemeEntry, UserSettings, WordStatus } from '../../shared/types';
 import { parseSubtitleFile } from './subtitle-parser';
 import { mountWordPopup, dismissWordPopup } from '../popup/WordPopup';
+import { buildSentences } from './sentence-grouping';
+import type { SentenceGroup } from './sentence-grouping';
 
 // ─── Text tokeniser (mirrors SubtitleDisplay) ─────────────────────────────────
 
@@ -14,32 +16,44 @@ function tokenize(text: string): TextToken[] {
     .map(p => ({ text: p, isWord: /^[a-zA-Z']+$/.test(p) }));
 }
 
-// ─── Memoized cue row ─────────────────────────────────────────────────────────
-// Extracted so only the 2 rows that change active-state re-render on each cue
-// transition instead of the entire list (~500 rows × N words each).
+// ─── Memoized sentence row ────────────────────────────────────────────────────
 
-interface CueRowProps {
-  cue: SubtitleCue;
+interface SentenceRowProps {
+  sentence: SentenceGroup;
   isActive: boolean;
+  selected: boolean;
   lexemes: Record<string, LexemeEntry>;
   showColors: boolean;
-  audioUrl?: string;
-  onSeek: (cue: SubtitleCue) => void;
-  onWordClick: (lemma: string, surface: string, sentence: string, rect: DOMRect) => void;
+  audioUrls: string[];
+  onSeek: (sentence: SentenceGroup) => void;
+  onToggleSelect: (sentenceKey: string) => void;
+  onWordClick: (lemma: string, surface: string, sentence: string, rect: DOMRect, startMs: number, endMs: number) => void;
 }
 
-const CueRow = memo(function CueRow({ cue, isActive, lexemes, showColors, audioUrl, onSeek, onWordClick }: CueRowProps) {
+async function playSequential(urls: string[]) {
+  for (const u of urls) {
+    await new Promise<void>(resolve => {
+      const a = new Audio(u);
+      const done = () => resolve();
+      a.onended = done;
+      a.onerror = done;
+      a.play().catch(done);
+    });
+  }
+}
+
+const CueRow = memo(function CueRow({ sentence, isActive, selected, lexemes, showColors, audioUrls, onSeek, onToggleSelect, onWordClick }: SentenceRowProps) {
   const rowRef = useRef<HTMLDivElement>(null);
 
   // Scroll into view when this row becomes active.
   useEffect(() => {
-    if (isActive) rowRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    if (isActive) rowRef.current?.scrollIntoView({ block: 'nearest', behavior: 'auto' });
   }, [isActive]);
 
-  // Tokenize once per cue text, not on every render.
-  const tokens = useMemo(() => tokenize(cue.text), [cue.text]);
+  // Tokenize once per sentence text, not on every render.
+  const tokens = useMemo(() => tokenize(sentence.text), [sentence.text]);
 
-  const words = useMemo(() => cue.text.match(/\b[a-zA-Z]+\b/g) ?? [], [cue.text]);
+  const words = useMemo(() => sentence.text.match(/\b[a-zA-Z]+\b/g) ?? [], [sentence.text]);
   const hasUnknown = words.some(w => { const s = lexemes[w.toLowerCase()]?.status; return !s || s === 'unknown'; });
   const hasLearning = !hasUnknown && words.some(w => lexemes[w.toLowerCase()]?.status === 'learning');
 
@@ -54,15 +68,38 @@ const CueRow = memo(function CueRow({ cue, isActive, lexemes, showColors, audioU
   return (
     <div
       ref={rowRef}
-      onClick={() => onSeek(cue)}
+      onClick={() => onSeek(sentence)}
       style={{
         display: 'flex', gap: '8px', alignItems: 'flex-start',
         padding: '6px 8px 6px 6px', borderRadius: '6px', cursor: 'pointer',
         pointerEvents: 'auto',
-        background: isActive ? 'rgba(160,120,85,0.10)' : 'transparent',
+        background: selected
+          ? 'rgba(152,193,217,0.14)'
+          : isActive ? 'rgba(160,120,85,0.10)' : 'transparent',
         borderLeft: leftBorder, transition: 'background 0.12s', marginBottom: '1px',
       }}
     >
+      <button
+        onClick={e => { e.stopPropagation(); onToggleSelect(sentence.key); }}
+        title={selected ? 'Remove from flashcard context' : 'Add to flashcard context'}
+        style={{
+          flexShrink: 0,
+          width: '14px', height: '14px',
+          marginTop: '3px',
+          borderRadius: '3px',
+          border: `1.5px solid ${selected ? 'rgba(152,193,217,1)' : 'rgba(135,118,102,0.45)'}`,
+          background: selected ? 'rgba(152,193,217,1)' : 'transparent',
+          cursor: 'pointer',
+          padding: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}
+      >
+        {selected && (
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+        )}
+      </button>
       <span style={{
         fontSize: '10px',
         color: isActive ? 'rgba(160,120,85,1)' : 'rgba(152,193,217,1)',
@@ -72,14 +109,14 @@ const CueRow = memo(function CueRow({ cue, isActive, lexemes, showColors, audioU
         textDecorationColor: isActive ? 'rgba(160,120,85,1)' : 'rgba(152,193,217,0.4)',
         textUnderlineOffset: '2px',
       }}>
-        {formatTime(cue.startMs)}
+        {formatTime(sentence.startMs)}
       </span>
 
-      {audioUrl && (
+      {audioUrls.length > 0 && (
         <button
           onClick={e => {
             e.stopPropagation();
-            new Audio(audioUrl).play().catch(() => {});
+            playSequential(audioUrls);
           }}
           title="Play recorded audio"
           style={{
@@ -118,7 +155,7 @@ const CueRow = memo(function CueRow({ cue, isActive, lexemes, showColors, audioU
               key={ti}
               onClick={e => {
                 e.stopPropagation();
-                onWordClick(lemma, tok.text, cue.text, (e.currentTarget as HTMLElement).getBoundingClientRect());
+                onWordClick(lemma, tok.text, sentence.text, (e.currentTarget as HTMLElement).getBoundingClientRect(), sentence.startMs, sentence.endMs);
               }}
               style={{
                 cursor: 'pointer',
@@ -235,7 +272,23 @@ interface VideoSidebarPanelProps {
 
 export function VideoSidebarPanel({ video, cues, lexemes, settings, onStatusChange }: VideoSidebarPanelProps) {
   const [visible, setVisible] = useState(true);
-  const [currentCue, setCurrentCue] = useState<SubtitleCue | null>(null);
+  const [activeSentenceKey, setActiveSentenceKey] = useState<string | null>(null);
+  // After a manual row click we hold the highlight on the clicked sentence
+  // until video.currentTime actually enters its range. A fixed time lock
+  // would flip back to the previous sentence during the LEAD_IN gap, while
+  // a buffering seek can outlast any reasonable timeout.
+  const pendingClickRef = useRef<{ key: string; startMs: number; endMs: number } | null>(null);
+  // Sentences manually checked by the user to expand flashcard context.
+  // When the user clicks a word inside a selected sentence, the popup
+  // receives the joined text + the selection's full time range.
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
+  const toggleSelect = useCallback((key: string) => {
+    setSelectedKeys(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }, []);
   const [showImport, setShowImport] = useState(false);
   const [localLexemes, setLocalLexemes] = useState(lexemes);
   const [localSettings, setLocalSettings] = useState(settings);
@@ -289,41 +342,22 @@ export function VideoSidebarPanel({ video, cues, lexemes, settings, onStatusChan
     return () => window.removeEventListener('syntagma:toggle-sidebar', handler);
   }, []);
 
-  // Track current cue driven by VideoOverlay's active-cue events.
-  // The overlay already applies subtitle offset + live-caption text fallback,
-  // so the sidebar is always in sync with what's actually shown on screen.
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const { index } = (e as CustomEvent<{ index: number }>).detail;
-      if (index < 0) {
-        setCurrentCue(null);
-        return;
-      }
-      // cues array is indexed by position; prefer direct array access, fall back to find
-      const cue = cues[index] ?? cues.find(c => c.index === index) ?? null;
-      setCurrentCue(prev => (prev?.index === index ? prev : cue));
-    };
-    window.addEventListener('syntagma:active-cue', handler);
-    return () => window.removeEventListener('syntagma:active-cue', handler);
-  }, [cues]);
 
 
   // Seek on cue row click — apply the same timing offset used by the overlay so
   // clicking a cue lands at the actual speech start, not the window-open time.
   // Also immediately update currentCue so the highlight reflects the click
   // without waiting for the next timeupdate event from VideoOverlay.
-  const handleSeek = useCallback((cue: SubtitleCue) => {
+  const handleSeek = useCallback((sentence: SentenceGroup) => {
     const isNetflix = window.location.hostname.includes('netflix.com');
-    // Netflix TTML timestamps are frame-accurate; the auto-detected offset is
-    // YouTube-specific and must NOT be applied here.
-    const offsetMs = isNetflix ? 0 : detectedOffsetMs;
-    const adjusted = cue.startMs + offsetMs + localSettings.targetSubtitleOffsetMs;
+    // Auto-detected YouTube caption offset is calibrated from one cue and
+    // doesn't apply uniformly to every cue; on long multi-cue sentences it
+    // overshoots into the middle. Skip it for seek and use a small lead-in
+    // so the user always lands just before the sentence start.
+    const LEAD_IN_MS = 250;
+    const adjusted = Math.max(0, sentence.startMs - LEAD_IN_MS + localSettings.targetSubtitleOffsetMs);
 
     if (isNetflix) {
-      // Use only the Netflix internal player API via the injected page script.
-      // Directly setting video.currentTime on a DRM-encrypted Netflix video
-      // triggers error M7375 (EME state violation). The injected script calls
-      // window.netflix.appContext…videoPlayer.seek() which is the only safe path.
       window.dispatchEvent(new CustomEvent('syntagma:netflix-seek', {
         detail: { timeMs: adjusted }
       }));
@@ -332,8 +366,13 @@ export function VideoSidebarPanel({ video, cues, lexemes, settings, onStatusChan
       video.play().catch(() => {});
     }
 
-    setCurrentCue(cue);
-  }, [video, detectedOffsetMs, localSettings.targetSubtitleOffsetMs]);
+    setActiveSentenceKey(sentence.key);
+    pendingClickRef.current = {
+      key: sentence.key,
+      startMs: sentence.startMs,
+      endMs: sentence.endMs,
+    };
+  }, [video, localSettings.targetSubtitleOffsetMs]);
 
   // Keep a ref to localLexemes so handleWordClick doesn't need it as a
   // dependency. Without this, every lexeme status change creates a new
@@ -341,17 +380,45 @@ export function VideoSidebarPanel({ video, cues, lexemes, settings, onStatusChan
   // and causes every visible row to re-render.
   const localLexemesRef = useRef(localLexemes);
   useEffect(() => { localLexemesRef.current = localLexemes; }, [localLexemes]);
+  const selectedKeysRef = useRef(selectedKeys);
+  useEffect(() => { selectedKeysRef.current = selectedKeys; }, [selectedKeys]);
+  const sentencesRef = useRef<SentenceGroup[]>([]);
 
   // Word click — open popup (stops propagation so the row seek doesn't fire)
   const handleWordClick = useCallback((
     lemma: string, surface: string, sentence: string, rect: DOMRect,
+    sentenceStartMs: number, sentenceEndMs: number,
   ) => {
     if (localSettings.pauseOnWordInteraction && !video.paused) video.pause();
     const now = Date.now();
+
+    // If the clicked word's sentence belongs to the user's manual selection,
+    // combine all selected sentences (chronologically) into one context block
+    // so the flashcard captures broader meaning + audio span.
+    let popupSentence = sentence;
+    let popupStartMs = sentenceStartMs;
+    let popupEndMs = sentenceEndMs;
+    const clickedKey = sentencesRef.current.find(
+      s => s.startMs === sentenceStartMs && s.text === sentence,
+    )?.key;
+    if (clickedKey && selectedKeysRef.current.has(clickedKey)) {
+      const picked = sentencesRef.current
+        .filter(s => selectedKeysRef.current.has(s.key))
+        .slice()
+        .sort((a, b) => a.startMs - b.startMs);
+      if (picked.length > 0) {
+        popupSentence = picked.map(s => s.text).join(' ');
+        popupStartMs = picked[0].startMs;
+        popupEndMs = picked[picked.length - 1].endMs;
+      }
+    }
+
     mountWordPopup({
-      lemma, surface, sentence, anchorRect: rect,
+      lemma, surface, sentence: popupSentence, anchorRect: rect,
       lexeme: localLexemesRef.current[lemma] ?? null,
       settings: localSettings,
+      sentenceStartMs: popupStartMs,
+      sentenceEndMs: popupEndMs,
       onClose: () => { dismissWordPopup(); },
       onStatusChange: (l, status) => {
         setLocalLexemes(prev => ({
@@ -365,6 +432,64 @@ export function VideoSidebarPanel({ video, cues, lexemes, settings, onStatusChan
       },
     }, { zIndex: 2147483647 });
   }, [localSettings, video, onStatusChange]);
+
+  const sentences = useMemo(() => buildSentences(cues), [cues]);
+  useEffect(() => { sentencesRef.current = sentences; }, [sentences]);
+
+  // Drive active-sentence highlight directly from video.currentTime via rAF.
+  // This avoids the cue-event flicker (A→B→A→B at boundaries) and gives a
+  // single source of truth for "which sentence is being heard right now".
+  // Apply the same offsets the overlay uses so the highlight matches the
+  // on-screen subtitle. Inside silent gaps we hold on the most recently
+  // started sentence to avoid losing the highlight between sentences.
+  useEffect(() => {
+    if (sentences.length === 0) return;
+    let raf = 0;
+    const tick = () => {
+      const adjustedMs = video.currentTime * 1000;
+      // Adaptive lock: hold the clicked sentence until video.currentTime
+      // actually crosses into its range (covers seek lead-in, buffering,
+      // and the caption-time vs. video-time offset).
+      const pending = pendingClickRef.current;
+      if (pending) {
+        // Keep the clicked sentence highlighted until the normal rAF
+        // logic independently agrees with the click (i.e. picks the
+        // same sentence). This handles seek lead-in, buffering, and
+        // offset mismatches without a fixed timeout.
+        const normalKey = (() => {
+          let a: SentenceGroup | null = null;
+          let fb: SentenceGroup | null = null;
+          for (const s of sentences) {
+            if (s.startMs > adjustedMs) break;
+            fb = s;
+            if (s.endMs > adjustedMs) { a = s; break; }
+          }
+          return (a ?? fb)?.key ?? null;
+        })();
+        if (normalKey !== pending.key) {
+          setActiveSentenceKey(prev => (prev === pending.key ? prev : pending.key));
+          raf = requestAnimationFrame(tick);
+          return;
+        }
+        pendingClickRef.current = null;
+      }
+      // Prefer the sentence whose range CONTAINS currentTime. Fall back
+      // to the most recently started one during silent gaps.
+      let active: SentenceGroup | null = null;
+      let fallback: SentenceGroup | null = null;
+      for (const s of sentences) {
+        if (s.startMs > adjustedMs) break;
+        fallback = s;
+        if (s.endMs > adjustedMs) { active = s; break; }
+      }
+      if (!active) active = fallback;
+      const key = active?.key ?? null;
+      setActiveSentenceKey(prev => (prev === key ? prev : key));
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [video, sentences]);
 
   if (!visible) return null;
 
@@ -419,14 +544,33 @@ export function VideoSidebarPanel({ video, cues, lexemes, settings, onStatusChan
             </svg>
             <span style={{
               fontSize: '11px', fontWeight: 700, color: C.subtext,
-              textTransform: 'uppercase', letterSpacing: '0.6px',
+              letterSpacing: '0.6px',
             }}>
-              Transcript
+              TRANSCRIPT
             </span>
             {cues.length > 0 && (
               <span style={{ fontSize: '10px', color: C.subtext, opacity: 0.65 }}>
-                · {cues.length} lines
+                · {sentences.length} sentences
               </span>
+            )}
+            {selectedKeys.size > 0 && (
+              <button
+                onClick={() => setSelectedKeys(new Set())}
+                title="Clear context selection"
+                style={{
+                  background: 'rgba(152,193,217,0.18)',
+                  border: `1px solid rgba(152,193,217,0.45)`,
+                  borderRadius: '4px',
+                  color: C.blue,
+                  padding: '1px 6px',
+                  cursor: 'pointer',
+                  fontSize: '10px',
+                  fontWeight: 600,
+                  marginLeft: '4px',
+                }}
+              >
+                {selectedKeys.size} selected ✕
+              </button>
             )}
           </div>
 
@@ -545,15 +689,17 @@ export function VideoSidebarPanel({ video, cues, lexemes, settings, onStatusChan
             ref={listRef}
             style={{ flex: 1, overflowY: 'auto', padding: '4px 6px' }}
           >
-            {cues.map(cue => (
+            {sentences.map(sentence => (
               <CueRow
-                key={cue.startMs}
-                cue={cue}
-                isActive={currentCue?.index === cue.index}
+                key={sentence.key}
+                sentence={sentence}
+                isActive={sentence.key === activeSentenceKey}
+                selected={selectedKeys.has(sentence.key)}
                 lexemes={localLexemes}
                 showColors={localSettings.showLearningStatusColors}
-                audioUrl={audioMap[cue.index]}
+                audioUrls={sentence.cueIndices.map(i => audioMap[i]).filter((u): u is string => !!u)}
                 onSeek={handleSeek}
+                onToggleSelect={toggleSelect}
                 onWordClick={handleWordClick}
               />
             ))}
