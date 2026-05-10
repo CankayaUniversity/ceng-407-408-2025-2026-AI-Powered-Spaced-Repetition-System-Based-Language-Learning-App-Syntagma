@@ -8,6 +8,7 @@ import {
   saveFlashcard,
   getFlashcards,
   getAuthHeaders,
+  userScopedKey,
 } from '../shared/storage';
 import {
   explainWord as backendExplainWord,
@@ -90,6 +91,7 @@ function mapBackendFlashcard(fc: any): FlashcardPayload {
     createdAt: fc.createdAt ? new Date(fc.createdAt).getTime() : Date.now(),
     deckName: 'Syntagma',
     tags: ['syntagma'],
+    collectionId: fc.collectionId != null ? Number(fc.collectionId) : null,
   };
 }
 
@@ -518,13 +520,19 @@ onMessage(async (msg, sender) => {
       const card = msg.payload;
       if (settings.authToken) {
         const apiBase = settings.apiBaseUrl || BACKEND_URL;
-        const payload = {
+        const payload: Record<string, unknown> = {
           lemma: card.lemma,
           translation: card.trMeaning || '',
           sourceSentence: card.sentence || '',
           exampleSentence: `${card.surfaceForm} — from ${card.sourceTitle || 'web'}`,
           knowledgeStatus: 'LEARNING',
         };
+        if (settings.activeCollectionId != null) {
+          payload.collectionId = Number(settings.activeCollectionId);
+          console.log('[Syntagma] Creating flashcard with collectionId:', settings.activeCollectionId);
+        } else {
+          console.log('[Syntagma] Creating flashcard WITHOUT collectionId. settings.activeCollectionId =', settings.activeCollectionId);
+        }
         try {
           const res = await fetch(`${apiBase}/api/flashcards`, {
             method: 'POST',
@@ -582,7 +590,9 @@ onMessage(async (msg, sender) => {
         }
         const json = await res.json();
         const content = json.data?.content ?? json.data ?? [];
+        console.log('[Syntagma] Fetched flashcards raw sample:', JSON.stringify(content[0]));
         const baseCards = content.map(mapBackendFlashcard);
+        console.log('[Syntagma] Mapped cards sample:', JSON.stringify(baseCards[0]));
         const cacheResult = await chrome.storage.local.get(MEDIA_URL_CACHE_KEY);
         const mediaCache = (cacheResult[MEDIA_URL_CACHE_KEY] ?? {}) as MediaUrlCache;
         const cards = await mapWithConcurrency(baseCards, 4, async (card: FlashcardPayload) => {
@@ -593,8 +603,9 @@ onMessage(async (msg, sender) => {
             audioUrl: urls.audioUrl,
           };
         });
+        const fcKey = userScopedKey('flashcards', settings.authUserId);
         await chrome.storage.local.set({
-          flashcards: cards,
+          [fcKey]: cards,
           [MEDIA_URL_CACHE_KEY]: mediaCache,
         });
         return { ok: true, cards };
@@ -622,6 +633,75 @@ onMessage(async (msg, sender) => {
         return { ok: true };
       } catch (err) {
         console.error('[Syntagma] Failed to delete flashcard:', err);
+        return { ok: false, error: (err as Error).message };
+      }
+    }
+
+    case 'FETCH_COLLECTIONS': {
+      const settings = await getSettings();
+      if (!settings.authToken) {
+        return { ok: false, error: 'Not logged in' };
+      }
+      const apiBase = settings.apiBaseUrl || BACKEND_URL;
+      const collHeaders = { ...getAuthHeaders(settings), 'X-User-Id': settings.authUserId ?? '' };
+      try {
+        const res = await fetch(`${apiBase}/api/collections?size=50&sort=createdAt,desc`, {
+          headers: collHeaders,
+        });
+        await refreshTokenIfNeeded(res);
+        if (!res.ok) {
+          return { ok: false, error: await getResponseError(res, `Server returned ${res.status}`) };
+        }
+        const json = await res.json();
+        const content = json.data?.content ?? json.data ?? [];
+        return { ok: true, collections: content };
+      } catch (err) {
+        return { ok: false, error: (err as Error).message };
+      }
+    }
+
+    case 'CREATE_COLLECTION': {
+      const settings = await getSettings();
+      if (!settings.authToken) {
+        return { ok: false, error: 'Not logged in' };
+      }
+      const apiBase = settings.apiBaseUrl || BACKEND_URL;
+      const collHeaders = { ...getAuthHeaders(settings), 'X-User-Id': settings.authUserId ?? '' };
+      try {
+        const res = await fetch(`${apiBase}/api/collections`, {
+          method: 'POST',
+          headers: collHeaders,
+          body: JSON.stringify({ name: msg.payload.name }),
+        });
+        await refreshTokenIfNeeded(res);
+        if (!res.ok) {
+          return { ok: false, error: await getResponseError(res, `Server returned ${res.status}`) };
+        }
+        const json = await res.json();
+        return { ok: true, collection: json.data };
+      } catch (err) {
+        return { ok: false, error: (err as Error).message };
+      }
+    }
+
+    case 'DELETE_COLLECTION': {
+      const settings = await getSettings();
+      if (!settings.authToken) {
+        return { ok: false, error: 'Not logged in' };
+      }
+      const apiBase = settings.apiBaseUrl || BACKEND_URL;
+      const collHeaders = { ...getAuthHeaders(settings), 'X-User-Id': settings.authUserId ?? '' };
+      try {
+        const res = await fetch(`${apiBase}/api/collections/${encodeURIComponent(msg.payload.id)}`, {
+          method: 'DELETE',
+          headers: collHeaders,
+        });
+        await refreshTokenIfNeeded(res);
+        if (!res.ok) {
+          return { ok: false, error: await getResponseError(res, `Server returned ${res.status}`) };
+        }
+        return { ok: true };
+      } catch (err) {
         return { ok: false, error: (err as Error).message };
       }
     }

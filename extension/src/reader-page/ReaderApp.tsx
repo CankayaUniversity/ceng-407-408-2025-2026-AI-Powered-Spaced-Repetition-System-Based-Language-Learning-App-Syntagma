@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import ePub, { Book, Rendition } from 'epubjs';
-import type { UserSettings, LexemeEntry, WordStatus } from '../shared/types';
+import type { UserSettings, LexemeEntry, WordStatus, FlashcardPayload } from '../shared/types';
 import type { AiResultData } from '../shared/backend-ai';
-import { DEFAULT_SETTINGS } from '../shared/storage';
+import { DEFAULT_SETTINGS, userScopedKey } from '../shared/storage';
 import { sendMessage } from '../shared/messages';
-import { lookupFrequency } from '../shared/frequency';
+import { lookupFrequency, initFrequencyTable } from '../shared/frequency';
 import { lemmatize } from '../shared/lemmatizer';
 
 // ─── Colors (matching extension theme) ──────────────────────────────────────
@@ -57,28 +57,43 @@ const STORAGE_KEY = 'syntagma_ebooks';
 
 // ─── Persistence helpers ────────────────────────────────────────────────────
 
+async function getStoredUserId(): Promise<string | null> {
+  const result = await chrome.storage.local.get('userSettings');
+  return (result.userSettings as any)?.authUserId ?? null;
+}
+
 async function loadLibrary(): Promise<EbookMeta[]> {
-  const result = await chrome.storage.local.get(STORAGE_KEY);
-  return (result[STORAGE_KEY] ?? []) as EbookMeta[];
+  const userId = await getStoredUserId();
+  const key = userScopedKey(STORAGE_KEY, userId);
+  const result = await chrome.storage.local.get(key);
+  return (result[key] ?? []) as EbookMeta[];
 }
 
 async function saveLibrary(lib: EbookMeta[]): Promise<void> {
-  await chrome.storage.local.set({ [STORAGE_KEY]: lib });
+  const userId = await getStoredUserId();
+  const key = userScopedKey(STORAGE_KEY, userId);
+  await chrome.storage.local.set({ [key]: lib });
 }
 
 async function storeEpubBlob(id: string, blob: ArrayBuffer): Promise<void> {
-  await chrome.storage.local.set({ [`epub_${id}`]: Array.from(new Uint8Array(blob)) });
+  const userId = await getStoredUserId();
+  const blobKey = userScopedKey(`epub_${id}`, userId);
+  await chrome.storage.local.set({ [blobKey]: Array.from(new Uint8Array(blob)) });
 }
 
 async function loadEpubBlob(id: string): Promise<ArrayBuffer | null> {
-  const result = await chrome.storage.local.get(`epub_${id}`);
-  const arr = result[`epub_${id}`];
+  const userId = await getStoredUserId();
+  const blobKey = userScopedKey(`epub_${id}`, userId);
+  const result = await chrome.storage.local.get(blobKey);
+  const arr = result[blobKey];
   if (!arr) return null;
   return new Uint8Array(arr as number[]).buffer;
 }
 
 async function removeEpubBlob(id: string): Promise<void> {
-  await chrome.storage.local.remove(`epub_${id}`);
+  const userId = await getStoredUserId();
+  const blobKey = userScopedKey(`epub_${id}`, userId);
+  await chrome.storage.local.remove(blobKey);
 }
 
 // ─── Word interaction helpers ───────────────────────────────────────────────
@@ -329,8 +344,12 @@ function ReaderWordPopup({
   const [aiError, setAiError] = useState<string | null>(null);
   const [cardSaved, setCardSaved] = useState<'idle' | 'saving' | 'done' | 'error'>('idle');
   const [showLinks, setShowLinks] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [popupPos, setPopupPos] = useState<{ top: number; left: number } | null>(null);
   const popupRef = useRef<HTMLDivElement>(null);
   const requestIdRef = useRef<string | null>(null);
+  const isDraggingRef = useRef(false);
+  const dragOffsetRef = useRef({ x: 0, y: 0 });
 
   const freqEntry = lookupFrequency(word);
 
@@ -408,11 +427,13 @@ function ReaderWordPopup({
     });
   }, [word, sentence, settings.learnerLevel]);
 
+  const [cardError, setCardError] = useState<string | null>(null);
   const handleSaveCard = useCallback(async () => {
     if (cardSaved !== 'idle') return;
     setCardSaved('saving');
+    setCardError(null);
     try {
-      const card = {
+      const card: FlashcardPayload = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
         lemma: word,
         surfaceForm: surface,
@@ -421,26 +442,64 @@ function ReaderWordPopup({
         sourceTitle: bookTitle,
         trMeaning: lexeme?.trMeaning ?? (translations[0] ?? ''),
         createdAt: Date.now(),
-        deckName: 'Syntagma',
+        deckName: settings.activeCollectionName || 'Syntagma',
         tags: ['syntagma', 'reader'],
       };
       const result = await sendMessage<{ ok: boolean; error?: string }>({
         type: 'CREATE_FLASHCARD',
         payload: card,
       });
-      if (!result.ok) throw new Error(result.error);
+      if (!result.ok) throw new Error(result.error || 'Server error');
       setCardSaved('done');
       setTimeout(() => setCardSaved('idle'), 2000);
-    } catch {
+    } catch (err) {
+      setCardError((err as Error).message);
       setCardSaved('error');
-      setTimeout(() => setCardSaved('idle'), 2000);
+      setTimeout(() => setCardSaved('idle'), 3000);
     }
-  }, [cardSaved, word, surface, sentence, lexeme, translations, bookId, bookTitle]);
+  }, [cardSaved, word, surface, sentence, lexeme, translations, bookId, bookTitle, settings]);
 
   const currentCfg = STATUS_CONFIG.find(c => c.status === currentStatus) ?? STATUS_CONFIG[0];
   const popupW = 340;
-  const left = Math.max(12, Math.min(position.x - popupW / 2, window.innerWidth - popupW - 12));
-  const top = Math.max(6, Math.min(position.y, window.innerHeight - 400));
+  const initLeft = Math.max(12, Math.min(position.x - popupW / 2, window.innerWidth - popupW - 12));
+  const initTop = Math.max(6, Math.min(position.y, window.innerHeight - 400));
+  const finalPos = popupPos ?? { top: initTop, left: initLeft };
+
+  const handleDragStart = useCallback((e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    isDraggingRef.current = true;
+    setIsDragging(true);
+    dragOffsetRef.current = {
+      x: e.clientX - finalPos.left,
+      y: e.clientY - finalPos.top,
+    };
+    e.preventDefault();
+  }, [finalPos]);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDraggingRef.current || !popupRef.current) return;
+      const newLeft = e.clientX - dragOffsetRef.current.x;
+      const newTop = e.clientY - dragOffsetRef.current.y;
+      const pH = popupRef.current.offsetHeight;
+      setPopupPos({
+        top: Math.max(0, Math.min(newTop, window.innerHeight - pH)),
+        left: Math.max(0, Math.min(newLeft, window.innerWidth - popupW)),
+      });
+    };
+    const handleMouseUp = () => {
+      if (isDraggingRef.current) {
+        isDraggingRef.current = false;
+        setIsDragging(false);
+      }
+    };
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, []);
 
   const btnStyle = (active?: boolean, color?: string): React.CSSProperties => ({
     width: '32px', height: '32px', borderRadius: '16px',
@@ -460,12 +519,36 @@ function ReaderWordPopup({
 
   return (
     <div ref={popupRef} style={{
-      position: 'fixed', zIndex: 2147483645, top, left, width: `${popupW}px`,
+      position: 'fixed', zIndex: 2147483645, top: finalPos.top, left: finalPos.left, width: `${popupW}px`,
       background: PC.overlay, backdropFilter: 'blur(12px)',
       border: `1px solid ${PC.surface1}`, borderRadius: '8px',
       padding: '12px', boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
       fontFamily: 'system-ui, -apple-system, sans-serif', fontSize: '13px', color: PC.text,
+      ...(isDragging ? { userSelect: 'none' as const, cursor: 'grabbing' } : {}),
     }}>
+      {/* Drag handle */}
+      <div
+        onMouseDown={handleDragStart}
+        style={{
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          height: '14px',
+          marginBottom: '6px',
+          marginTop: '-4px',
+          cursor: isDragging ? 'grabbing' : 'grab',
+          borderRadius: '4px',
+        }}
+      >
+        <svg width="24" height="8" viewBox="0 0 24 8" fill={PC.surface2}>
+          <circle cx="7" cy="2" r="1.5"/>
+          <circle cx="12" cy="2" r="1.5"/>
+          <circle cx="17" cy="2" r="1.5"/>
+          <circle cx="7" cy="6" r="1.5"/>
+          <circle cx="12" cy="6" r="1.5"/>
+          <circle cx="17" cy="6" r="1.5"/>
+        </svg>
+      </div>
       {/* Header: word + flashcard button */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '8px' }}>
         <div>
@@ -517,7 +600,7 @@ function ReaderWordPopup({
           fontSize: '12px', fontWeight: 600,
           color: cardSaved === 'done' ? PC.green : PC.red,
         }}>
-          {cardSaved === 'done' ? 'Card saved to your flashcards!' : 'Failed to save card. Try again.'}
+          {cardSaved === 'done' ? 'Card saved to your flashcards!' : `Failed: ${cardError || 'Unknown error'}. Try again.`}
         </div>
       )}
 
@@ -797,12 +880,15 @@ function ReaderView({
   useEffect(() => { lexemesRef.current = lexemes; }, [lexemes]);
   useEffect(() => { settingsRef.current = settings; }, [settings]);
 
-  // Load lexemes
+  // Load lexemes (user-scoped)
   useEffect(() => {
-    chrome.storage.local.get('lexemes').then(r => {
-      const loaded = (r.lexemes ?? {}) as Record<string, LexemeEntry>;
-      setLexemes(loaded);
-      lexemesRef.current = loaded;
+    getStoredUserId().then(userId => {
+      const key = userScopedKey('lexemes', userId);
+      chrome.storage.local.get(key).then(r => {
+        const loaded = (r[key] ?? {}) as Record<string, LexemeEntry>;
+        setLexemes(loaded);
+        lexemesRef.current = loaded;
+      });
     });
   }, []);
 
@@ -864,9 +950,9 @@ function ReaderView({
           'line-height': `${settingsRef.current.readerLineHeight}`,
           'color': theme.text,
           'background': theme.bg,
-          'padding': '0 16px',
-          'max-width': '720px',
-          'margin': '0 auto',
+          'padding': '24px 12%',
+          'margin': '0',
+          'text-align': 'justify',
         },
         'a': { color: theme.accent },
         'img': { 'max-width': '100%' },
@@ -995,7 +1081,30 @@ function ReaderView({
 
   function extractSentence(span: HTMLElement): string {
     const parent = span.closest('p') ?? span.parentElement;
-    return parent?.textContent?.trim() ?? span.textContent ?? '';
+    const fullText = parent?.textContent?.trim() ?? '';
+    if (!fullText) return span.textContent ?? '';
+
+    const wordText = span.textContent ?? '';
+    const wordIdx = fullText.indexOf(wordText);
+    if (wordIdx === -1) return fullText;
+
+    const sentenceEnders = /[.!?…]+[\s"'»)}\]]*|$/g;
+    let sentenceStart = 0;
+    let sentenceEnd = fullText.length;
+
+    let match;
+    while ((match = sentenceEnders.exec(fullText)) !== null) {
+      const endPos = match.index + match[0].length;
+      if (endPos <= wordIdx) {
+        sentenceStart = endPos;
+      } else if (match.index >= wordIdx) {
+        sentenceEnd = endPos;
+        break;
+      }
+    }
+
+    const sentence = fullText.slice(sentenceStart, sentenceEnd).trim();
+    return sentence || fullText;
   }
 
   function goNext() { renditionRef.current?.next(); }
@@ -1121,8 +1230,8 @@ function ReaderView({
         )}
 
         {/* Book content */}
-        <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
-          <div ref={viewerRef} style={{ width: '100%', height: '100%' }} />
+        <div style={{ flex: 1, overflow: 'hidden', position: 'relative', display: 'flex', justifyContent: 'center' }}>
+          <div ref={viewerRef} style={{ width: '100%', maxWidth: '100%', height: '100%' }} />
 
           {/* Navigation arrows */}
           <button onClick={goPrev} style={{
@@ -1196,6 +1305,7 @@ export function ReaderApp() {
     Promise.all([
       sendMessage<UserSettings>({ type: 'GET_SETTINGS', payload: null }),
       loadLibrary(),
+      initFrequencyTable(),
     ]).then(([s, lib]) => {
       setSettings(s);
       setBooks(lib);

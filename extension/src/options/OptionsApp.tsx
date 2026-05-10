@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { UserSettings, LexemeEntry, FlashcardPayload } from '../shared/types';
-import { DEFAULT_SETTINGS } from '../shared/storage';
+import { DEFAULT_SETTINGS, userScopedKey } from '../shared/storage';
 import { sendMessage } from '../shared/messages';
 
 const C = {
@@ -132,6 +132,12 @@ function Select({ label, value, options, onChange }: {
   );
 }
 
+interface CollectionItem {
+  collectionId: number;
+  name: string;
+  createdAt: string;
+}
+
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
     <h3 style={{
@@ -150,9 +156,124 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 
 // ─── Tab: General ────────────────────────────────────────────────────────────
 
+function ActiveDeckSelector({ settings, onUpdate }: { settings: UserSettings; onUpdate: (p: Partial<UserSettings>) => void }) {
+  const [collections, setCollections] = useState<CollectionItem[]>([]);
+  const [newName, setNewName] = useState('');
+  const [creating, setCreating] = useState(false);
+
+  const fetchCollections = useCallback(async () => {
+    if (!settings.authToken) return;
+    try {
+      const result = await sendMessage<{ ok: boolean; collections?: CollectionItem[]; error?: string }>({
+        type: 'FETCH_COLLECTIONS',
+        payload: null,
+      });
+      if (result.ok) setCollections(result.collections ?? []);
+    } catch {}
+  }, [settings.authToken]);
+
+  useEffect(() => { fetchCollections(); }, [fetchCollections]);
+
+  const handleChange = (collId: string) => {
+    if (collId === '') {
+      onUpdate({ activeCollectionId: null, activeCollectionName: null });
+    } else {
+      const id = Number(collId);
+      const name = collections.find(c => c.collectionId === id)?.name ?? null;
+      onUpdate({ activeCollectionId: id, activeCollectionName: name });
+    }
+  };
+
+  const handleCreate = async () => {
+    if (!newName.trim()) return;
+    setCreating(true);
+    try {
+      const result = await sendMessage<{ ok: boolean; collection?: CollectionItem; error?: string }>({
+        type: 'CREATE_COLLECTION',
+        payload: { name: newName.trim() },
+      });
+      if (result.ok && result.collection) {
+        setCollections(prev => [result.collection!, ...prev]);
+        onUpdate({ activeCollectionId: result.collection.collectionId, activeCollectionName: result.collection.name });
+        setNewName('');
+      }
+    } catch {}
+    setCreating(false);
+  };
+
+  if (!settings.authToken) {
+    return <div style={{ fontSize: '12px', color: C.subtext, padding: '8px 0' }}>Log in to use decks.</div>;
+  }
+
+  return (
+    <div style={{ marginBottom: '12px' }}>
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '6px' }}>
+        <select
+          value={settings.activeCollectionId ?? ''}
+          onChange={e => handleChange(e.target.value)}
+          style={{
+            flex: 1,
+            background: C.surface0,
+            border: `1px solid ${C.surface1}`,
+            borderRadius: '6px',
+            padding: '6px 10px',
+            fontSize: '13px',
+            color: C.text,
+            outline: 'none',
+          }}
+        >
+          <option value="">No deck (unsorted)</option>
+          {collections.map(c => (
+            <option key={c.collectionId} value={c.collectionId}>{c.name}</option>
+          ))}
+        </select>
+      </div>
+      <div style={{ display: 'flex', gap: '6px' }}>
+        <input
+          type="text"
+          value={newName}
+          onChange={e => setNewName(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleCreate()}
+          placeholder="Create new deck…"
+          style={{
+            flex: 1,
+            background: C.surface0,
+            border: `1px solid ${C.surface1}`,
+            borderRadius: '4px',
+            padding: '4px 8px',
+            fontSize: '12px',
+            color: C.text,
+            outline: 'none',
+          }}
+        />
+        <button
+          onClick={handleCreate}
+          disabled={creating || !newName.trim()}
+          style={{
+            background: C.green,
+            color: C.base,
+            border: 'none',
+            borderRadius: '4px',
+            padding: '4px 10px',
+            fontSize: '12px',
+            cursor: 'pointer',
+            opacity: creating || !newName.trim() ? 0.5 : 1,
+          }}
+        >
+          + Create
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function GeneralTab({ settings, onUpdate }: { settings: UserSettings; onUpdate: (p: Partial<UserSettings>) => void }) {
   return (
     <div>
+      <SectionTitle>Active Deck</SectionTitle>
+      <p style={{ fontSize: '12px', color: C.subtext, margin: '0 0 8px 0' }}>New flashcards will be saved to this deck.</p>
+      <ActiveDeckSelector settings={settings} onUpdate={onUpdate} />
+
       <SectionTitle>Parsing</SectionTitle>
       <Toggle value={settings.enabled} onChange={v => onUpdate({ enabled: v })} label="Enable Syntagma" description="Master on/off switch" />
       <Toggle value={settings.autoParseOnLoad} onChange={v => onUpdate({ autoParseOnLoad: v })} label="Auto-parse pages on load" />
@@ -220,15 +341,16 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
     : {};
 
   const loadFromLocal = useCallback(async () => {
-    const result = await chrome.storage.local.get('lexemes');
-    const entries = Object.values(result.lexemes ?? {}) as LexemeEntry[];
+    const key = userScopedKey('lexemes', settings.authUserId);
+    const result = await chrome.storage.local.get(key);
+    const entries = Object.values(result[key] ?? {}) as LexemeEntry[];
     setWords(entries.map(e => ({
       lemma: e.lemma,
       status: e.status,
       updatedAt: e.lastSeenAt || 0,
     })));
     setSource('local');
-  }, []);
+  }, [settings.authUserId]);
 
   const fetchWords = useCallback(async () => {
     setLoading(true);
@@ -507,13 +629,28 @@ function AudioPlayButton({ url }: { url: string }) {
 
 // ─── Tab: Flashcards ─────────────────────────────────────────────────────────
 
-function FlashcardsTab({ settings }: { settings: UserSettings }) {
+function FlashcardsTab({ settings, onUpdate }: { settings: UserSettings; onUpdate: (patch: Partial<UserSettings>) => void }) {
   const [cards, setCards] = useState<FlashcardPayload[]>([]);
+  const [collections, setCollections] = useState<CollectionItem[]>([]);
+  const [viewFilter, setViewFilter] = useState<number | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [newCollName, setNewCollName] = useState('');
+  const [creatingColl, setCreatingColl] = useState(false);
 
   const apiBase = settings.apiBaseUrl || BACKEND_URL;
+
+  const fetchCollections = useCallback(async () => {
+    if (!settings.authToken) return;
+    try {
+      const result = await sendMessage<{ ok: boolean; collections?: CollectionItem[]; error?: string }>({
+        type: 'FETCH_COLLECTIONS',
+        payload: null,
+      });
+      if (result.ok) setCollections(result.collections ?? []);
+    } catch {}
+  }, [settings.authToken]);
 
   const fetchCards = useCallback(async () => {
     setLoading(true);
@@ -528,15 +665,20 @@ function FlashcardsTab({ settings }: { settings: UserSettings }) {
     } catch (err) {
       console.error('[Syntagma] Failed to fetch flashcards:', err);
       setError((err as Error).message);
-      // Fallback to local storage
-      const result = await chrome.storage.local.get('flashcards');
-      setCards((result.flashcards ?? []) as FlashcardPayload[]);
+      const fcKey = userScopedKey('flashcards', settings.authUserId);
+      const result = await chrome.storage.local.get(fcKey);
+      setCards((result[fcKey] ?? []) as FlashcardPayload[]);
     } finally {
       setLoading(false);
     }
   }, [settings.authUserId, settings.apiBaseUrl]);
 
+  useEffect(() => { fetchCollections(); }, [fetchCollections]);
   useEffect(() => { fetchCards(); }, [fetchCards]);
+
+  const filteredCards = viewFilter !== null
+    ? cards.filter(c => c.collectionId != null && Number(c.collectionId) === Number(viewFilter))
+    : cards;
 
   const toggleSelect = (id: string) => {
     setSelected(prev => {
@@ -547,11 +689,10 @@ function FlashcardsTab({ settings }: { settings: UserSettings }) {
     });
   };
 
-  const selectAll = () => setSelected(new Set(cards.map(c => c.id)));
+  const selectAll = () => setSelected(new Set(filteredCards.map(c => c.id)));
   const clearAll = () => setSelected(new Set());
 
   const handleDeleteCard = async (id: string) => {
-    // Delete from backend
     try {
       const result = await sendMessage<{ ok: boolean; error?: string }>({
         type: 'DELETE_FLASHCARD',
@@ -561,9 +702,42 @@ function FlashcardsTab({ settings }: { settings: UserSettings }) {
     } catch (err) {
       console.warn('[Syntagma] Backend delete failed:', err);
     }
-    // Remove from local list
     setCards(prev => prev.filter(c => c.id !== id));
     setSelected(prev => { const next = new Set(prev); next.delete(id); return next; });
+  };
+
+  const handleCreateCollection = async () => {
+    if (!newCollName.trim()) return;
+    setCreatingColl(true);
+    try {
+      const result = await sendMessage<{ ok: boolean; collection?: CollectionItem; error?: string }>({
+        type: 'CREATE_COLLECTION',
+        payload: { name: newCollName.trim() },
+      });
+      if (result.ok && result.collection) {
+        setCollections(prev => [result.collection!, ...prev]);
+        setNewCollName('');
+        setViewFilter(result.collection.collectionId);
+        onUpdate({ activeCollectionId: result.collection.collectionId, activeCollectionName: result.collection.name });
+      }
+    } catch {}
+    setCreatingColl(false);
+  };
+
+  const handleDeleteCollection = async (id: number) => {
+    try {
+      const result = await sendMessage<{ ok: boolean; error?: string }>({
+        type: 'DELETE_COLLECTION',
+        payload: { id },
+      });
+      if (result.ok) {
+        setCollections(prev => prev.filter(c => c.collectionId !== id));
+        if (viewFilter === id) setViewFilter(null);
+        if (settings.activeCollectionId === id) {
+          onUpdate({ activeCollectionId: null, activeCollectionName: null });
+        }
+      }
+    } catch {}
   };
 
   if (loading) return <div style={{ color: C.subtext, padding: '20px', textAlign: 'center' }}>Loading flashcards from server…</div>;
@@ -591,10 +765,104 @@ function FlashcardsTab({ settings }: { settings: UserSettings }) {
         </div>
       )}
 
+      {/* Collections filter bar */}
+      {settings.authToken && (
+        <div style={{ marginBottom: '12px' }}>
+          <div style={{ fontSize: '12px', color: C.subtext, marginBottom: '6px' }}>
+            Saving to: <strong style={{ color: C.text }}>{settings.activeCollectionName || 'No deck (unsorted)'}</strong>
+            <span style={{ marginLeft: '6px', color: C.surface2 }}>— change in General tab</span>
+          </div>
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '8px' }}>
+            <button
+              onClick={() => setViewFilter(null)}
+              style={{
+                background: viewFilter === null ? C.blue : C.surface0,
+                color: viewFilter === null ? C.base : C.text,
+                border: `1px solid ${viewFilter === null ? C.blue : C.surface1}`,
+                borderRadius: '12px',
+                padding: '4px 10px',
+                fontSize: '12px',
+                cursor: 'pointer',
+              }}
+            >
+              All
+            </button>
+            {collections.map(coll => (
+              <div key={coll.collectionId} style={{ display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
+                <button
+                  onClick={() => setViewFilter(coll.collectionId)}
+                  style={{
+                    background: viewFilter === coll.collectionId ? C.blue : C.surface0,
+                    color: viewFilter === coll.collectionId ? C.base : C.text,
+                    border: `1px solid ${viewFilter === coll.collectionId ? C.blue : C.surface1}`,
+                    borderRadius: '12px 0 0 12px',
+                    padding: '4px 8px 4px 10px',
+                    fontSize: '12px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {coll.name}
+                </button>
+                <button
+                  onClick={() => handleDeleteCollection(coll.collectionId)}
+                  style={{
+                    background: viewFilter === coll.collectionId ? C.blue : C.surface0,
+                    color: viewFilter === coll.collectionId ? C.base : C.red,
+                    border: `1px solid ${viewFilter === coll.collectionId ? C.blue : C.surface1}`,
+                    borderLeft: 'none',
+                    borderRadius: '0 12px 12px 0',
+                    padding: '4px 6px',
+                    fontSize: '10px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <input
+              type="text"
+              value={newCollName}
+              onChange={e => setNewCollName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleCreateCollection()}
+              placeholder="New collection name…"
+              style={{
+                flex: 1,
+                background: C.surface0,
+                border: `1px solid ${C.surface1}`,
+                borderRadius: '4px',
+                padding: '4px 8px',
+                fontSize: '12px',
+                color: C.text,
+                outline: 'none',
+              }}
+            />
+            <button
+              onClick={handleCreateCollection}
+              disabled={creatingColl || !newCollName.trim()}
+              style={{
+                background: C.green,
+                color: C.base,
+                border: 'none',
+                borderRadius: '4px',
+                padding: '4px 10px',
+                fontSize: '12px',
+                cursor: 'pointer',
+                opacity: creatingColl || !newCollName.trim() ? 0.5 : 1,
+              }}
+            >
+              + Create
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Toolbar */}
       <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', alignItems: 'center' }}>
         <span style={{ fontSize: '13px', color: C.subtext, flex: 1 }}>
-          {cards.length} cards · {selected.size} selected
+          {filteredCards.length} cards · {selected.size} selected
           {!error && <span style={{ color: C.green, marginLeft: '6px' }}>● Live</span>}
         </span>
         <button onClick={() => fetchCards()} style={{ background: C.surface0, border: `1px solid ${C.surface1}`, borderRadius: '4px', padding: '4px 8px', color: C.text, cursor: 'pointer', fontSize: '12px' }}>
@@ -608,14 +876,14 @@ function FlashcardsTab({ settings }: { settings: UserSettings }) {
         </button>
       </div>
 
-      {cards.length === 0 ? (
+      {filteredCards.length === 0 ? (
         <div style={{
           textAlign: 'center',
           padding: '40px 20px',
           color: C.subtext,
           fontSize: '13px',
         }}>
-          No flashcards yet.
+          {viewFilter !== null ? 'No cards in this collection.' : 'No flashcards yet.'}
           <br />
           <span style={{ fontSize: '12px' }}>
             Click the card icon on a word popup to create one.
@@ -623,7 +891,7 @@ function FlashcardsTab({ settings }: { settings: UserSettings }) {
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          {cards.map(card => (
+          {filteredCards.map(card => (
             <div
               key={card.id}
               style={{
@@ -645,7 +913,6 @@ function FlashcardsTab({ settings }: { settings: UserSettings }) {
                 onClick={e => e.stopPropagation()}
                 style={{ marginTop: '2px', flexShrink: 0 }}
               />
-              {/* Media column: screenshot + audio button stacked */}
               {(card.screenshotDataUrl || card.audioUrl) && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flexShrink: 0 }}>
                   {card.screenshotDataUrl && (
@@ -935,7 +1202,7 @@ export function OptionsApp() {
         <div style={{ maxWidth: '700px', margin: '0 auto', padding: '24px' }}>
           {activeTab === 'general' && <GeneralTab settings={settings} onUpdate={handleUpdate} />}
           {activeTab === 'words' && <WordBrowserTab settings={settings} />}
-          {activeTab === 'flashcards' && <FlashcardsTab settings={settings} />}
+          {activeTab === 'flashcards' && <FlashcardsTab settings={settings} onUpdate={handleUpdate} />}
           {activeTab === 'video' && <VideoTab settings={settings} onUpdate={handleUpdate} />}
         </div>
       </div>

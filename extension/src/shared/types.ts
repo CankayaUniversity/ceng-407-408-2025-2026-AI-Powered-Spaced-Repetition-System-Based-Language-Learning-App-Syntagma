@@ -50,6 +50,7 @@ export interface FlashcardPayload {
   createdAt: number;
   deckName: string;
   tags: string[];
+  collectionId?: number | null;
 }
 
 export interface UserSettings {
@@ -97,6 +98,8 @@ export interface UserSettings {
   authToken: string | null;
   authEmail: string | null;
   authUserId: string | null;
+  activeCollectionId: number | null;
+  activeCollectionName: string | null;
 }
 
 export interface SubtitleCue {

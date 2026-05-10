@@ -45,6 +45,8 @@ export const DEFAULT_SETTINGS: UserSettings = {
   authToken: null,
   authEmail: null,
   authUserId: null,
+  activeCollectionId: null,
+  activeCollectionName: null,
 };
 
 export function getAuthHeaders(settings: UserSettings): Record<string, string> {
@@ -65,12 +67,25 @@ export async function setSettings(patch: Partial<UserSettings>): Promise<void> {
   await chrome.storage.local.set({ userSettings: { ...current, ...patch } });
 }
 
+export function userScopedKey(base: string, userId: string | null | undefined): string {
+  return userId ? `${base}_${userId}` : base;
+}
+
+async function resolveUserId(): Promise<string | null> {
+  const result = await chrome.storage.local.get('userSettings');
+  return (result.userSettings as UserSettings | undefined)?.authUserId ?? null;
+}
+
 export async function getLexemes(): Promise<Record<string, LexemeEntry>> {
-  const result = await chrome.storage.local.get('lexemes');
-  return (result.lexemes ?? {}) as Record<string, LexemeEntry>;
+  const userId = await resolveUserId();
+  const key = userScopedKey('lexemes', userId);
+  const result = await chrome.storage.local.get(key);
+  return (result[key] ?? {}) as Record<string, LexemeEntry>;
 }
 
 export async function setLexemeStatus(lemma: string, status: WordStatus): Promise<void> {
+  const userId = await resolveUserId();
+  const key = userScopedKey('lexemes', userId);
   const lexemes = await getLexemes();
   const now = Date.now();
   if (lexemes[lemma]) {
@@ -88,10 +103,12 @@ export async function setLexemeStatus(lemma: string, status: WordStatus): Promis
       createdAt: now,
     };
   }
-  await chrome.storage.local.set({ lexemes });
+  await chrome.storage.local.set({ [key]: lexemes });
 }
 
 export async function bulkSetLexemeStatus(lemmas: string[], status: WordStatus): Promise<void> {
+  const userId = await resolveUserId();
+  const key = userScopedKey('lexemes', userId);
   const lexemes = await getLexemes();
   const now = Date.now();
   for (const lemma of lemmas) {
@@ -111,10 +128,12 @@ export async function bulkSetLexemeStatus(lemmas: string[], status: WordStatus):
       };
     }
   }
-  await chrome.storage.local.set({ lexemes });
+  await chrome.storage.local.set({ [key]: lexemes });
 }
 
 export async function updateLexemeEntry(lemma: string, patch: Partial<LexemeEntry>): Promise<void> {
+  const userId = await resolveUserId();
+  const key = userScopedKey('lexemes', userId);
   const lexemes = await getLexemes();
   const now = Date.now();
   if (lexemes[lemma]) {
@@ -132,18 +151,22 @@ export async function updateLexemeEntry(lemma: string, patch: Partial<LexemeEntr
       ...patch,
     };
   }
-  await chrome.storage.local.set({ lexemes });
+  await chrome.storage.local.set({ [key]: lexemes });
 }
 
 export async function getFlashcards(): Promise<FlashcardPayload[]> {
-  const result = await chrome.storage.local.get('flashcards');
-  return (result.flashcards ?? []) as FlashcardPayload[];
+  const userId = await resolveUserId();
+  const key = userScopedKey('flashcards', userId);
+  const result = await chrome.storage.local.get(key);
+  return (result[key] ?? []) as FlashcardPayload[];
 }
 
 export async function saveFlashcard(card: FlashcardPayload): Promise<void> {
+  const userId = await resolveUserId();
+  const key = userScopedKey('flashcards', userId);
   const cards = await getFlashcards();
   cards.push(card);
-  await chrome.storage.local.set({ flashcards: cards });
+  await chrome.storage.local.set({ [key]: cards });
 }
 
 export async function getComprehensionStats(pageUrl: string): Promise<ComprehensionStats | null> {

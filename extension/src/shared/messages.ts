@@ -19,6 +19,9 @@ export type ExtensionMessage =
   | { type: 'CREATE_FLASHCARD'; payload: FlashcardPayload }
   | { type: 'FETCH_FLASHCARDS'; payload: null }
   | { type: 'DELETE_FLASHCARD'; payload: { id: string } }
+  | { type: 'FETCH_COLLECTIONS'; payload: null }
+  | { type: 'CREATE_COLLECTION'; payload: { name: string } }
+  | { type: 'DELETE_COLLECTION'; payload: { id: number } }
   | { type: 'EXPORT_TO_ANKI'; payload: { cardIds: string[] } }
   | { type: 'GET_SETTINGS'; payload: null }
   | { type: 'SET_SETTINGS'; payload: Partial<UserSettings> }
