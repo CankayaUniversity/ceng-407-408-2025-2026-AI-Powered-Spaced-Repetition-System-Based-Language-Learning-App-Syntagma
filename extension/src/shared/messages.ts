@@ -25,9 +25,10 @@ export type ExtensionMessage =
   | { type: 'OPEN_OPTIONS_PAGE'; payload: null }
   | { type: 'OPEN_CARD_CREATOR'; payload: { word: string; sentence: string; sourceUrl: string; sourceTitle: string } }
   | { type: 'LOGIN'; payload: { email: string; password: string } }
-  | { type: 'REGISTER'; payload: { email: string; password: string } }
+  | { type: 'REGISTER'; payload: { email: string; password: string; learnerLevel: LearnerLevel } }
   | { type: 'LOGOUT'; payload: null }
   | { type: 'OPEN_AUTH_PAGE'; payload: null }
+  | { type: 'OPEN_READER'; payload: null }
   | { type: 'GET_TAB_CAPTURE_STREAM_ID'; payload: null }
   | { type: 'CAPTURE_TAB_SCREENSHOT'; payload: null }
   | { type: 'UPLOAD_SENTENCE_AUDIO'; payload: { flashcardId: number; audioDataUrl: string; mimeType: string; sentence: string; videoUrl: string } };

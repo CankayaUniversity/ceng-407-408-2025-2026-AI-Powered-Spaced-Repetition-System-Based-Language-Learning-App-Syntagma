@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { sendMessage } from '../shared/messages';
+import type { LearnerLevel } from '../shared/types';
 
 const C = {
   base:     '#F5F1E9',
@@ -16,11 +17,20 @@ const C = {
 
 type View = 'login' | 'register';
 
+const LEVELS: Array<{ value: LearnerLevel; label: string }> = [
+  { value: 'beginner',           label: 'A1 : Beginner' },
+  { value: 'elementary',         label: 'A2 : Elementary' },
+  { value: 'intermediate',       label: 'B1 : Intermediate' },
+  { value: 'upper-intermediate', label: 'B2 : Upper Intermediate' },
+  { value: 'advanced',           label: 'C1/C2 : Advanced' },
+];
+
 export function AuthApp() {
   const [view, setView] = useState<View>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [learnerLevel, setLearnerLevel] = useState<LearnerLevel>('intermediate');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -42,9 +52,13 @@ export function AuthApp() {
     }
     setLoading(true);
     try {
+      const payload = view === 'login' 
+        ? { email, password }
+        : { email, password, learnerLevel };
+
       const result = await sendMessage<{ ok: boolean; email?: string; error?: string }>({
         type: view === 'login' ? 'LOGIN' : 'REGISTER',
-        payload: { email, password },
+        payload: payload as any,
       });
       if (result.ok) {
         setSuccess(true);
@@ -64,6 +78,7 @@ export function AuthApp() {
     body { background: ${C.base}; }
     input::placeholder { color: ${C.surface2}; }
     input:focus { border-color: ${C.blue} !important; }
+    select:focus { border-color: ${C.blue} !important; }
   `;
 
   const inputStyle: React.CSSProperties = {
@@ -172,17 +187,39 @@ export function AuthApp() {
             />
 
             {view === 'register' && (
-              <input
-                type="password"
-                value={confirmPassword}
-                onChange={e => setConfirmPassword(e.target.value)}
-                placeholder="Confirm Password"
-                required
-                style={{
-                  ...inputStyle,
-                  borderColor: confirmPassword && confirmPassword !== password ? C.red : C.surface1,
-                }}
-              />
+              <>
+                <input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={e => setConfirmPassword(e.target.value)}
+                  placeholder="Confirm Password"
+                  required
+                  style={{
+                    ...inputStyle,
+                    borderColor: confirmPassword && confirmPassword !== password ? C.red : C.surface1,
+                  }}
+                />
+                
+                <div style={{ marginTop: '4px' }}>
+                  <label style={{ fontSize: '12px', fontWeight: 600, color: C.subtext, marginBottom: '6px', display: 'block' }}>
+                    What is your current English level?
+                  </label>
+                  <select
+                    value={learnerLevel}
+                    onChange={e => setLearnerLevel(e.target.value as LearnerLevel)}
+                    style={inputStyle}
+                  >
+                    {LEVELS.map(lvl => (
+                      <option key={lvl.value} value={lvl.value}>
+                        {lvl.label}
+                      </option>
+                    ))}
+                  </select>
+                  <div style={{ fontSize: '11px', color: C.subtext, marginTop: '4px', fontStyle: 'italic' }}>
+                    This helps us identify which words you already know.
+                  </div>
+                </div>
+              </>
             )}
 
             {error && (

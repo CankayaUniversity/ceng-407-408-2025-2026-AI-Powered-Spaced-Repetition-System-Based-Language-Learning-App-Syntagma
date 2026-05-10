@@ -173,6 +173,29 @@ export async function parsePage(
   return { tokens: allTokens, textNodes: textNodeMap };
 }
 
+export function tokenizeSubtitleTexts(
+  texts: string[],
+  lexemes: Record<string, { status: WordStatus }>,
+): Token[] {
+  const allTokens: Token[] = [];
+  for (const text of texts) {
+    const rawTokens = tokenizeText(text);
+    for (const raw of rawTokens) {
+      const lemma = lemmatize(raw.surface);
+      const freqEntry = lookupFrequency(lemma);
+      allTokens.push({
+        lemma,
+        surface: raw.surface,
+        frequencyRank: freqEntry?.rank,
+        frequencyBand: freqEntry ? getFrequencyBand(freqEntry.rank) : undefined,
+        zipfScore: freqEntry?.zipf,
+        status: (lexemes[lemma]?.status) ?? 'unknown',
+      });
+    }
+  }
+  return allTokens;
+}
+
 export function extractSentence(textNode: Text, wordOffset: number): string {
   const fullText = getSentenceContext(textNode);
   // Find sentence boundaries around the word position

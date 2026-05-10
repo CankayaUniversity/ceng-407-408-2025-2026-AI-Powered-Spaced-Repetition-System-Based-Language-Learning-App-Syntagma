@@ -16,6 +16,7 @@ import {
 } from '../shared/backend-ai';
 import type { FlashcardPayload, LexemeEntry } from '../shared/types';
 import { populateDictionary, lookupTranslation } from './dictionary-db';
+import { applyKnownWordsForLevel } from '../shared/cefr-intake';
 
 // Initialize the massive IndexedDB dictionary
 populateDictionary().catch(console.error);
@@ -346,6 +347,12 @@ onMessage(async (msg, sender) => {
             payload: msg.payload,
           }).catch(() => {}); // Ignore tabs without content script
         }
+      }
+      // When learner level changes, mark CEFR words as known
+      if (msg.payload.learnerLevel) {
+        applyKnownWordsForLevel(msg.payload.learnerLevel).catch(err =>
+          console.warn('[Syntagma] CEFR intake error:', err)
+        );
       }
       return { ok: true };
     }
@@ -687,7 +694,7 @@ onMessage(async (msg, sender) => {
     }
 
     case 'REGISTER': {
-      const { email, password } = msg.payload;
+      const { email, password, learnerLevel } = msg.payload;
       const s = await getSettings();
       const apiBase = s.apiBaseUrl || BACKEND_URL;
       let res: Response;
@@ -718,7 +725,11 @@ onMessage(async (msg, sender) => {
           const token: string = loginJson.data?.token;
           const userEmail: string = loginJson.data?.email ?? email;
           const userId: string = String(loginJson.data?.userId ?? '');
-          await setSettings({ authToken: token, authEmail: userEmail, authUserId: userId });
+          await setSettings({ authToken: token, authEmail: userEmail, authUserId: userId, learnerLevel });
+          // Apply CEFR known words for the newly set learner level
+          applyKnownWordsForLevel(learnerLevel).catch(err =>
+            console.warn('[Syntagma] CEFR intake after register error:', err)
+          );
           return { ok: true, email: userEmail };
         }
       } catch { /* ignore login error after successful register */ }
@@ -745,6 +756,11 @@ onMessage(async (msg, sender) => {
         height: 520,
         focused: true,
       });
+      return { ok: true };
+    }
+
+    case 'OPEN_READER': {
+      chrome.tabs.create({ url: chrome.runtime.getURL('reader.html') });
       return { ok: true };
     }
 
