@@ -73,6 +73,11 @@ export function PopupPageApp() {
     window.close();
   };
 
+  const handleOpenReader = async () => {
+    await sendMessage({ type: 'OPEN_READER', payload: null });
+    window.close();
+  };
+
   const handleLogout = async () => {
     await sendMessage({ type: 'LOGOUT', payload: null });
     setSettings(s => ({ ...s, authToken: null, authEmail: null }));
@@ -164,6 +169,19 @@ export function PopupPageApp() {
               }}
             >
               Activate  <span style={{ fontWeight: 400, opacity: 0.7, fontSize: '11px' }}>Alt+A</span>
+            </button>
+
+            <button
+              onClick={handleOpenReader}
+              style={{
+                width: '100%', background: 'transparent',
+                color: C.subtext, border: `1px solid ${C.surface1}`,
+                borderRadius: '6px', padding: '6px',
+                cursor: 'pointer', fontSize: '11px',
+                transition: 'all 0.15s', marginBottom: '6px',
+              }}
+            >
+              EPUB Reader
             </button>
 
             <button

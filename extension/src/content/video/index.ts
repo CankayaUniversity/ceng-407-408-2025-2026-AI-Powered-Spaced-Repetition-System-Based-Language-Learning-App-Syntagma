@@ -135,6 +135,7 @@ export interface VideoModeParams {
   lexemes: Record<string, LexemeEntry>;
   onStatusChange: (lemma: string, status: WordStatus) => void;
   onSettingsChange: (patch: Partial<UserSettings>) => void;
+  onCuesAvailable?: (cues: SubtitleCue[]) => void;
 }
 
 export async function initVideoMode(params: VideoModeParams): Promise<void> {
@@ -212,6 +213,7 @@ export async function initVideoMode(params: VideoModeParams): Promise<void> {
       onSettingsChange: params.onSettingsChange,
       onCuesChange: (cues: SubtitleCue[]) => {
         renderSidebar(video, cues, params);
+        params.onCuesAvailable?.(cues);
       },
     })
   );

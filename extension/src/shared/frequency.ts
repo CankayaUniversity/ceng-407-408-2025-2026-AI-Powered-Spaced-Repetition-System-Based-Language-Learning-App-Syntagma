@@ -2,7 +2,7 @@ import type { FrequencyBand } from './types';
 
 interface FreqEntry {
   rank: number;
-  zipf: number;
+  zipf?: number;
 }
 
 let freqTable: Record<string, FreqEntry> | null = null;

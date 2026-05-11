@@ -2,7 +2,7 @@ import { getSettings } from '../shared/storage';
 import { sendMessage } from '../shared/messages';
 import { initFrequencyTable } from '../shared/frequency';
 import type { UserSettings, LexemeEntry, WordStatus, Token, FlashcardPayload } from '../shared/types';
-import { parsePage } from './parser';
+import { parsePage, tokenizeSubtitleTexts } from './parser';
 import {
   injectOverlays,
   removeOverlays,
@@ -157,6 +157,12 @@ async function init() {
         onStatusChange: handleStatusChange,
         onSettingsChange: (patch) => {
           if (currentSettings) currentSettings = { ...currentSettings, ...patch };
+        },
+        onCuesAvailable: (cues) => {
+          const texts = cues.map(c => c.text);
+          currentTokens = tokenizeSubtitleTexts(texts, currentLexemes);
+          isParsed = true;
+          refreshHeader();
         },
       }).catch(console.error);
     }
@@ -552,6 +558,12 @@ function reinitVideoMode() {
     onStatusChange: handleStatusChange,
     onSettingsChange: (patch) => {
       if (currentSettings) currentSettings = { ...currentSettings, ...patch };
+    },
+    onCuesAvailable: (cues) => {
+      const texts = cues.map(c => c.text);
+      currentTokens = tokenizeSubtitleTexts(texts, currentLexemes);
+      isParsed = true;
+      refreshHeader();
     },
   }).catch(console.error);
 }
