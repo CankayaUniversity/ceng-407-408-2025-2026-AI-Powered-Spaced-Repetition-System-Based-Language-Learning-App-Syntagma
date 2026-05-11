@@ -1,15 +1,19 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useTheme } from '../shared/theme';
 
 export default function SessionSummaryScreen({ route, navigation }) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const reviewedCount = route.params?.reviewedCount ?? 0;
+  const targetCount = route.params?.targetCount ?? reviewedCount;
 
   return (
     <SafeAreaView style={styles.screen}>
       <View style={styles.card}>
         <Text style={styles.title}>Session Summary</Text>
-        <Text style={styles.subtitle}>You reviewed {reviewedCount} cards.</Text>
+        <Text style={styles.subtitle}>{`You reviewed ${reviewedCount} of ${targetCount} cards.`}</Text>
 
         <Pressable style={styles.button} onPress={() => navigation.navigate('MainTabs')}>
           <Text style={styles.buttonText}>Back to Library</Text>
@@ -19,10 +23,10 @@ export default function SessionSummaryScreen({ route, navigation }) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors) => StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: '#F2EDE4',
+    backgroundColor: colors.background,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 16,
@@ -30,31 +34,31 @@ const styles = StyleSheet.create({
   card: {
     width: '100%',
     borderRadius: 24,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.card,
     padding: 24,
     alignItems: 'center',
   },
   title: {
-    color: '#6B4226',
+    color: colors.accent,
     fontSize: 30,
     fontFamily: 'PlayfairDisplay_700Bold',
     marginBottom: 10,
   },
   subtitle: {
-    color: '#5A4A3A',
+    color: colors.textSecondary,
     fontSize: 16,
     fontFamily: 'DMSans_400Regular',
     marginBottom: 4,
   },
   button: {
     marginTop: 18,
-    backgroundColor: '#C49A6C',
+    backgroundColor: colors.accentStrong,
     borderRadius: 20,
     paddingHorizontal: 22,
     paddingVertical: 14,
   },
   buttonText: {
-    color: '#FFFFFF',
+    color: colors.surface,
     fontSize: 15,
     fontFamily: 'DMSans_600SemiBold',
   },

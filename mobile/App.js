@@ -2,6 +2,7 @@ import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useFonts } from 'expo-font';
+import * as Notifications from 'expo-notifications';
 import { DMSans_400Regular, DMSans_600SemiBold } from '@expo-google-fonts/dm-sans';
 import {
   PlayfairDisplay_700Bold,
@@ -11,8 +12,18 @@ import {
 import LoginScreen from './src/screens/LoginScreen';
 import MainTabs from './src/navigation/MainTabs';
 import SessionSummaryScreen from './src/screens/SessionSummaryScreen';
+import { ThemeProvider } from './src/shared/theme';
 
 const AppStack = createNativeStackNavigator();
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
 
 export default function App() {
   const [fontsLoaded] = useFonts({
@@ -27,12 +38,14 @@ export default function App() {
   }
 
   return (
-    <NavigationContainer>
-      <AppStack.Navigator screenOptions={{ headerShown: false }}>
-        <AppStack.Screen name="Login" component={LoginScreen} />
-        <AppStack.Screen name="MainTabs" component={MainTabs} />
-        <AppStack.Screen name="SessionSummaryScreen" component={SessionSummaryScreen} />
-      </AppStack.Navigator>
-    </NavigationContainer>
+    <ThemeProvider>
+      <NavigationContainer>
+        <AppStack.Navigator screenOptions={{ headerShown: false }}>
+          <AppStack.Screen name="Login" component={LoginScreen} />
+          <AppStack.Screen name="MainTabs" component={MainTabs} />
+          <AppStack.Screen name="SessionSummaryScreen" component={SessionSummaryScreen} />
+        </AppStack.Navigator>
+      </NavigationContainer>
+    </ThemeProvider>
   );
 }

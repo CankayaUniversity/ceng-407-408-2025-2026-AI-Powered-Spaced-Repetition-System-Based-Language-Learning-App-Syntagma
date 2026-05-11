@@ -1,14 +1,15 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 
 import HomePage from '../screens/HomePage';
-import AddLanguageScreen from '../screens/AddLanguageScreen';
 import FlashcardReviewScreen from '../screens/FlashcardReviewScreen';
+import FlashcardLibraryScreen from '../screens/FlashcardLibraryScreen';
 import OverviewScreen from '../screens/OverviewScreen';
 import SettingsScreen from '../screens/SettingsScreen';
+import { useTheme } from '../shared/theme';
 
 const Tab = createBottomTabNavigator();
 const HomeStackNav = createNativeStackNavigator();
@@ -17,19 +18,18 @@ function HomeStack() {
   return (
     <HomeStackNav.Navigator screenOptions={{ headerShown: false }}>
       <HomeStackNav.Screen name="HomeMain" component={HomePage} />
-      <HomeStackNav.Screen name="AddLanguage" component={AddLanguageScreen} />
       <HomeStackNav.Screen name="FlashcardReview" component={FlashcardReviewScreen} />
     </HomeStackNav.Navigator>
   );
 }
 
-function TabIcon({ focused, icon }) {
-  const tintColor = '#3E3A34';
+function TabIcon({ focused, icon, colors, styles }) {
+  const tintColor = colors.textPrimary;
 
   if (focused) {
     return (
       <View style={styles.activeTabWrap}>
-        <View style={styles.activeTabIconWrap}>
+        <View style={[styles.activeTabIconWrap, { backgroundColor: colors.accentStrong }]}>
           <Ionicons name={icon} size={22} color={tintColor} />
         </View>
       </View>
@@ -44,6 +44,9 @@ function TabIcon({ focused, icon }) {
 }
 
 export default function MainTabs() {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -52,15 +55,15 @@ export default function MainTabs() {
         tabBarStyle: styles.tabBar,
         tabBarIcon: ({ focused }) => {
           if (route.name === 'Sanctuary') {
-            return <TabIcon focused={focused} icon="home-outline" />;
+            return <TabIcon focused={focused} icon="home-outline" colors={colors} styles={styles} />;
           }
           if (route.name === 'Library') {
-            return <TabIcon focused={focused} icon="book-outline" />;
+            return <TabIcon focused={focused} icon="book-outline" colors={colors} styles={styles} />;
           }
           if (route.name === 'Progress') {
-            return <TabIcon focused={focused} icon="bar-chart-outline" />;
+            return <TabIcon focused={focused} icon="bar-chart-outline" colors={colors} styles={styles} />;
           }
-          return <TabIcon focused={focused} icon="person-outline" />;
+          return <TabIcon focused={focused} icon="person-outline" colors={colors} styles={styles} />;
         },
       })}
     >
@@ -71,62 +74,8 @@ export default function MainTabs() {
       />
       <Tab.Screen
         name="Library"
-        component={FlashcardReviewScreen}
+        component={FlashcardLibraryScreen}
         listeners={{ tabPress: () => {} }}
-        initialParams={{
-          cards: [
-            {
-              word: 'match',
-              phonetic: '/mætʃ/',
-              sentence: 'The colors should match the style of the page.',
-              translation: 'eşleşmek',
-              sentenceTranslation: 'Renkler sayfanın stiliyle eşleşmeli.',
-              englishPronunciationUri:
-                'https://ssl.gstatic.com/dictionary/static/sounds/20200429/match--_gb_1.mp3',
-              turkishPronunciationUri:
-                'https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=tr&q=e%C5%9Fle%C5%9Fmek',
-            },
-            {
-              word: 'focus',
-              phonetic: '/ˈfoʊ.kəs/',
-              sentence: 'Try to focus on one sentence at a time.',
-              translation: 'odaklanmak',
-              sentenceTranslation: 'Bir seferde tek bir cümleye odaklanmaya çalış.',
-              englishPronunciationUri:
-                'https://ssl.gstatic.com/dictionary/static/sounds/20200429/focus--_gb_1.mp3',
-              turkishPronunciationUri:
-                'https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=tr&q=odaklanmak',
-            },
-            {
-              word: 'script',
-              phonetic: '/ˈskrɪpt/',
-              sentence: 'He is writing a script for a new movie.',
-              translation: 'senaryo',
-              sentenceTranslation: 'Yeni bir film için senaryo yazıyor.',
-              englishPronunciationUri:
-                'https://ssl.gstatic.com/dictionary/static/sounds/20200429/script--_gb_1.mp3',
-              turkishPronunciationUri:
-                'https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=tr&q=senaryo',
-              imageUri:
-                'https://images.unsplash.com/photo-1473448912268-2022ce9509d8?auto=format&fit=crop&w=1200&q=80',
-            },
-            {
-              word: 'adapt',
-              phonetic: '/əˈdæpt/',
-              sentence: 'You can adapt your tone to your audience.',
-              translation: 'uyarlamak',
-              sentenceTranslation: 'Tonunu dinleyicine göre uyarlayabilirsin.',
-            },
-            {
-              word: 'clarify',
-              phonetic: '/ˈkler.ə.faɪ/',
-              sentence: 'Please clarify the meaning with one example.',
-              translation: 'açıklığa kavuşturmak',
-              sentenceTranslation: 'Lütfen anlamı bir örnekle açıklığa kavuştur.',
-            },
-          ],
-          startIndex: 0,
-        }}
       />
       <Tab.Screen
         name="Progress"
@@ -142,11 +91,11 @@ export default function MainTabs() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors) => StyleSheet.create({
   tabBar: {
-    backgroundColor: '#F5F0EA',
+    backgroundColor: colors.background,
     borderTopWidth: 0.5,
-    borderTopColor: '#E5DACD',
+    borderTopColor: colors.border,
     elevation: 0,
     shadowOpacity: 0,
     height: 92,
@@ -161,7 +110,6 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: '#F2A96E',
     alignItems: 'center',
     justifyContent: 'center',
   },
