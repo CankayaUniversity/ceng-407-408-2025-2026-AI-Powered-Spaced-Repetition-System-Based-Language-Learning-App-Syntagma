@@ -12,7 +12,7 @@ const C = {
   subtext:  'var(--syn-subtext, #877666)',
   blue:     'var(--syn-blue, #98C1D9)',
   red:      'var(--syn-red, #D97762)',
-  amber:    'var(--syn-amber, #A07855)',
+  amber:    'var(--syn-amber, #E9C46A)',
   green:    'var(--syn-green, #A8B693)',
 };
 

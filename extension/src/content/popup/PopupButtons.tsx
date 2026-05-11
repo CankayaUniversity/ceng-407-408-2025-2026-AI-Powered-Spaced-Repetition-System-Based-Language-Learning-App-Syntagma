@@ -8,7 +8,7 @@ const C = {
   subtext: '#877666',
   blue: '#98C1D9',
   red: '#D97762',
-  amber: '#A07855',
+  amber: '#E9C46A',
   green: '#A8B693',
   mauve: '#A07855',
   base: '#F5F1E9',
@@ -81,7 +81,7 @@ export function PopupButtons({ word, audioUrl, onAIAction, aiLoading }: PopupBut
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
       {/* Audio Icon */}
-      <button onClick={handleAudio} style={btnStyle(false, C.mauve)} title="Pronounce word">
+      <button onClick={handleAudio} style={btnStyle(false, C.green)} title="Pronounce word">
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <polygon points="5 3 19 12 5 21 5 3"></polygon>
         </svg>

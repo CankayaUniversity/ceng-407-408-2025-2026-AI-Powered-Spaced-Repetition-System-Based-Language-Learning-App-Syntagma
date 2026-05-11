@@ -11,7 +11,7 @@ const C = {
   blue: '#98C1D9',
   red: '#D97762',
   green: '#A8B693',
-  amber: '#A07855',
+  amber: '#E9C46A',
 };
 
 interface CardCreatorProps {

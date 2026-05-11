@@ -27,7 +27,7 @@ const LEVEL_MAP: Array<{ min: number; label: string; color: string }> = [
   { min: 96, label: 'Native',      color: '#A8B693' },
   { min: 81, label: 'Advanced',    color: '#98C1D9' },
   { min: 61, label: 'Proficient',  color: '#98C1D9' },
-  { min: 41, label: 'Ambitious',   color: '#A07855' },
+  { min: 41, label: 'Ambitious',   color: '#E9C46A' },
   { min: 21, label: 'Developing',  color: '#D97762' },
   { min: 0,  label: 'Beginner',    color: '#D97762' },
 ];

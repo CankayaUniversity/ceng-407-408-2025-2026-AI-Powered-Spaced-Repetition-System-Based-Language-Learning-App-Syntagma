@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import ePub, { Book, Rendition } from 'epubjs';
-import type { UserSettings, LexemeEntry, WordStatus, FlashcardPayload } from '../shared/types';
+import type { UserSettings, LexemeEntry, WordStatus, FlashcardPayload, Token } from '../shared/types';
 import type { AiResultData } from '../shared/backend-ai';
 import { DEFAULT_SETTINGS, userScopedKey } from '../shared/storage';
 import { sendMessage } from '../shared/messages';
 import { lookupFrequency, initFrequencyTable } from '../shared/frequency';
 import { lemmatize } from '../shared/lemmatizer';
+import { usePageAnalysis } from '../content/hooks/usePageAnalysis';
+import { MiniDonut, StatsPopup, StatsUIColors } from '../content/components/StatsUI';
 
 // ─── Colors (matching extension theme) ──────────────────────────────────────
 
@@ -15,18 +17,19 @@ interface Theme {
   surface: string;
   border: string;
   accent: string;
+  outerBg: string;
 }
 
 const THEMES: Record<string, Theme> = {
-  light: { bg: '#FFFFFF', text: '#333333', surface: '#F5F1E9', border: '#E2DACE', accent: '#98C1D9' },
-  sepia: { bg: '#F4EADB', text: '#5B4636', surface: '#EDE0CE', border: '#D4C4AD', accent: '#A07855' },
-  dark:  { bg: '#1E1E2E', text: '#CDD6F4', surface: '#313244', border: '#45475A', accent: '#89B4FA' },
+  light: { bg: '#FFFFFF', text: '#333333', surface: '#F5F1E9', border: '#E2DACE', accent: '#98C1D9', outerBg: '#FBF9F4' },
+  sepia: { bg: '#F4EADB', text: '#5B4636', surface: '#EDE0CE', border: '#D4C4AD', accent: '#E9C46A', outerBg: '#F3E8DA' },
+  dark:  { bg: '#1E1E2E', text: '#CDD6F4', surface: '#313244', border: '#45475A', accent: '#89B4FA', outerBg: '#3C3D52' },
 };
 
 const C = {
   blue: '#98C1D9',
   red: '#D97762',
-  amber: '#A07855',
+  amber: '#E9C46A',
   green: '#A8B693',
   mauve: '#A07855',
   subtext: '#877666',
@@ -109,9 +112,10 @@ function getUnderlineStyle(status: WordStatus): string {
   return color ? `2px solid ${color}` : '2px solid transparent';
 }
 
-function wrapWordsInElement(container: Document, lexemes: Record<string, LexemeEntry>, settings: UserSettings): void {
+function wrapWordsInElement(container: Document, lexemes: Record<string, LexemeEntry>, settings: UserSettings): Token[] {
   const walker = container.createTreeWalker(container.body, NodeFilter.SHOW_TEXT);
   const textNodes: Text[] = [];
+  const tokens: Token[] = [];
   let node: Text | null;
   while ((node = walker.nextNode() as Text | null)) {
     if (node.textContent && node.textContent.trim().length > 0) {
@@ -131,6 +135,10 @@ function wrapWordsInElement(container: Document, lexemes: Record<string, LexemeE
       if (/^[a-zA-Z]{2,}(?:[''][a-zA-Z]+)?$/.test(segment)) {
         const lemma = lemmatize(segment);
         const entry = lexemes[lemma];
+        const status = entry?.status ?? 'unknown';
+        
+        tokens.push({ surface: segment, lemma, status });
+        
         const span = container.createElement('span');
         span.textContent = segment;
         span.dataset.syntagmaWord = lemma;
@@ -153,6 +161,8 @@ function wrapWordsInElement(container: Document, lexemes: Record<string, LexemeE
 
     textNode.parentNode?.replaceChild(frag, textNode);
   }
+
+  return tokens;
 }
 
 function updateWordUnderlines(rendition: Rendition | null, lemma: string, status: WordStatus, settings: UserSettings): void {
@@ -185,7 +195,7 @@ const PC = {
   subtext: '#877666',
   blue: '#98C1D9',
   red: '#D97762',
-  amber: '#A07855',
+  amber: '#E9C46A',
   green: '#A8B693',
   mauve: '#A07855',
   overlay: 'rgba(245, 241, 233, 0.97)',
@@ -451,13 +461,14 @@ function ReaderWordPopup({
       });
       if (!result.ok) throw new Error(result.error || 'Server error');
       setCardSaved('done');
+      handleStatusChange('learning');
       setTimeout(() => setCardSaved('idle'), 2000);
     } catch (err) {
       setCardError((err as Error).message);
       setCardSaved('error');
       setTimeout(() => setCardSaved('idle'), 3000);
     }
-  }, [cardSaved, word, surface, sentence, lexeme, translations, bookId, bookTitle, settings]);
+  }, [cardSaved, word, surface, sentence, lexeme, translations, bookId, bookTitle, settings, handleStatusChange]);
 
   const currentCfg = STATUS_CONFIG.find(c => c.status === currentStatus) ?? STATUS_CONFIG[0];
   const popupW = 340;
@@ -574,7 +585,7 @@ function ReaderWordPopup({
           style={{
             width: '32px', height: '32px', borderRadius: '16px',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: cardSaved === 'done' ? PC.green : cardSaved === 'error' ? PC.red : PC.mauve,
+            background: cardSaved === 'done' ? PC.green : cardSaved === 'error' ? PC.red : PC.green,
             color: PC.base, border: 'none',
             cursor: cardSaved === 'idle' ? 'pointer' : 'default',
             padding: 0, transition: 'background 0.2s', flexShrink: 0,
@@ -617,7 +628,7 @@ function ReaderWordPopup({
 
       {/* Action buttons */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
-        <button onClick={() => speakWord(surface)} style={btnStyle(false, PC.mauve)} title="Pronounce word">
+        <button onClick={() => speakWord(surface)} style={btnStyle(false, PC.green)} title="Pronounce word">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3" /></svg>
         </button>
         <button onClick={() => handleAIAction('explain-word')} disabled={aiLoading !== null} style={btnStyle(aiLoading === 'explain-word', PC.blue)} title="AI: explain word">
@@ -703,9 +714,11 @@ function LibraryView({
     <div style={{ padding: '32px', maxWidth: '960px', margin: '0 auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ color: C.blue, fontWeight: 800, fontSize: '22px' }}>Syn</span>
-          <span style={{ color: C.amber, fontWeight: 800, fontSize: '22px' }}>tagma</span>
-          <span style={{ color: theme.text, fontSize: '14px', opacity: 0.6, marginLeft: '4px' }}>Reader</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1px' }}>
+            <span style={{ color: C.blue, fontWeight: 800, fontSize: '22px' }}>Syn</span>
+            <span style={{ color: C.amber, fontWeight: 800, fontSize: '22px' }}>tagma</span>
+          </div>
+          <span style={{ color: theme.text, fontSize: '14px', opacity: 0.6 }}>Reader</span>
         </div>
         <button
           onClick={onImport}
@@ -862,6 +875,8 @@ function ReaderView({
   const bookRef = useRef<Book | null>(null);
   const [toc, setToc] = useState<TocItem[]>([]);
   const [showToc, setShowToc] = useState(false);
+  const [showStats, setShowStats] = useState(false);
+  const [chapterTokens, setChapterTokens] = useState<Token[]>([]);
   const [currentChapter, setCurrentChapter] = useState('');
   const [progress, setProgress] = useState(bookMeta.progress);
   const [fontSize, setFontSize] = useState(settings.readerDefaultFontSize);
@@ -938,7 +953,7 @@ function ReaderView({
         width: '100%',
         height: '100%',
         spread: 'none',
-        flow: 'scrolled-doc',
+        flow: 'paginated',
       });
       renditionRef.current = rendition;
 
@@ -963,7 +978,7 @@ function ReaderView({
           'transition': 'background-color 0.1s, border-color 0.1s !important',
         },
         'span[data-syntagma-word]:hover': {
-          'background-color': 'rgba(160, 120, 85, 0.15) !important',
+          'background-color': 'rgba(233, 196, 106, 0.15) !important',
         }
       });
 
@@ -973,7 +988,8 @@ function ReaderView({
         const doc = contents.document as Document;
         // Inject a small style block to handle the dynamic status colors if needed,
         // though we also set them directly in wrapWordsInElement
-        wrapWordsInElement(doc, lexemesRef.current, settingsRef.current);
+        const tokens = wrapWordsInElement(doc, lexemesRef.current, settingsRef.current);
+        setChapterTokens(tokens);
       });
 
       // Word click handling
@@ -1126,12 +1142,19 @@ function ReaderView({
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  const analysis = usePageAnalysis(chapterTokens, lexemes);
+  const pct = analysis.comprehensionScore;
+  const scoreColor = pct >= 90 ? StatsUIColors.green : pct >= 70 ? StatsUIColors.amber : StatsUIColors.red;
+  
+  const statsRef = useRef<HTMLButtonElement>(null);
+  const statsAnchorLeft = statsRef.current ? statsRef.current.getBoundingClientRect().left : 80;
+
   return (
     <div style={{
       display: 'flex',
       flexDirection: 'column',
       height: '100vh',
-      background: theme.bg,
+      background: theme.outerBg,
       color: theme.text,
       fontFamily: 'system-ui, sans-serif',
     }}>
@@ -1159,6 +1182,36 @@ function ReaderView({
         }}>
           TOC
         </button>
+
+        <button
+          ref={statsRef}
+          onClick={() => setShowStats(v => !v)}
+          title="Chapter analysis"
+          style={{
+            background: showStats ? theme.border : 'transparent',
+            border: `1px solid ${theme.border}`,
+            borderRadius: '6px',
+            display: 'flex', alignItems: 'center', gap: '6px',
+            padding: '2px 8px', cursor: 'pointer',
+            transition: 'all 0.15s', flexShrink: 0,
+          }}
+        >
+          <MiniDonut
+            known={analysis.counts.known}
+            learning={analysis.counts.learning}
+            unknown={analysis.counts.unknown}
+            total={analysis.counts.total}
+          />
+          {pct > 0 ? (
+            <span style={{ fontWeight: 700, fontSize: '13px', color: scoreColor }}>
+              {pct}%
+            </span>
+          ) : (
+            <span style={{ fontSize: '12px', color: theme.text, opacity: 0.5 }}>
+              —
+            </span>
+          )}
+        </button>
         <div style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '13px', opacity: 0.7 }}>
           {currentChapter || bookMeta.title}
         </div>
@@ -1180,10 +1233,13 @@ function ReaderView({
         {/* TOC sidebar */}
         {showToc && (
           <div style={{
+            position: 'absolute',
+            top: 0, left: 0, bottom: 0,
             width: '280px',
-            flexShrink: 0,
+            zIndex: 10,
             background: theme.surface,
             borderRight: `1px solid ${theme.border}`,
+            boxShadow: '4px 0 16px rgba(0,0,0,0.1)',
             overflowY: 'auto',
             padding: '12px',
           }}>
@@ -1230,25 +1286,38 @@ function ReaderView({
         )}
 
         {/* Book content */}
-        <div style={{ flex: 1, overflow: 'hidden', position: 'relative', display: 'flex', justifyContent: 'center' }}>
-          <div ref={viewerRef} style={{ width: '100%', maxWidth: '100%', height: '100%' }} />
-
-          {/* Navigation arrows */}
-          <button onClick={goPrev} style={{
-            position: 'absolute', left: 0, top: 0, bottom: 0, width: '40px',
-            background: 'transparent', border: 'none', cursor: 'pointer',
-            color: theme.text, opacity: 0.15, fontSize: '24px',
-          }} onMouseEnter={e => (e.currentTarget.style.opacity = '0.5')} onMouseLeave={e => (e.currentTarget.style.opacity = '0.15')}>
-            ‹
-          </button>
-          <button onClick={goNext} style={{
-            position: 'absolute', right: 0, top: 0, bottom: 0, width: '40px',
-            background: 'transparent', border: 'none', cursor: 'pointer',
-            color: theme.text, opacity: 0.15, fontSize: '24px',
-          }} onMouseEnter={e => (e.currentTarget.style.opacity = '0.5')} onMouseLeave={e => (e.currentTarget.style.opacity = '0.15')}>
-            ›
-          </button>
+        <div style={{ flex: 1, overflow: 'hidden', position: 'relative', display: 'flex', justifyContent: 'center', padding: '16px 0' }}>
+          <div ref={viewerRef} style={{ 
+            width: '50%', minWidth: '400px', maxWidth: '800px', height: '100%',
+            background: theme.surface,
+            boxShadow: '0 4px 16px rgba(0,0,0,0.08)',
+            borderRadius: '4px',
+          }} />
         </div>
+      </div>
+
+      {/* Bottom controls */}
+      <div style={{
+        display: 'flex',
+        justifyContent: 'center',
+        gap: '16px',
+        padding: '12px',
+        background: theme.outerBg,
+      }}>
+        <button onClick={goPrev} style={{
+          background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: '6px',
+          color: theme.text, cursor: 'pointer', padding: '2px 32px', fontSize: '24px', fontWeight: 600,
+          boxShadow: '0 1px 3px rgba(0,0,0,0.05)', transition: 'background 0.2s',
+        }} onMouseEnter={e => (e.currentTarget.style.background = theme.border)} onMouseLeave={e => (e.currentTarget.style.background = theme.surface)}>
+          ‹
+        </button>
+        <button onClick={goNext} style={{
+          background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: '6px',
+          color: theme.text, cursor: 'pointer', padding: '2px 32px', fontSize: '24px', fontWeight: 600,
+          boxShadow: '0 1px 3px rgba(0,0,0,0.05)', transition: 'background 0.2s',
+        }} onMouseEnter={e => (e.currentTarget.style.background = theme.border)} onMouseLeave={e => (e.currentTarget.style.background = theme.surface)}>
+          ›
+        </button>
       </div>
 
       {/* Progress bar */}
@@ -1284,6 +1353,16 @@ function ReaderView({
              }));
              updateWordUnderlines(renditionRef.current, lemma, status, settings);
           }}
+        />
+      )}
+
+      {/* Stats Popup */}
+      {showStats && (
+        <StatsPopup
+          analysis={analysis}
+          anchorLeft={statsAnchorLeft}
+          onClose={() => setShowStats(false)}
+          isFixed={false}
         />
       )}
     </div>
@@ -1331,7 +1410,15 @@ export function ReaderApp() {
     let coverUrl: string | undefined;
     try {
       const coverUrlResult = await book.coverUrl();
-      if (coverUrlResult) coverUrl = coverUrlResult;
+      if (coverUrlResult) {
+        const res = await fetch(coverUrlResult);
+        const blob = await res.blob();
+        coverUrl = await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.readAsDataURL(blob);
+        });
+      }
     } catch {}
 
     const entry: EbookMeta = {
@@ -1375,7 +1462,7 @@ export function ReaderApp() {
   if (loading) {
     return (
       <div style={{
-        background: theme.bg, minHeight: '100vh',
+        background: theme.outerBg, minHeight: '100vh',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         fontFamily: 'system-ui, sans-serif', color: theme.text,
       }}>
@@ -1387,7 +1474,7 @@ export function ReaderApp() {
   const activeBook = activeBookId ? books.find(b => b.id === activeBookId) : null;
 
   return (
-    <div style={{ background: theme.bg, minHeight: '100vh', fontFamily: 'system-ui, sans-serif' }}>
+    <div style={{ background: theme.outerBg, minHeight: '100vh', fontFamily: 'system-ui, sans-serif' }}>
       <input
         ref={fileInputRef}
         type="file"

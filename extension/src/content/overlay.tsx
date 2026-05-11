@@ -18,7 +18,7 @@ const BASE_CSS = `
   --syn-subtext:  #877666;
   --syn-blue:     #98C1D9;
   --syn-red:      #D97762;
-  --syn-amber:    #A07855;
+  --syn-amber:    #E9C46A;
   --syn-green:    #A8B693;
   --syn-overlay:  rgba(245, 241, 233, 0.95);
 }
@@ -36,7 +36,7 @@ span[data-syn] {
   transition: background-color 0.1s, border-color 0.1s !important;
 }
 span[data-syn]:hover {
-  background-color: rgba(160,120,85,0.15) !important;
+  background-color: rgba(233, 196, 106,0.15) !important;
 }
 
 span.syn-sentence {
@@ -45,7 +45,7 @@ span.syn-sentence {
   transition: background-color 0.15s !important;
 }
 span.syn-sentence.syn-sent-hover {
-  background-color: rgba(160, 120, 85, 0.1) !important;
+  background-color: rgba(233, 196, 106, 0.1) !important;
 }
 
 /* Unknown — red underline */
@@ -55,7 +55,7 @@ span[data-syn].syn-unknown {
 
 /* Learning — amber underline */
 span[data-syn].syn-learning {
-  border-bottom: 2px solid #A07855 !important;
+  border-bottom: 2px solid #E9C46A !important;
 }
 
 /* Known — no underline */

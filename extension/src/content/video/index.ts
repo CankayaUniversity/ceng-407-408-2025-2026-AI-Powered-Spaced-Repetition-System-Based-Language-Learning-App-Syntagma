@@ -23,7 +23,7 @@ const SHADOW_CSS = `
     width: 13px;
     height: 13px;
     border-radius: 50%;
-    background: #A07855;
+    background: #E9C46A;
     cursor: pointer;
     border: none;
   }
