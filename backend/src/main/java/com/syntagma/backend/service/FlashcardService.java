@@ -4,9 +4,11 @@ import com.syntagma.backend.dto.request.FlashcardCreateRequest;
 import com.syntagma.backend.dto.request.FlashcardUpdateRequest;
 import com.syntagma.backend.dto.response.FlashcardResponse;
 import com.syntagma.backend.entity.Collection;
+import com.syntagma.backend.entity.CollectionItem;
 import com.syntagma.backend.entity.Flashcard;
 import com.syntagma.backend.entity.User;
 import com.syntagma.backend.entity.enums.KnowledgeStatus;
+import com.syntagma.backend.repository.CollectionItemRepository;
 import com.syntagma.backend.repository.CollectionRepository;
 import com.syntagma.backend.repository.FlashcardRepository;
 import com.syntagma.backend.repository.UserRepository;
@@ -17,11 +19,15 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 public class FlashcardService {
 
+    private final CollectionItemRepository collectionItemRepository;
     private final FlashcardRepository flashcardRepository;
     private final UserRepository userRepository;
     private final CollectionRepository collectionRepository;
@@ -49,13 +55,17 @@ public class FlashcardService {
     }
 
     public Page<FlashcardResponse> getAll(Long userId, KnowledgeStatus status, String search, Pageable pageable) {
+        Page<Flashcard> page;
         if (search != null && !search.isBlank()) {
-            return flashcardRepository.searchByUserIdAndTerm(userId, search, pageable).map(this::toResponse);
+            page = flashcardRepository.searchByUserIdAndTerm(userId, search, pageable);
+        } else if (status != null) {
+            page = flashcardRepository.findByUser_UserIdAndKnowledgeStatus(userId, status, pageable);
+        } else {
+            page = flashcardRepository.findByUser_UserId(userId, pageable);
         }
-        if (status != null) {
-            return flashcardRepository.findByUser_UserIdAndKnowledgeStatus(userId, status, pageable).map(this::toResponse);
-        }
-        return flashcardRepository.findByUser_UserId(userId, pageable).map(this::toResponse);
+
+        Map<Long, List<Long>> collectionIdsByFlashcardId = loadCollectionIds(page.getContent());
+        return page.map(f -> toResponse(f, collectionIdsByFlashcardId.getOrDefault(f.getFlashcardId(), List.of())));
     }
 
     public FlashcardResponse getById(Long userId, Long flashcardId) {
@@ -99,6 +109,11 @@ public class FlashcardService {
     }
 
     private FlashcardResponse toResponse(Flashcard f) {
+        List<Long> collectionIds = collectionItemRepository.findCollectionIdsByFlashcardId(f.getFlashcardId());
+        return toResponse(f, collectionIds);
+    }
+
+    private FlashcardResponse toResponse(Flashcard f, List<Long> collectionIds) {
         return new FlashcardResponse(
                 f.getFlashcardId(),
                 f.getUser().getUserId(),
@@ -108,9 +123,27 @@ public class FlashcardService {
                 f.getExampleSentence(),
                 f.getCollection() != null ? f.getCollection().getCollectionId() : null,
                 f.getKnowledgeStatus(),
+                collectionIds,
                 f.getCreatedAt(),
                 f.getUpdatedAt()
         );
+    }
+
+    private Map<Long, List<Long>> loadCollectionIds(List<Flashcard> flashcards) {
+        if (flashcards.isEmpty()) {
+            return Map.of();
+        }
+
+        List<Long> flashcardIds = flashcards.stream()
+                .map(Flashcard::getFlashcardId)
+                .toList();
+
+        List<CollectionItem> items = collectionItemRepository.findByFlashcardIdIn(flashcardIds);
+        return items.stream()
+                .collect(Collectors.groupingBy(
+                        CollectionItem::getFlashcardId,
+                        Collectors.mapping(CollectionItem::getCollectionId, Collectors.toList())
+                ));
     }
 
     private Collection findOwnedCollection(Long userId, Long collectionId) {

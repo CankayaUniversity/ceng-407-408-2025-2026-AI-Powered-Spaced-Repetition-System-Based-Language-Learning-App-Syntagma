@@ -6,6 +6,7 @@ import com.syntagma.backend.dto.response.FlashcardResponse;
 import com.syntagma.backend.entity.Flashcard;
 import com.syntagma.backend.entity.User;
 import com.syntagma.backend.entity.enums.KnowledgeStatus;
+import com.syntagma.backend.repository.CollectionItemRepository;
 import com.syntagma.backend.repository.FlashcardRepository;
 import com.syntagma.backend.repository.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
@@ -16,6 +17,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -26,6 +28,7 @@ import static org.mockito.Mockito.*;
 class FlashcardServiceTest {
 
     @Mock private FlashcardRepository flashcardRepository;
+    @Mock private CollectionItemRepository collectionItemRepository;
     @Mock private UserRepository userRepository;
     @InjectMocks private FlashcardService flashcardService;
 
@@ -57,6 +60,7 @@ class FlashcardServiceTest {
                 "hello", "merhaba", "Hello world", "Merhaba dünya", KnowledgeStatus.UNKNOWN);
 
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        when(collectionItemRepository.findCollectionIdsByFlashcardId(anyLong())).thenReturn(List.of());
         when(flashcardRepository.save(any(Flashcard.class))).thenAnswer(inv -> {
             Flashcard f = inv.getArgument(0);
             f.setFlashcardId(10L);
@@ -86,6 +90,7 @@ class FlashcardServiceTest {
         Flashcard flashcard = mockFlashcard(user);
 
         when(flashcardRepository.findById(10L)).thenReturn(Optional.of(flashcard));
+        when(collectionItemRepository.findCollectionIdsByFlashcardId(10L)).thenReturn(List.of());
 
         FlashcardResponse response = flashcardService.getById(1L, 10L);
 
