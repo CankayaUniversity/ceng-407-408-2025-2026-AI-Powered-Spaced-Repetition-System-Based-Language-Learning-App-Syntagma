@@ -58,11 +58,11 @@ const CueRow = memo(function CueRow({ sentence, isActive, selected, lexemes, sho
   const hasLearning = !hasUnknown && words.some(w => lexemes[w.toLowerCase()]?.status === 'learning');
 
   const leftBorder = isActive
-    ? `3px solid rgba(160,120,85,1)`
+    ? `3px solid rgba(233, 196, 106,1)`
     : showColors && hasUnknown
       ? `3px solid rgba(217,119,98,0.4)`
       : showColors && hasLearning
-        ? `3px solid rgba(160,120,85,0.35)`
+        ? `3px solid rgba(233, 196, 106,0.35)`
         : '3px solid transparent';
 
   return (
@@ -75,7 +75,7 @@ const CueRow = memo(function CueRow({ sentence, isActive, selected, lexemes, sho
         pointerEvents: 'auto',
         background: selected
           ? 'rgba(152,193,217,0.14)'
-          : isActive ? 'rgba(160,120,85,0.10)' : 'transparent',
+          : isActive ? 'rgba(233, 196, 106,0.10)' : 'transparent',
         borderLeft: leftBorder, transition: 'background 0.12s', marginBottom: '1px',
       }}
     >
@@ -102,11 +102,11 @@ const CueRow = memo(function CueRow({ sentence, isActive, selected, lexemes, sho
       </button>
       <span style={{
         fontSize: '10px',
-        color: isActive ? 'rgba(160,120,85,1)' : 'rgba(152,193,217,1)',
+        color: isActive ? 'rgba(233, 196, 106,1)' : 'rgba(152,193,217,1)',
         minWidth: '36px', paddingTop: '2px', fontVariantNumeric: 'tabular-nums',
         flexShrink: 0, fontWeight: isActive ? 700 : 500,
         textDecoration: 'underline',
-        textDecorationColor: isActive ? 'rgba(160,120,85,1)' : 'rgba(152,193,217,0.4)',
+        textDecorationColor: isActive ? 'rgba(233, 196, 106,1)' : 'rgba(152,193,217,0.4)',
         textUnderlineOffset: '2px',
       }}>
         {formatTime(sentence.startMs)}
@@ -147,7 +147,7 @@ const CueRow = memo(function CueRow({ sentence, isActive, selected, lexemes, sho
           const status = lexemes[lemma]?.status ?? 'unknown';
           const underlineColor = showColors
             ? (status === 'unknown'  ? 'rgba(217,119,98,0.55)' :
-               status === 'learning' ? 'rgba(160,120,85,0.55)' :
+               status === 'learning' ? 'rgba(233, 196, 106,0.55)' :
                'transparent')
             : 'transparent';
           return (
@@ -187,7 +187,7 @@ const C = {
   subtext: '#877666',
   blue:    '#98C1D9',
   red:     '#D97762',
-  amber:   '#A07855',
+  amber:   '#E9C46A',
   green:   '#A8B693',
 };
 

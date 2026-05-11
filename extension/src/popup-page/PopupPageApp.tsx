@@ -11,7 +11,7 @@ const C = {
   subtext:  '#877666',
   blue:     '#98C1D9',
   green:    '#A8B693',
-  amber:    '#A07855',
+  amber:    '#E9C46A',
   red:      '#D97762',
 };
 
@@ -181,7 +181,7 @@ export function PopupPageApp() {
                 transition: 'all 0.15s', marginBottom: '6px',
               }}
             >
-              EPUB Reader
+              eBook Reader
             </button>
 
             <button

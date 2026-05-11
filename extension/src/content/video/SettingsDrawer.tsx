@@ -8,7 +8,7 @@ const C = {
   surface: 'rgba(38, 36, 34, 0.9)',
   text: '#E8E0D0',
   subtext: '#9A8878',
-  accent: '#A07855',
+  accent: '#E9C46A',
   border: 'rgba(255,255,255,0.10)',
   blue: '#98C1D9',
   divider: 'rgba(255,255,255,0.07)',

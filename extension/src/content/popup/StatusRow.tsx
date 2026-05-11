@@ -7,7 +7,7 @@ const C = {
   subtext: '#877666',
   blue: '#98C1D9',
   red: '#D97762',
-  amber: '#A07855',
+  amber: '#E9C46A',
   green: '#A8B693',
   base: '#F5F1E9',
 };
