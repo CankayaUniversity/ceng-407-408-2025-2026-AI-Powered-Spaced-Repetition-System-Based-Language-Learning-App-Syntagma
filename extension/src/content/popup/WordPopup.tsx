@@ -407,6 +407,7 @@ function WordPopupInner({
       });
       if (!result.ok) throw new Error(result.error ?? 'Could not save flashcard');
       setCardSaved('done');
+      handleStatusChange('learning');
       setTimeout(() => setCardSaved('idle'), 2000);
     } catch {
       setCardSaved('error');
