@@ -28,6 +28,10 @@ public class Flashcard {
     @Column(columnDefinition = "TEXT")
     private String exampleSentence;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "collection_id")
+    private Collection collection;
+
     @Enumerated(EnumType.STRING)
     private KnowledgeStatus knowledgeStatus;
 

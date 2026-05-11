@@ -3,11 +3,13 @@ package com.syntagma.backend.service;
 import com.syntagma.backend.dto.request.FlashcardCreateRequest;
 import com.syntagma.backend.dto.request.FlashcardUpdateRequest;
 import com.syntagma.backend.dto.response.FlashcardResponse;
+import com.syntagma.backend.entity.Collection;
 import com.syntagma.backend.entity.CollectionItem;
 import com.syntagma.backend.entity.Flashcard;
 import com.syntagma.backend.entity.User;
 import com.syntagma.backend.entity.enums.KnowledgeStatus;
 import com.syntagma.backend.repository.CollectionItemRepository;
+import com.syntagma.backend.repository.CollectionRepository;
 import com.syntagma.backend.repository.FlashcardRepository;
 import com.syntagma.backend.repository.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
@@ -28,6 +30,7 @@ public class FlashcardService {
     private final CollectionItemRepository collectionItemRepository;
     private final FlashcardRepository flashcardRepository;
     private final UserRepository userRepository;
+    private final CollectionRepository collectionRepository;
 
     @Transactional
     public FlashcardResponse create(Long userId, FlashcardCreateRequest request) {
@@ -40,6 +43,9 @@ public class FlashcardService {
         flashcard.setTranslation(request.translation());
         flashcard.setSourceSentence(request.sourceSentence());
         flashcard.setExampleSentence(request.exampleSentence());
+        if (request.collectionId() != null) {
+            flashcard.setCollection(findOwnedCollection(userId, request.collectionId()));
+        }
         flashcard.setKnowledgeStatus(request.knowledgeStatus());
         flashcard.setCreatedAt(LocalDateTime.now());
         flashcard.setUpdatedAt(LocalDateTime.now());
@@ -75,6 +81,11 @@ public class FlashcardService {
         if (request.translation() != null) flashcard.setTranslation(request.translation());
         if (request.sourceSentence() != null) flashcard.setSourceSentence(request.sourceSentence());
         if (request.exampleSentence() != null) flashcard.setExampleSentence(request.exampleSentence());
+        if (Boolean.TRUE.equals(request.clearCollection())) {
+            flashcard.setCollection(null);
+        } else if (request.collectionId() != null) {
+            flashcard.setCollection(findOwnedCollection(userId, request.collectionId()));
+        }
         if (request.knowledgeStatus() != null) flashcard.setKnowledgeStatus(request.knowledgeStatus());
         flashcard.setUpdatedAt(LocalDateTime.now());
 
@@ -110,6 +121,7 @@ public class FlashcardService {
                 f.getTranslation(),
                 f.getSourceSentence(),
                 f.getExampleSentence(),
+                f.getCollection() != null ? f.getCollection().getCollectionId() : null,
                 f.getKnowledgeStatus(),
                 collectionIds,
                 f.getCreatedAt(),
@@ -132,5 +144,14 @@ public class FlashcardService {
                         CollectionItem::getFlashcardId,
                         Collectors.mapping(CollectionItem::getCollectionId, Collectors.toList())
                 ));
+    }
+
+    private Collection findOwnedCollection(Long userId, Long collectionId) {
+        Collection collection = collectionRepository.findById(collectionId)
+                .orElseThrow(() -> new EntityNotFoundException("Collection not found: " + collectionId));
+        if (!collection.getUser().getUserId().equals(userId)) {
+            throw new EntityNotFoundException("Collection not found: " + collectionId);
+        }
+        return collection;
     }
 }

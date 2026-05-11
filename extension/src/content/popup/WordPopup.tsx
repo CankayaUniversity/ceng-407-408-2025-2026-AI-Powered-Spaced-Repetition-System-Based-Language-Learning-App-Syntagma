@@ -32,6 +32,11 @@ interface WordPopupProps {
   lexeme: LexemeEntry | null;
   settings: UserSettings;
   screenshotDataUrl?: string;
+  // Full speech range covering `sentence` (may span multiple cues).
+  // Used so the audio recorder captures the whole sentence, not just
+  // the cue that happens to be on screen.
+  sentenceStartMs?: number;
+  sentenceEndMs?: number;
   onClose: () => void;
   onStatusChange: (lemma: string, status: WordStatus) => void;
 }
@@ -164,6 +169,8 @@ function WordPopupInner({
   lexeme,
   settings,
   screenshotDataUrl,
+  sentenceStartMs,
+  sentenceEndMs,
   onClose,
   onStatusChange,
 }: WordPopupProps) {
@@ -372,7 +379,11 @@ function WordPopupInner({
             resolve((e as CustomEvent).detail?.audioDataUrl);
           };
           window.addEventListener('syntagma:sentence-audio-ready', onReady);
-          window.dispatchEvent(new CustomEvent('syntagma:capture-sentence-audio'));
+          window.dispatchEvent(new CustomEvent('syntagma:capture-sentence-audio', {
+            detail: (sentenceStartMs !== undefined && sentenceEndMs !== undefined)
+              ? { startMs: sentenceStartMs, endMs: sentenceEndMs }
+              : {},
+          }));
         });
       } catch { /* not in video context or capture unavailable */ }
 
@@ -530,8 +541,10 @@ function WordPopupInner({
           color: C.subtext,
           lineHeight: 1.5,
           fontStyle: 'italic',
+          maxHeight: '120px',
+          overflowY: 'auto',
         }}>
-          {sentence.length > 180 ? sentence.slice(0, 180) + '…' : sentence}
+          {sentence}
         </div>
       )}
 

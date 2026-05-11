@@ -26,4 +26,6 @@ public class User {
     private LocalDateTime lastLoginAt;
 
     private Integer streakCount = 0;
+
+    private Integer dailyNewCardLimit = 10;
 }
