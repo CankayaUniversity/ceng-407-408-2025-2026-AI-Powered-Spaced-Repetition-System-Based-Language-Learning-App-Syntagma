@@ -104,3 +104,15 @@ diff_report.txt
 # Large local-only files
 extension/dictionary.json
 .codex
+
+# Local-only backend ebook drafts
+backend/src/main/java/com/syntagma/backend/controller/EbookController.java
+backend/src/main/java/com/syntagma/backend/dto/request/EbookCreateRequest.java
+backend/src/main/java/com/syntagma/backend/dto/request/EbookPresignRequest.java
+backend/src/main/java/com/syntagma/backend/dto/request/EbookProgressUpdateRequest.java
+backend/src/main/java/com/syntagma/backend/dto/response/EbookPresignResponse.java
+backend/src/main/java/com/syntagma/backend/dto/response/EbookResponse.java
+backend/src/main/java/com/syntagma/backend/dto/response/EbookUrlResponse.java
+backend/src/main/java/com/syntagma/backend/entity/Ebook.java
+backend/src/main/java/com/syntagma/backend/repository/EbookRepository.java
+backend/src/main/java/com/syntagma/backend/service/EbookService.java
