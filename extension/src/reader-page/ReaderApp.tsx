@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import ePub, { Book, Rendition } from 'epubjs';
 import type { UserSettings, LexemeEntry, WordStatus, FlashcardPayload, Token } from '../shared/types';
 import type { AiResultData } from '../shared/backend-ai';
-import { DEFAULT_SETTINGS, userScopedKey } from '../shared/storage';
+import { DEFAULT_SETTINGS, userScopedKey, getAuthHeaders } from '../shared/storage';
 import { sendMessage } from '../shared/messages';
 import { lookupFrequency, initFrequencyTable } from '../shared/frequency';
 import { lemmatize } from '../shared/lemmatizer';
@@ -46,8 +46,7 @@ interface EbookMeta {
   addedAt: number;
   lastReadAt: number;
   progress: number;
-  currentCfi?: string;
-  totalLocations?: number;
+  lastPage: number;
 }
 
 interface TocItem {
@@ -56,7 +55,31 @@ interface TocItem {
   subitems?: TocItem[];
 }
 
-const STORAGE_KEY = 'syntagma_ebooks';
+interface ApiResponseEnvelope<T> {
+  status?: string;
+  data?: T;
+  message?: string;
+}
+
+interface BackendEbook {
+  ebookId: number;
+  title: string;
+  originalFileName: string;
+  lastPage: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface BackendEbookPresignResponse {
+  uploadUrl: string;
+  objectKey: string;
+}
+
+interface BackendEbookUrlResponse {
+  downloadUrl: string;
+}
+
+const BACKEND_URL = 'https://syntagma.omerhanyigit.online';
 
 // ─── Persistence helpers ────────────────────────────────────────────────────
 
@@ -65,38 +88,153 @@ async function getStoredUserId(): Promise<string | null> {
   return (result.userSettings as any)?.authUserId ?? null;
 }
 
+function resolveApiBase(settings: UserSettings): string {
+  return (settings.apiBaseUrl || BACKEND_URL).replace(/\/+$/, '');
+}
+
+async function getCurrentSettings(): Promise<UserSettings> {
+  return sendMessage<UserSettings>({ type: 'GET_SETTINGS', payload: null });
+}
+
+async function ensureAuthSettings(): Promise<UserSettings> {
+  const settings = await getCurrentSettings();
+  if (!settings.authToken) throw new Error('Please log in to use ebooks');
+  return settings;
+}
+
+async function syncRefreshedToken(response: Response, settings: UserSettings): Promise<UserSettings> {
+  const refreshed = response.headers.get('X-Refreshed-Token');
+  if (!refreshed || refreshed === settings.authToken) return settings;
+  await sendMessage({ type: 'SET_SETTINGS', payload: { authToken: refreshed } });
+  return { ...settings, authToken: refreshed };
+}
+
+async function readApiData<T>(response: Response, fallback: string): Promise<T> {
+  const text = await response.text();
+  let payload: ApiResponseEnvelope<T> | null = null;
+  if (text) {
+    try {
+      payload = JSON.parse(text) as ApiResponseEnvelope<T>;
+    } catch {
+      payload = null;
+    }
+  }
+
+  if (!response.ok) {
+    throw new Error(payload?.message || fallback);
+  }
+
+  if (payload && payload.data !== undefined) return payload.data;
+  if (payload) return payload as unknown as T;
+  throw new Error(fallback);
+}
+
+function toMeta(book: BackendEbook): EbookMeta {
+  const addedAt = Date.parse(book.createdAt || '');
+  const lastReadAt = Date.parse(book.updatedAt || '');
+  return {
+    id: String(book.ebookId),
+    title: book.title || book.originalFileName || 'Untitled',
+    author: '',
+    addedAt: Number.isFinite(addedAt) ? addedAt : Date.now(),
+    lastReadAt: Number.isFinite(lastReadAt) ? lastReadAt : Date.now(),
+    progress: 0,
+    lastPage: Number.isFinite(book.lastPage) ? Math.max(0, book.lastPage) : 0,
+  };
+}
+
 async function loadLibrary(): Promise<EbookMeta[]> {
-  const userId = await getStoredUserId();
-  const key = userScopedKey(STORAGE_KEY, userId);
-  const result = await chrome.storage.local.get(key);
-  return (result[key] ?? []) as EbookMeta[];
+  const settings = await getCurrentSettings();
+  if (!settings.authToken) return [];
+  const response = await fetch(`${resolveApiBase(settings)}/api/ebooks`, {
+    headers: getAuthHeaders(settings),
+  });
+  await syncRefreshedToken(response, settings);
+  const data = await readApiData<BackendEbook[]>(response, `Failed to fetch ebooks (${response.status})`);
+  return data.map(toMeta);
 }
 
-async function saveLibrary(lib: EbookMeta[]): Promise<void> {
-  const userId = await getStoredUserId();
-  const key = userScopedKey(STORAGE_KEY, userId);
-  await chrome.storage.local.set({ [key]: lib });
+async function importEbook(file: File, title: string): Promise<EbookMeta> {
+  let settings = await ensureAuthSettings();
+  const apiBase = resolveApiBase(settings);
+  const contentType = file.type || 'application/epub+zip';
+
+  const presignRes = await fetch(`${apiBase}/api/ebooks/presign`, {
+    method: 'POST',
+    headers: getAuthHeaders(settings),
+    body: JSON.stringify({
+      fileName: file.name,
+      contentType,
+      size: file.size,
+    }),
+  });
+  settings = await syncRefreshedToken(presignRes, settings);
+  const presign = await readApiData<BackendEbookPresignResponse>(
+    presignRes,
+    `Ebook presign failed (${presignRes.status})`
+  );
+
+  const uploadRes = await fetch(presign.uploadUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': contentType },
+    body: file,
+  });
+  if (!uploadRes.ok) throw new Error(`Ebook upload failed (${uploadRes.status})`);
+
+  const createRes = await fetch(`${apiBase}/api/ebooks`, {
+    method: 'POST',
+    headers: getAuthHeaders(settings),
+    body: JSON.stringify({
+      objectKey: presign.objectKey,
+      originalFileName: file.name,
+      contentType,
+      size: file.size,
+      title,
+    }),
+  });
+  await syncRefreshedToken(createRes, settings);
+  const created = await readApiData<BackendEbook>(createRes, `Ebook create failed (${createRes.status})`);
+  return toMeta(created);
 }
 
-async function storeEpubBlob(id: string, blob: ArrayBuffer): Promise<void> {
-  const userId = await getStoredUserId();
-  const blobKey = userScopedKey(`epub_${id}`, userId);
-  await chrome.storage.local.set({ [blobKey]: Array.from(new Uint8Array(blob)) });
+async function loadEpubBuffer(ebookId: string): Promise<ArrayBuffer> {
+  let settings = await ensureAuthSettings();
+  const apiBase = resolveApiBase(settings);
+
+  const urlRes = await fetch(`${apiBase}/api/ebooks/${encodeURIComponent(ebookId)}/url`, {
+    headers: getAuthHeaders(settings),
+  });
+  settings = await syncRefreshedToken(urlRes, settings);
+  const urlData = await readApiData<BackendEbookUrlResponse>(urlRes, `Ebook URL fetch failed (${urlRes.status})`);
+
+  const fileRes = await fetch(urlData.downloadUrl);
+  if (!fileRes.ok) throw new Error(`Ebook download failed (${fileRes.status})`);
+  return fileRes.arrayBuffer();
 }
 
-async function loadEpubBlob(id: string): Promise<ArrayBuffer | null> {
-  const userId = await getStoredUserId();
-  const blobKey = userScopedKey(`epub_${id}`, userId);
-  const result = await chrome.storage.local.get(blobKey);
-  const arr = result[blobKey];
-  if (!arr) return null;
-  return new Uint8Array(arr as number[]).buffer;
+async function deleteEbook(ebookId: string): Promise<void> {
+  const settings = await ensureAuthSettings();
+  const response = await fetch(`${resolveApiBase(settings)}/api/ebooks/${encodeURIComponent(ebookId)}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(settings),
+  });
+  await syncRefreshedToken(response, settings);
+  if (!response.ok) {
+    throw new Error(`Delete failed (${response.status})`);
+  }
 }
 
-async function removeEpubBlob(id: string): Promise<void> {
-  const userId = await getStoredUserId();
-  const blobKey = userScopedKey(`epub_${id}`, userId);
-  await chrome.storage.local.remove(blobKey);
+async function updateEbookProgress(ebookId: string, lastPage: number): Promise<void> {
+  const settings = await ensureAuthSettings();
+  const response = await fetch(`${resolveApiBase(settings)}/api/ebooks/${encodeURIComponent(ebookId)}/progress`, {
+    method: 'PUT',
+    headers: getAuthHeaders(settings),
+    body: JSON.stringify({ lastPage }),
+  });
+  await syncRefreshedToken(response, settings);
+  if (!response.ok) {
+    throw new Error(`Progress update failed (${response.status})`);
+  }
 }
 
 // ─── Word interaction helpers ───────────────────────────────────────────────
@@ -830,7 +968,9 @@ function LibraryView({
                     }} />
                   </div>
                   <span style={{ fontSize: '11px', color: theme.text, opacity: 0.5 }}>
-                    {Math.round(book.progress * 100)}%
+                    {Math.round(book.progress * 100) > 0
+                      ? `${Math.round(book.progress * 100)}%`
+                      : (book.lastPage > 0 ? `Loc ${book.lastPage}` : '0%')}
                   </span>
                 </div>
                 <button
@@ -892,8 +1032,10 @@ function ReaderView({
   // Use refs for hooks to avoid re-registering them on every state change
   const lexemesRef = useRef(lexemes);
   const settingsRef = useRef(settings);
+  const lastSavedPageRef = useRef<number>(bookMeta.lastPage);
   useEffect(() => { lexemesRef.current = lexemes; }, [lexemes]);
   useEffect(() => { settingsRef.current = settings; }, [settings]);
+  useEffect(() => { lastSavedPageRef.current = bookMeta.lastPage; }, [bookMeta.id, bookMeta.lastPage]);
 
   // Load lexemes (user-scoped)
   useEffect(() => {
@@ -935,128 +1077,128 @@ function ReaderView({
     let destroyed = false;
 
     async function init() {
-      const buffer = await loadEpubBlob(bookMeta.id);
-      if (!buffer || destroyed) return;
-
-      const book = ePub(buffer);
-      bookRef.current = book;
-
-      await book.ready;
-      if (destroyed) { book.destroy(); return; }
-
-      const nav = await book.loaded.navigation;
-      setToc(nav.toc as TocItem[]);
-
-      if (!viewerRef.current) return;
-
-      const rendition = book.renderTo(viewerRef.current, {
-        width: '100%',
-        height: '100%',
-        spread: 'none',
-        flow: 'paginated',
-      });
-      renditionRef.current = rendition;
-
-      // Apply theme and custom styles for our spans
-      rendition.themes.default({
-        body: {
-          'font-family': 'Georgia, "Times New Roman", serif',
-          'font-size': `${fontSize}px`,
-          'line-height': `${settingsRef.current.readerLineHeight}`,
-          'color': theme.text,
-          'background': theme.bg,
-          'padding': '24px 12%',
-          'margin': '0',
-          'text-align': 'justify',
-        },
-        'a': { color: theme.accent },
-        'img': { 'max-width': '100%' },
-        'span[data-syntagma-word]': {
-          'display': 'inline !important',
-          'cursor': 'pointer !important',
-          'border-bottom': '2px solid transparent',
-          'transition': 'background-color 0.1s, border-color 0.1s !important',
-        },
-        'span[data-syntagma-word]:hover': {
-          'background-color': 'rgba(233, 196, 106, 0.15) !important',
-        }
-      });
-
-      // Wrap words after each chapter renders
-      rendition.hooks.content.register((contents: any) => {
+      try {
+        const buffer = await loadEpubBuffer(bookMeta.id);
         if (destroyed) return;
-        const doc = contents.document as Document;
-        // Inject a small style block to handle the dynamic status colors if needed,
-        // though we also set them directly in wrapWordsInElement
-        const tokens = wrapWordsInElement(doc, lexemesRef.current, settingsRef.current);
-        setChapterTokens(tokens);
-      });
 
-      // Word click handling
-      rendition.on('click', (e: MouseEvent) => {
-        const target = e.target as HTMLElement;
-        const span = target.closest('span[data-syntagma-word]') as HTMLElement;
-        
-        if (span) {
-          const word = span.dataset.syntagmaWord!;
-          const surface = span.dataset.surface || word;
-          const sentence = extractSentence(span);
+        const book = ePub(buffer);
+        bookRef.current = book;
+
+        await book.ready;
+        if (destroyed) { book.destroy(); return; }
+
+        const nav = await book.loaded.navigation;
+        setToc(nav.toc as TocItem[]);
+
+        if (!viewerRef.current) return;
+
+        const rendition = book.renderTo(viewerRef.current, {
+          width: '100%',
+          height: '100%',
+          spread: 'none',
+          flow: 'paginated',
+        });
+        renditionRef.current = rendition;
+
+        // Apply theme and custom styles for our spans
+        rendition.themes.default({
+          body: {
+            'font-family': 'Georgia, "Times New Roman", serif',
+            'font-size': `${fontSize}px`,
+            'line-height': `${settingsRef.current.readerLineHeight}`,
+            'color': theme.text,
+            'background': theme.bg,
+            'padding': '24px 12%',
+            'margin': '0',
+            'text-align': 'justify',
+          },
+          'a': { color: theme.accent },
+          'img': { 'max-width': '100%' },
+          'span[data-syntagma-word]': {
+            'display': 'inline !important',
+            'cursor': 'pointer !important',
+            'border-bottom': '2px solid transparent',
+            'transition': 'background-color 0.1s, border-color 0.1s !important',
+          },
+          'span[data-syntagma-word]:hover': {
+            'background-color': 'rgba(233, 196, 106, 0.15) !important',
+          }
+        });
+
+        // Wrap words after each chapter renders
+        rendition.hooks.content.register((contents: any) => {
+          if (destroyed) return;
+          const doc = contents.document as Document;
+          // Inject a small style block to handle the dynamic status colors if needed,
+          // though we also set them directly in wrapWordsInElement
+          const tokens = wrapWordsInElement(doc, lexemesRef.current, settingsRef.current);
+          setChapterTokens(tokens);
+        });
+
+        // Word click handling
+        rendition.on('click', (e: MouseEvent) => {
+          const target = e.target as HTMLElement;
+          const span = target.closest('span[data-syntagma-word]') as HTMLElement;
           
-          // Coordinate transformation: iframe relative -> window relative
-          const rect = span.getBoundingClientRect();
-          const viewerRect = viewerRef.current?.getBoundingClientRect();
-          const popupWidth = 340;
-          const anchorX = (viewerRect?.left ?? 0) + rect.left + rect.width / 2;
-          const anchorY = (viewerRect?.top ?? 0) + rect.bottom + 8;
+          if (span) {
+            const word = span.dataset.syntagmaWord!;
+            const surface = span.dataset.surface || word;
+            const sentence = extractSentence(span);
+            
+            // Coordinate transformation: iframe relative -> window relative
+            const rect = span.getBoundingClientRect();
+            const viewerRect = viewerRef.current?.getBoundingClientRect();
+            const popupWidth = 340;
+            const anchorX = (viewerRect?.left ?? 0) + rect.left + rect.width / 2;
+            const anchorY = (viewerRect?.top ?? 0) + rect.bottom + 8;
 
-          // If there is enough whitespace on the right side of the reader,
-          // center the popup in that area for a more comfortable layout.
-          const rightSpaceStart = viewerRect?.right ?? window.innerWidth;
-          const rightSpaceWidth = Math.max(0, window.innerWidth - rightSpaceStart);
-          const hasUsableRightSpace = rightSpaceWidth >= popupWidth + 56;
-          const preferredRightCenterX = rightSpaceStart + rightSpaceWidth / 2;
-          
-          setWordPopup({
-            word,
-            surface,
-            sentence,
-            x: hasUsableRightSpace ? preferredRightCenterX : anchorX,
-            y: anchorY,
-          });
-        } else {
-          setWordPopup(null);
-        }
-      });
+            // If there is enough whitespace on the right side of the reader,
+            // center the popup in that area for a more comfortable layout.
+            const rightSpaceStart = viewerRect?.right ?? window.innerWidth;
+            const rightSpaceWidth = Math.max(0, window.innerWidth - rightSpaceStart);
+            const hasUsableRightSpace = rightSpaceWidth >= popupWidth + 56;
+            const preferredRightCenterX = rightSpaceStart + rightSpaceWidth / 2;
+            
+            setWordPopup({
+              word,
+              surface,
+              sentence,
+              x: hasUsableRightSpace ? preferredRightCenterX : anchorX,
+              y: anchorY,
+            });
+          } else {
+            setWordPopup(null);
+          }
+        });
 
-      // Display from saved position or beginning
-      if (bookMeta.currentCfi) {
-        await rendition.display(bookMeta.currentCfi);
-      } else {
         await rendition.display();
+
+        // Generate locations for progress tracking, then restore the saved location index.
+        await book.locations.generate(1024);
+        if (!destroyed && bookMeta.lastPage > 0) {
+          const savedCfi = book.locations.cfiFromLocation(bookMeta.lastPage);
+          if (typeof savedCfi === 'string' && savedCfi) {
+            await rendition.display(savedCfi);
+          }
+        }
+        updateProgress(rendition);
+
+        // Track location changes
+        rendition.on('relocated', (location: any) => {
+          if (destroyed) return;
+          savePosition(bookMeta.id);
+          updateProgress(rendition);
+
+          // Update chapter title
+          const href = location?.start?.href;
+          if (href && nav.toc) {
+            const chapter = findChapterByHref(nav.toc as TocItem[], href);
+            if (chapter) setCurrentChapter(chapter.label);
+          }
+        });
+      } catch (err) {
+        console.error('[Syntagma Reader] Failed to load ebook:', err);
       }
-
-      // Generate locations for progress tracking
-      book.locations.generate(1024).then(() => {
-        if (destroyed) return;
-        updateProgress(rendition);
-      });
-
-      // Track location changes
-      rendition.on('relocated', (location: any) => {
-        if (destroyed) return;
-        const cfi = location?.start?.cfi;
-        if (cfi) {
-          savePosition(bookMeta.id, cfi);
-        }
-        updateProgress(rendition);
-
-        // Update chapter title
-        const href = location?.start?.href;
-        if (href && nav.toc) {
-          const chapter = findChapterByHref(nav.toc as TocItem[], href);
-          if (chapter) setCurrentChapter(chapter.label);
-        }
-      });
     }
 
     init();
@@ -1081,17 +1223,16 @@ function ReaderView({
     }
   }
 
-  async function savePosition(bookId: string, cfi: string) {
-    const lib = await loadLibrary();
-    const idx = lib.findIndex(b => b.id === bookId);
-    if (idx < 0) return;
+  async function savePosition(bookId: string) {
     const loc = renditionRef.current?.currentLocation() as any;
-    lib[idx].currentCfi = cfi;
-    lib[idx].lastReadAt = Date.now();
-    if (loc?.start?.percentage != null) {
-      lib[idx].progress = loc.start.percentage;
-    }
-    await saveLibrary(lib);
+    const cfi = loc?.start?.cfi;
+    if (!cfi || !bookRef.current) return;
+    const nextPage = Number((bookRef.current.locations as any).locationFromCfi(cfi));
+    if (!Number.isFinite(nextPage) || nextPage < 0) return;
+    const normalizedPage = Math.floor(nextPage);
+    if (normalizedPage === lastSavedPageRef.current) return;
+    lastSavedPageRef.current = normalizedPage;
+    updateEbookProgress(bookId, normalizedPage).catch(console.error);
   }
 
   function findChapterByHref(items: TocItem[], href: string): TocItem | null {
@@ -1410,54 +1551,50 @@ export function ReaderApp() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const buffer = await file.arrayBuffer();
-    const book = ePub(buffer);
-    await book.ready;
-
-    const meta = await book.loaded.metadata;
-    const id = crypto.randomUUID();
-
+    let title = file.name.replace(/\.epub$/i, '');
+    let author = '';
     let coverUrl: string | undefined;
+    let epub: Book | null = null;
+
     try {
-      const coverUrlResult = await book.coverUrl();
-      if (coverUrlResult) {
-        const res = await fetch(coverUrlResult);
-        const blob = await res.blob();
-        coverUrl = await new Promise((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result as string);
-          reader.readAsDataURL(blob);
-        });
-      }
-    } catch {}
+      const buffer = await file.arrayBuffer();
+      epub = ePub(buffer);
+      await epub.ready;
+      const meta = await epub.loaded.metadata;
+      title = meta.title || title;
+      author = meta.creator || '';
 
-    const entry: EbookMeta = {
-      id,
-      title: meta.title || file.name.replace(/\.epub$/i, ''),
-      author: meta.creator || '',
-      coverUrl,
-      addedAt: Date.now(),
-      lastReadAt: Date.now(),
-      progress: 0,
-    };
+      try {
+        const coverUrlResult = await epub.coverUrl();
+        if (coverUrlResult) {
+          const res = await fetch(coverUrlResult);
+          const blob = await res.blob();
+          coverUrl = await new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.readAsDataURL(blob);
+          });
+        }
+      } catch {}
 
-    await storeEpubBlob(id, buffer);
-
-    const lib = await loadLibrary();
-    lib.unshift(entry);
-    await saveLibrary(lib);
-    setBooks(lib);
-
-    book.destroy();
-    e.target.value = '';
+      const created = await importEbook(file, title);
+      setBooks(prev => [{ ...created, author, coverUrl }, ...prev.filter(b => b.id !== created.id)]);
+    } catch (err) {
+      console.error('[Syntagma Reader] Ebook import failed:', err);
+    } finally {
+      epub?.destroy();
+      e.target.value = '';
+    }
   }, []);
 
   const handleDelete = useCallback(async (id: string) => {
-    await removeEpubBlob(id);
-    const lib = (await loadLibrary()).filter(b => b.id !== id);
-    await saveLibrary(lib);
-    setBooks(lib);
-    if (activeBookId === id) setActiveBookId(null);
+    try {
+      await deleteEbook(id);
+      setBooks(prev => prev.filter(b => b.id !== id));
+      if (activeBookId === id) setActiveBookId(null);
+    } catch (err) {
+      console.error('[Syntagma Reader] Ebook delete failed:', err);
+    }
   }, [activeBookId]);
 
   const handleOpen = useCallback((id: string) => {
@@ -1466,7 +1603,7 @@ export function ReaderApp() {
 
   const handleBack = useCallback(() => {
     setActiveBookId(null);
-    loadLibrary().then(setBooks);
+    loadLibrary().then(setBooks).catch(console.error);
   }, []);
 
   if (loading) {
