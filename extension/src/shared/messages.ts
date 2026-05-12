@@ -8,6 +8,8 @@ export type ExtensionMessage =
   | { type: 'TOGGLE_STATUS_COLORS'; payload: { enabled: boolean } }
   | { type: 'SET_WORD_STATUS'; payload: { lemma: string; status: WordStatus } }
   | { type: 'BULK_SET_WORD_STATUS'; payload: { lemmas: string[]; status: WordStatus } }
+  | { type: 'UPSERT_WORD_KNOWLEDGE'; payload: { lemma: string; status: WordStatus } }
+  | { type: 'DELETE_WORD_KNOWLEDGE'; payload: { lemma: string } }
   | { type: 'LOOKUP_WORD'; payload: { lemma: string; sentence?: string } }
   | { type: 'LOOKUP_WORD_FREQUENCY'; payload: { lemma: string } }
   | { type: 'EXPLAIN_WORD_WITH_AI'; payload: { word: string; sentence: string; context?: string; level: LearnerLevel; requestId: string } }
@@ -43,6 +45,7 @@ export type BackgroundMessage =
   | { type: 'AI_RESULT'; payload: { requestId: string; result: AiResultData } }
   | { type: 'STATUS_CHANGED'; payload: { lemma: string; status: WordStatus } }
   | { type: 'BULK_STATUS_CHANGED'; payload: { lemmas: string[]; status: WordStatus } }
+  | { type: 'WORD_KNOWLEDGE_DELETED'; payload: { lemma: string } }
   | { type: 'SETTINGS_UPDATED'; payload: Partial<UserSettings> };
 
 export function sendMessage<T>(msg: ExtensionMessage): Promise<T> {

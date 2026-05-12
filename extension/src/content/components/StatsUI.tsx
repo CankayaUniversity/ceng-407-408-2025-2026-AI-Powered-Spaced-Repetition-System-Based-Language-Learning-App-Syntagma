@@ -157,9 +157,6 @@ export function StatsPopup({ analysis, anchorLeft, onClose, themeColors = StatsU
               <div style={{ fontSize: '22px', fontWeight: 800, color: scoreColor, lineHeight: 1 }}>
                 {comprehensionScore}%
               </div>
-              <div style={{ fontSize: '9px', color: themeColors.subtext, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px', marginTop: '2px' }}>
-                comprehension
-              </div>
             </div>
           </div>
 
