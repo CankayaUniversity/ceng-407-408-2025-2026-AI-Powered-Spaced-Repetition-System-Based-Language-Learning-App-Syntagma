@@ -28,7 +28,7 @@ public class EbookService {
 
     @Transactional
     public EbookPresignResponse createPresignedUpload(Long userId, EbookPresignRequest request) {
-        validatePubFile(request.fileName());
+        validateEpubFile(request.fileName());
         String objectKey = buildObjectKey(userId, request.fileName());
         StoragePresignResult presign = storageService.createPresignedUpload(objectKey, request.contentType());
         return new EbookPresignResponse(presign.url(), objectKey, presign.expiresAt());
@@ -36,7 +36,7 @@ public class EbookService {
 
     @Transactional
     public EbookResponse createEbook(Long userId, EbookCreateRequest request) {
-        validatePubFile(request.originalFileName());
+        validateEpubFile(request.originalFileName());
         validateObjectKey(userId, request.objectKey());
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new EntityNotFoundException("User not found: " + userId));
@@ -115,9 +115,9 @@ public class EbookService {
         );
     }
 
-    private void validatePubFile(String fileName) {
-        if (fileName == null || !fileName.toLowerCase().endsWith(".pub")) {
-            throw new IllegalArgumentException("Only .pub files are supported");
+    private void validateEpubFile(String fileName) {
+        if (fileName == null || !fileName.toLowerCase().endsWith(".epub")) {
+            throw new IllegalArgumentException("Only .epub files are supported");
         }
     }
 
@@ -129,7 +129,7 @@ public class EbookService {
     }
 
     private String buildObjectKey(Long userId, String fileName) {
-        String safeName = fileName == null ? "file.pub" : fileName;
+        String safeName = fileName == null ? "file.epub" : fileName;
         safeName = safeName.replaceAll("[^A-Za-z0-9._-]", "_");
         String uuid = UUID.randomUUID().toString();
         return "ebooks/" + userId + "/" + uuid + "_" + safeName;
