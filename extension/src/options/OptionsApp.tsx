@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type { UserSettings, LexemeEntry, FlashcardPayload } from '../shared/types';
 import { DEFAULT_SETTINGS, userScopedKey } from '../shared/storage';
 import { sendMessage } from '../shared/messages';
@@ -327,6 +327,12 @@ interface WordKnowledgeEntry {
   updatedAt: number;
 }
 
+interface ServerWordCounts {
+  total: number | null;
+  known: number | null;
+  learning: number | null;
+}
+
 function WordBrowserTab({ settings }: { settings: UserSettings }) {
   const [words, setWords] = useState<WordKnowledgeEntry[]>([]);
   const [filter, setFilter] = useState<StatusFilter>('all');
@@ -337,17 +343,24 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
   const [source, setSource] = useState<'server' | 'local'>('local');
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(false);
+  const [serverCounts, setServerCounts] = useState<ServerWordCounts>({
+    total: null,
+    known: null,
+    learning: null,
+  });
 
   const PAGE_SIZE = 200;
 
   const apiBase = settings.apiBaseUrl || BACKEND_URL;
-  const authHeader: Record<string, string> = settings.authToken
-    ? {
-        'Authorization': `Bearer ${settings.authToken}`,
-        'Content-Type': 'application/json',
-        ...(settings.authUserId ? { 'X-User-Id': settings.authUserId } : {}),
-      }
-    : {};
+  const authHeader: Record<string, string> = useMemo(() => (
+    settings.authToken
+      ? {
+          'Authorization': `Bearer ${settings.authToken}`,
+          'Content-Type': 'application/json',
+          ...(settings.authUserId ? { 'X-User-Id': settings.authUserId } : {}),
+        }
+      : {}
+  ), [settings.authToken, settings.authUserId]);
 
   const loadFromLocal = useCallback(async () => {
     const key = userScopedKey('lexemes', settings.authUserId);
@@ -359,7 +372,19 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
       updatedAt: e.lastSeenAt || 0,
     })));
     setSource('local');
+    setServerCounts({ total: null, known: null, learning: null });
   }, [settings.authUserId]);
+
+  const fetchServerTotal = useCallback(async (status?: Exclude<StatusFilter, 'all'>): Promise<number | null> => {
+    const statusParam = status ? `&status=${status.toUpperCase()}` : '';
+    const res = await fetch(`${apiBase}/api/word-knowledge?size=1&page=0${statusParam}`, {
+      headers: authHeader,
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    const total = Number(json?.data?.totalElements);
+    return Number.isFinite(total) ? total : null;
+  }, [apiBase, authHeader]);
 
   const fetchWords = useCallback(async (pageToLoad = 0, append = false) => {
     if (pageToLoad === 0) {
@@ -390,10 +415,23 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
         status: (wk.status ?? 'UNKNOWN').toLowerCase(),
         updatedAt: wk.updatedAt ? new Date(wk.updatedAt).getTime() : 0,
       }));
+      const totalElements = Number(json?.data?.totalElements);
       setWords(prev => append ? [...prev, ...mapped] : mapped);
       setSource('server');
       setPage(pageToLoad);
-      setHasMore(mapped.length === PAGE_SIZE);
+      if (Number.isFinite(totalElements)) {
+        setHasMore(((pageToLoad + 1) * PAGE_SIZE) < totalElements);
+      } else {
+        setHasMore(mapped.length === PAGE_SIZE);
+      }
+      if (pageToLoad === 0) {
+        const [total, known, learning] = await Promise.all([
+          fetchServerTotal(),
+          fetchServerTotal('known'),
+          fetchServerTotal('learning'),
+        ]);
+        setServerCounts({ total, known, learning });
+      }
     } catch {
       // Server unavailable — fall back to local storage silently
       await loadFromLocal();
@@ -403,7 +441,7 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [apiBase, settings.authToken, settings.learnerLevel, filter, loadFromLocal]);
+  }, [apiBase, authHeader, settings.authToken, settings.learnerLevel, filter, fetchServerTotal, loadFromLocal]);
 
   useEffect(() => { fetchWords(0, false); }, [fetchWords]);
 
@@ -422,6 +460,16 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
     if (status === 'unknown') return C.red;
     return C.subtext;
   };
+
+  const displayedTotal = source === 'server' && serverCounts.total !== null
+    ? serverCounts.total
+    : filtered.length;
+  const displayedKnown = source === 'server' && serverCounts.known !== null
+    ? serverCounts.known
+    : words.filter(e => e.status === 'known').length;
+  const displayedLearning = source === 'server' && serverCounts.learning !== null
+    ? serverCounts.learning
+    : words.filter(e => e.status === 'learning').length;
 
   if (loading) return <div style={{ color: C.subtext, padding: '20px', textAlign: 'center' }}>Loading words…</div>;
 
@@ -489,7 +537,7 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
       </div>
 
       <div style={{ fontSize: '12px', color: C.subtext, marginBottom: '8px' }}>
-        {filtered.length} words · {words.filter(e => e.status === 'known').length} known · {words.filter(e => e.status === 'learning').length} learning
+        {displayedTotal} words · {displayedKnown} known · {displayedLearning} learning
         <span style={{ color: source === 'server' ? C.green : C.amber, marginLeft: '6px' }}>
           ● {source === 'server' ? 'Live' : 'Local'}
         </span>
