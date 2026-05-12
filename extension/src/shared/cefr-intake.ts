@@ -1,70 +1,78 @@
 import type { CEFRLevel, LearnerLevel } from './types';
-import { getLexemes, bulkSetLexemeStatus, getSettings, getAuthHeaders } from './storage';
+import { bulkSetLexemeStatus, getSettings, getAuthHeaders } from './storage';
 
 const BACKEND_URL = 'https://syntagma.omerhanyigit.online';
 
-const LEVEL_TO_CEFR: Record<LearnerLevel, CEFRLevel[]> = {
-  'beginner':           ['A1'],
-  'elementary':         ['A1', 'A2'],
-  'intermediate':       ['A1', 'A2', 'B1'],
-  'upper-intermediate': ['A1', 'A2', 'B1', 'B2'],
-  'advanced':           ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'],
+const LEVEL_TO_CEFR: Record<LearnerLevel, CEFRLevel> = {
+  'beginner': 'A1',
+  'elementary': 'A2',
+  'intermediate': 'B1',
+  'upper-intermediate': 'B2',
+  'advanced': 'C2',
 };
 
-export function getCefrLevelsForLearner(level: LearnerLevel): CEFRLevel[] {
-  return LEVEL_TO_CEFR[level] ?? ['A1'];
+function getCefrLevelForLearner(level: LearnerLevel): CEFRLevel {
+  return LEVEL_TO_CEFR[level] ?? 'A1';
 }
 
-async function loadCefrWordList(): Promise<Record<CEFRLevel, string[]>> {
-  const url = chrome.runtime.getURL('assets/cefr-words-en.json');
-  const res = await fetch(url);
-  return res.json();
+async function fetchKnownLemmasFromBackend(apiBase: string, headers: Record<string, string>): Promise<string[]> {
+  const known: string[] = [];
+  const size = 200;
+  let page = 0;
+
+  while (true) {
+    const res = await fetch(`${apiBase}/api/word-knowledge?status=KNOWN&size=${size}&page=${page}`, {
+      headers,
+    });
+    if (!res.ok) throw new Error(`Known words fetch failed: ${res.status}`);
+    const json = await res.json();
+    const content = json.data?.content ?? json.data ?? [];
+    if (!Array.isArray(content) || content.length === 0) break;
+    for (const wk of content) {
+      if (wk?.lemma) known.push(String(wk.lemma));
+    }
+    if (content.length < size) break;
+    page += 1;
+  }
+
+  return known;
 }
 
 /**
- * Mark all CEFR words at or below the given learner level as 'known'.
- * Skips words already marked known to avoid redundant writes.
- * Returns the count of newly marked words.
+ * Ask backend to mark all words up to the given CEFR level as 'known',
+ * then sync the local lexeme cache from the server.
+ * Returns the count of newly marked words reported by the backend.
  */
 export async function applyKnownWordsForLevel(level: LearnerLevel): Promise<number> {
-  const cefrLevels = getCefrLevelsForLearner(level);
-  const wordList = await loadCefrWordList();
-
-  const allWords: string[] = [];
-  for (const lvl of cefrLevels) {
-    if (wordList[lvl]) allWords.push(...wordList[lvl]);
-  }
-
-  const lexemes = await getLexemes();
-  const newWords = allWords.filter(w => lexemes[w]?.status !== 'known');
-
-  if (newWords.length === 0) return 0;
-
   const settings = await getSettings();
+  if (!settings.authToken || !settings.authUserId) {
+    console.warn('[Syntagma] CEFR intake skipped: missing auth token or user id');
+    return 0;
+  }
   const apiBase = settings.apiBaseUrl || BACKEND_URL;
+  const headers = {
+    ...getAuthHeaders(settings),
+    'X-User-Id': settings.authUserId,
+  };
 
-  // Chunk to avoid oversized storage writes and API payloads
-  const CHUNK = 500;
-  for (let i = 0; i < newWords.length; i += CHUNK) {
-    const chunk = newWords.slice(i, i + CHUNK);
-    await bulkSetLexemeStatus(chunk, 'known');
-    
-    if (settings.authToken) {
-      try {
-        const res = await fetch(`${apiBase}/api/word-knowledge/known-words`, {
-          method: 'POST',
-          headers: getAuthHeaders(settings),
-          body: JSON.stringify({ knownWords: chunk }),
-        });
-        if (!res.ok) {
-          console.warn(`[Syntagma] Backend sync failed for chunk: ${res.status}`);
-        }
-      } catch (err) {
-        console.warn('[Syntagma] Backend sync error:', err);
-      }
-    }
+  const cefrLevel = getCefrLevelForLearner(level);
+  const res = await fetch(`${apiBase}/api/word-knowledge/level`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ level: cefrLevel }),
+  });
+  if (!res.ok) {
+    console.warn(`[Syntagma] CEFR intake failed: ${res.status}`);
+    return 0;
+  }
+  const json = await res.json();
+  const updated = Number(json?.data?.updated ?? 0);
+
+  const knownLemmas = await fetchKnownLemmasFromBackend(apiBase, headers);
+  if (knownLemmas.length > 0) {
+    await bulkSetLexemeStatus(knownLemmas, 'known');
   }
 
-  console.log(`[Syntagma] CEFR intake: marked ${newWords.length} words as known for level ${level}`);
-  return newWords.length;
+  console.log(`[Syntagma] CEFR intake: marked ${updated} words as known for level ${level}`);
+  return updated;
 }
