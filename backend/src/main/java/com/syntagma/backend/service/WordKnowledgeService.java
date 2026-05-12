@@ -26,7 +26,8 @@ public class WordKnowledgeService {
 
     private final WordKnowledgeRepository wordKnowledgeRepository;
 
-    private static final Set<String> SUPPORTED_LEVELS = Set.of("a1", "a2", "b1", "b2");
+    private static final List<String> LEVEL_ORDER = List.of("a1", "a2", "b1", "b2", "c1", "c2");
+    private static final Set<String> SUPPORTED_LEVELS = Set.copyOf(LEVEL_ORDER);
 
     public Page<WordKnowledgeResponse> getAll(Long userId, KnowledgeStatus status, Pageable pageable) {
         if (status != null) {
@@ -69,7 +70,7 @@ public class WordKnowledgeService {
 
     @Transactional
     public int markKnownByLevel(Long userId, String level) {
-        List<String> words = loadLevelWords(level);
+        List<String> words = loadLevelWordsUpTo(level);
         List<WordKnowledgeBatchEntry> entries = words.stream()
                 .map(word -> new WordKnowledgeBatchEntry(word, KnowledgeStatus.KNOWN))
                 .toList();
@@ -108,5 +109,21 @@ public class WordKnowledgeService {
         }
 
         return words;
+    }
+
+    private List<String> loadLevelWordsUpTo(String level) {
+        String normalized = level == null ? "" : level.trim().toLowerCase(Locale.ROOT);
+        if (!SUPPORTED_LEVELS.contains(normalized)) {
+            throw new IllegalArgumentException("Unsupported level: " + level);
+        }
+
+        List<String> all = new ArrayList<>();
+        for (String current : LEVEL_ORDER) {
+            all.addAll(loadLevelWords(current));
+            if (current.equals(normalized)) {
+                break;
+            }
+        }
+        return all;
     }
 }
