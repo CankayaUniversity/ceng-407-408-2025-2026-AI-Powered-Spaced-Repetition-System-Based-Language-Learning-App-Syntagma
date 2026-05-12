@@ -1488,6 +1488,7 @@ function ReaderView({
       {/* Word popup */}
       {wordPopup && (
         <ReaderWordPopup
+          key={`${wordPopup.word}-${wordPopup.x}-${wordPopup.y}`}
           word={wordPopup.word}
           surface={wordPopup.surface}
           sentence={wordPopup.sentence}
