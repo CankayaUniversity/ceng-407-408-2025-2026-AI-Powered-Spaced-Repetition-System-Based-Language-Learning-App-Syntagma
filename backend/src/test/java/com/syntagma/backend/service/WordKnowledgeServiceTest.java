@@ -8,6 +8,7 @@ import com.syntagma.backend.repository.WordKnowledgeRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -98,5 +99,28 @@ class WordKnowledgeServiceTest {
 
         assertEquals(3, updated);
         verify(wordKnowledgeRepository, times(3)).save(any(WordKnowledge.class));
+    }
+
+    @Test
+    void markKnownByLevel_SetsKnownAndUnknownStatuses() {
+        when(wordKnowledgeRepository.findByUserIdAndLemma(anyLong(), anyString()))
+                .thenReturn(Optional.empty());
+        when(wordKnowledgeRepository.save(any(WordKnowledge.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        int updated = wordKnowledgeService.markKnownByLevel(1L, "a1");
+
+        ArgumentCaptor<WordKnowledge> captor = ArgumentCaptor.forClass(WordKnowledge.class);
+        verify(wordKnowledgeRepository, times(updated)).save(captor.capture());
+        List<WordKnowledge> savedWords = captor.getAllValues();
+
+        assertTrue(savedWords.stream().anyMatch(wk -> wk.getStatus() == KnowledgeStatus.KNOWN));
+        assertTrue(savedWords.stream().anyMatch(wk -> wk.getStatus() == KnowledgeStatus.UNKNOWN));
+    }
+
+    @Test
+    void markKnownByLevel_InvalidLevel_ThrowsException() {
+        assertThrows(IllegalArgumentException.class,
+                () -> wordKnowledgeService.markKnownByLevel(1L, "invalid"));
+        verify(wordKnowledgeRepository, never()).save(any(WordKnowledge.class));
     }
 }

@@ -403,7 +403,7 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [apiBase, settings.authToken, filter, loadFromLocal]);
+  }, [apiBase, settings.authToken, settings.learnerLevel, filter, loadFromLocal]);
 
   useEffect(() => { fetchWords(0, false); }, [fetchWords]);
 

@@ -352,9 +352,11 @@ onMessage(async (msg, sender) => {
       }
       // When learner level changes, mark CEFR words as known
       if (msg.payload.learnerLevel) {
-        applyKnownWordsForLevel(msg.payload.learnerLevel).catch(err =>
-          console.warn('[Syntagma] CEFR intake error:', err)
-        );
+        try {
+          await applyKnownWordsForLevel(msg.payload.learnerLevel);
+        } catch (err) {
+          console.warn('[Syntagma] CEFR intake error:', err);
+        }
       }
       return { ok: true };
     }
