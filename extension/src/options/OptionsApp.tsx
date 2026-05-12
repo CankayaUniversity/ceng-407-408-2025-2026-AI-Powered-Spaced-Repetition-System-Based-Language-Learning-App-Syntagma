@@ -342,7 +342,11 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
 
   const apiBase = settings.apiBaseUrl || BACKEND_URL;
   const authHeader: Record<string, string> = settings.authToken
-    ? { 'Authorization': `Bearer ${settings.authToken}`, 'Content-Type': 'application/json' }
+    ? {
+        'Authorization': `Bearer ${settings.authToken}`,
+        'Content-Type': 'application/json',
+        ...(settings.authUserId ? { 'X-User-Id': settings.authUserId } : {}),
+      }
     : {};
 
   const loadFromLocal = useCallback(async () => {

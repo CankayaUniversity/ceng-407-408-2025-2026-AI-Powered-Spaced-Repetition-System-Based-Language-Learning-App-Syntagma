@@ -8,6 +8,7 @@ import com.syntagma.backend.dto.request.WordKnowledgeUpdateRequest;
 import com.syntagma.backend.dto.response.ApiResponse;
 import com.syntagma.backend.dto.response.WordKnowledgeResponse;
 import com.syntagma.backend.entity.enums.KnowledgeStatus;
+import com.syntagma.backend.security.SecurityUtils;
 import com.syntagma.backend.service.WordKnowledgeService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -29,42 +30,42 @@ public class WordKnowledgeController {
 
     @GetMapping
     public ResponseEntity<ApiResponse<Page<WordKnowledgeResponse>>> getAll(
-            @RequestHeader("X-User-Id") Long userId,
             @RequestParam(required = false) KnowledgeStatus status,
             @PageableDefault(size = 50) Pageable pageable) {
+        Long userId = SecurityUtils.getAuthenticatedUserId();
         Page<WordKnowledgeResponse> page = wordKnowledgeService.getAll(userId, status, pageable);
         return ResponseEntity.ok(ApiResponse.success(page));
     }
 
     @GetMapping("/{lemma}")
     public ResponseEntity<ApiResponse<WordKnowledgeResponse>> getByLemma(
-            @RequestHeader("X-User-Id") Long userId,
             @PathVariable String lemma) {
+        Long userId = SecurityUtils.getAuthenticatedUserId();
         WordKnowledgeResponse response = wordKnowledgeService.getByLemma(userId, lemma);
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 
     @PutMapping("/{lemma}")
     public ResponseEntity<ApiResponse<WordKnowledgeResponse>> update(
-            @RequestHeader("X-User-Id") Long userId,
             @PathVariable String lemma,
             @Valid @RequestBody WordKnowledgeUpdateRequest request) {
+        Long userId = SecurityUtils.getAuthenticatedUserId();
         WordKnowledgeResponse response = wordKnowledgeService.update(userId, lemma, request.status());
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 
     @PostMapping("/batch")
     public ResponseEntity<ApiResponse<Map<String, Integer>>> batchUpdate(
-            @RequestHeader("X-User-Id") Long userId,
             @Valid @RequestBody WordKnowledgeBatchRequest request) {
+        Long userId = SecurityUtils.getAuthenticatedUserId();
         int updated = wordKnowledgeService.batchUpdate(userId, request.entries());
         return ResponseEntity.ok(ApiResponse.success(Map.of("updated", updated)));
     }
 
     @PostMapping("/known-words")
     public ResponseEntity<ApiResponse<Map<String, Integer>>> intakeKnownWords(
-            @RequestHeader("X-User-Id") Long userId,
             @Valid @RequestBody KnownWordsIntakeRequest request) {
+        Long userId = SecurityUtils.getAuthenticatedUserId();
         List<WordKnowledgeBatchEntry> entries = request.knownWords().stream()
                 .map(word -> new WordKnowledgeBatchEntry(word, KnowledgeStatus.KNOWN))
                 .toList();
@@ -74,8 +75,8 @@ public class WordKnowledgeController {
 
     @PostMapping("/level")
     public ResponseEntity<ApiResponse<Map<String, Integer>>> intakeKnownWordsByLevel(
-            @RequestHeader("X-User-Id") Long userId,
             @Valid @RequestBody LevelKnownWordsRequest request) {
+        Long userId = SecurityUtils.getAuthenticatedUserId();
         int updated = wordKnowledgeService.markKnownByLevel(userId, request.level());
         return ResponseEntity.ok(ApiResponse.success(Map.of("updated", updated)));
     }

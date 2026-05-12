@@ -54,6 +54,9 @@ export function getAuthHeaders(settings: UserSettings): Record<string, string> {
   if (settings.authToken) {
     headers['Authorization'] = `Bearer ${settings.authToken}`;
   }
+  if (settings.authUserId) {
+    headers['X-User-Id'] = settings.authUserId;
+  }
   return headers;
 }
 
