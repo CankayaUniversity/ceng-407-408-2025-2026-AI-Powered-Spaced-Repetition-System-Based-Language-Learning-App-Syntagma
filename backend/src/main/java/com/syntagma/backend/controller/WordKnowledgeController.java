@@ -54,6 +54,14 @@ public class WordKnowledgeController {
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 
+    @DeleteMapping("/{lemma}")
+    public ResponseEntity<ApiResponse<Map<String, Boolean>>> delete(
+            @PathVariable String lemma) {
+        Long userId = SecurityUtils.getAuthenticatedUserId();
+        wordKnowledgeService.delete(userId, lemma);
+        return ResponseEntity.ok(ApiResponse.success(Map.of("deleted", true)));
+    }
+
     @PostMapping("/batch")
     public ResponseEntity<ApiResponse<Map<String, Integer>>> batchUpdate(
             @Valid @RequestBody WordKnowledgeBatchRequest request) {

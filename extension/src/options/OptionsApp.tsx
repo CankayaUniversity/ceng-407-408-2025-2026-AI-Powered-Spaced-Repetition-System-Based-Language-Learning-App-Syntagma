@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import type { UserSettings, LexemeEntry, FlashcardPayload } from '../shared/types';
+import type { UserSettings, LexemeEntry, FlashcardPayload, WordStatus } from '../shared/types';
 import { DEFAULT_SETTINGS, userScopedKey } from '../shared/storage';
 import { sendMessage } from '../shared/messages';
 
@@ -289,11 +289,11 @@ function GeneralTab({ settings, onUpdate }: { settings: UserSettings; onUpdate: 
         value={settings.learnerLevel}
         onChange={v => onUpdate({ learnerLevel: v as UserSettings['learnerLevel'] })}
         options={[
-          { value: 'beginner', label: 'Beginner (A1-A2)' },
-          { value: 'elementary', label: 'Elementary (A2)' },
-          { value: 'intermediate', label: 'Intermediate (B1)' },
-          { value: 'upper-intermediate', label: 'Upper Intermediate (B2)' },
-          { value: 'advanced', label: 'Advanced (C1-C2)' },
+          { value: 'beginner', label: 'Beginner (A1 · ~1,235 words)' },
+          { value: 'elementary', label: 'Elementary (A2 · ~2,531 words)' },
+          { value: 'intermediate', label: 'Intermediate (B1 · ~4,535 words)' },
+          { value: 'upper-intermediate', label: 'Upper Intermediate (B2 · ~6,983 words)' },
+          { value: 'advanced', label: 'Advanced (C2 · ~9,190 words)' },
         ]}
       />
 
@@ -320,10 +320,13 @@ const BACKEND_URL = 'https://syntagma.omerhanyigit.online';
 // ─── Tab: Word Browser ───────────────────────────────────────────────────────
 
 type StatusFilter = 'all' | 'unknown' | 'learning' | 'known' | 'ignored';
+type EditableWordStatus = Exclude<WordStatus, 'unknown'>;
+
+const EDITABLE_WORD_STATUSES: EditableWordStatus[] = ['learning', 'known', 'ignored'];
 
 interface WordKnowledgeEntry {
   lemma: string;
-  status: string;
+  status: WordStatus;
   updatedAt: number;
 }
 
@@ -331,6 +334,19 @@ interface ServerWordCounts {
   total: number | null;
   known: number | null;
   learning: number | null;
+  ignored: number | null;
+}
+
+function normalizeLemma(lemma: string): string {
+  return lemma.trim().toLowerCase();
+}
+
+function toWordStatus(raw: unknown): WordStatus {
+  const normalized = String(raw ?? '').toLowerCase();
+  if (normalized === 'known' || normalized === 'learning' || normalized === 'ignored') {
+    return normalized;
+  }
+  return 'unknown';
 }
 
 function WordBrowserTab({ settings }: { settings: UserSettings }) {
@@ -347,7 +363,13 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
     total: null,
     known: null,
     learning: null,
+    ignored: null,
   });
+  const [newLemma, setNewLemma] = useState('');
+  const [newStatus, setNewStatus] = useState<EditableWordStatus>('learning');
+  const [savingLemma, setSavingLemma] = useState<string | null>(null);
+  const [deletingLemma, setDeletingLemma] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const PAGE_SIZE = 200;
 
@@ -368,11 +390,11 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
     const entries = Object.values(result[key] ?? {}) as LexemeEntry[];
     setWords(entries.map(e => ({
       lemma: e.lemma,
-      status: e.status,
+      status: toWordStatus(e.status),
       updatedAt: e.lastSeenAt || 0,
     })));
     setSource('local');
-    setServerCounts({ total: null, known: null, learning: null });
+    setServerCounts({ total: null, known: null, learning: null, ignored: null });
   }, [settings.authUserId]);
 
   const fetchServerTotal = useCallback(async (status?: Exclude<StatusFilter, 'all'>): Promise<number | null> => {
@@ -412,7 +434,7 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
       const content = json.data?.content ?? json.data ?? [];
       const mapped: WordKnowledgeEntry[] = content.map((wk: any) => ({
         lemma: wk.lemma ?? '',
-        status: (wk.status ?? 'UNKNOWN').toLowerCase(),
+        status: toWordStatus(wk.status),
         updatedAt: wk.updatedAt ? new Date(wk.updatedAt).getTime() : 0,
       }));
       const totalElements = Number(json?.data?.totalElements);
@@ -425,15 +447,15 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
         setHasMore(mapped.length === PAGE_SIZE);
       }
       if (pageToLoad === 0) {
-        const [total, known, learning] = await Promise.all([
+        const [total, known, learning, ignored] = await Promise.all([
           fetchServerTotal(),
           fetchServerTotal('known'),
           fetchServerTotal('learning'),
+          fetchServerTotal('ignored'),
         ]);
-        setServerCounts({ total, known, learning });
+        setServerCounts({ total, known, learning, ignored });
       }
     } catch {
-      // Server unavailable — fall back to local storage silently
       await loadFromLocal();
       setPage(0);
       setHasMore(false);
@@ -441,7 +463,7 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [apiBase, authHeader, settings.authToken, settings.learnerLevel, filter, fetchServerTotal, loadFromLocal]);
+  }, [apiBase, authHeader, settings.authToken, filter, fetchServerTotal, loadFromLocal]);
 
   useEffect(() => { fetchWords(0, false); }, [fetchWords]);
 
@@ -454,7 +476,7 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
       return 0;
     });
 
-  const statusColor = (status: string) => {
+  const statusColor = (status: WordStatus) => {
     if (status === 'known') return C.green;
     if (status === 'learning') return C.amber;
     if (status === 'unknown') return C.red;
@@ -462,7 +484,9 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
   };
 
   const displayedTotal = source === 'server' && serverCounts.total !== null
-    ? serverCounts.total
+    ? (serverCounts.known !== null && serverCounts.learning !== null && serverCounts.ignored !== null
+      ? serverCounts.known + serverCounts.learning + serverCounts.ignored
+      : serverCounts.total)
     : filtered.length;
   const displayedKnown = source === 'server' && serverCounts.known !== null
     ? serverCounts.known
@@ -471,18 +495,162 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
     ? serverCounts.learning
     : words.filter(e => e.status === 'learning').length;
 
-  if (loading) return <div style={{ color: C.subtext, padding: '20px', textAlign: 'center' }}>Loading words…</div>;
+  const upsertWord = useCallback(async (lemma: string, status: WordStatus) => {
+    const normalized = normalizeLemma(lemma);
+    if (!normalized) return { ok: false, error: 'Please enter a word.' };
+    return sendMessage<{ ok: boolean; error?: string }>({
+      type: 'UPSERT_WORD_KNOWLEDGE',
+      payload: { lemma: normalized, status },
+    });
+  }, []);
+
+  const removeWord = useCallback(async (lemma: string) => {
+    const normalized = normalizeLemma(lemma);
+    if (!normalized) return { ok: false, error: 'Invalid word.' };
+    return sendMessage<{ ok: boolean; error?: string }>({
+      type: 'DELETE_WORD_KNOWLEDGE',
+      payload: { lemma: normalized },
+    });
+  }, []);
+
+  const handleCreate = useCallback(async () => {
+    setActionError(null);
+    const normalized = normalizeLemma(newLemma);
+    if (!normalized) {
+      setActionError('Please enter a word.');
+      return;
+    }
+    setSavingLemma(`create:${normalized}`);
+    try {
+      const result = await upsertWord(normalized, newStatus);
+      if (!result.ok) {
+        setActionError(result.error ?? 'Could not create word.');
+        return;
+      }
+      setNewLemma('');
+      await fetchWords(0, false);
+    } catch (err) {
+      setActionError((err as Error).message);
+    } finally {
+      setSavingLemma(null);
+    }
+  }, [newLemma, newStatus, upsertWord, fetchWords]);
+
+  const handleStatusChange = useCallback(async (lemma: string, nextStatus: EditableWordStatus) => {
+    setActionError(null);
+    setSavingLemma(lemma);
+    try {
+      const result = await upsertWord(lemma, nextStatus);
+      if (!result.ok) {
+        setActionError(result.error ?? 'Could not update word.');
+        return;
+      }
+      await fetchWords(0, false);
+    } catch (err) {
+      setActionError((err as Error).message);
+    } finally {
+      setSavingLemma(null);
+    }
+  }, [upsertWord, fetchWords]);
+
+  const handleDelete = useCallback(async (lemma: string) => {
+    setActionError(null);
+    if (!window.confirm(`Remove "${lemma}" from known words?`)) return;
+    setDeletingLemma(lemma);
+    try {
+      const result = await removeWord(lemma);
+      if (!result.ok) {
+        setActionError(result.error ?? 'Could not delete word.');
+        return;
+      }
+      await fetchWords(0, false);
+    } catch (err) {
+      setActionError((err as Error).message);
+    } finally {
+      setDeletingLemma(null);
+    }
+  }, [removeWord, fetchWords]);
+
+  if (loading) return <div style={{ color: C.subtext, padding: '20px', textAlign: 'center' }}>Loading words...</div>;
 
   return (
     <div>
+      {actionError && (
+        <div style={{
+          background: C.red + '20',
+          border: `1px solid ${C.red}`,
+          borderRadius: '6px',
+          padding: '8px 10px',
+          marginBottom: '10px',
+          fontSize: '12px',
+          color: C.red,
+        }}>
+          {actionError}
+        </div>
+      )}
 
-      {/* Controls */}
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+        <input
+          type="text"
+          value={newLemma}
+          onChange={e => setNewLemma(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleCreate()}
+          placeholder="Add word..."
+          style={{
+            flex: 1,
+            minWidth: '120px',
+            background: C.surface0,
+            border: `1px solid ${C.surface1}`,
+            borderRadius: '6px',
+            padding: '6px 10px',
+            color: C.text,
+            fontSize: '13px',
+            outline: 'none',
+          }}
+        />
+        <select
+          value={newStatus}
+          onChange={e => setNewStatus(e.target.value as EditableWordStatus)}
+          style={{
+            background: C.surface0,
+            border: `1px solid ${C.surface1}`,
+            borderRadius: '6px',
+            padding: '6px 10px',
+            color: C.text,
+            fontSize: '13px',
+            outline: 'none',
+          }}
+        >
+          {EDITABLE_WORD_STATUSES.map(status => (
+            <option key={status} value={status}>
+              {status[0].toUpperCase() + status.slice(1)}
+            </option>
+          ))}
+        </select>
+        <button
+          onClick={handleCreate}
+          disabled={!newLemma.trim() || savingLemma?.startsWith('create:') || deletingLemma !== null}
+          style={{
+            background: C.green,
+            color: C.base,
+            border: 'none',
+            borderRadius: '6px',
+            padding: '6px 12px',
+            fontSize: '12px',
+            cursor: !newLemma.trim() || savingLemma?.startsWith('create:') || deletingLemma !== null ? 'not-allowed' : 'pointer',
+            opacity: !newLemma.trim() || savingLemma?.startsWith('create:') || deletingLemma !== null ? 0.6 : 1,
+          }}
+        >
+          {savingLemma?.startsWith('create:') ? 'Saving...' : '+ Add'}
+        </button>
+      </div>
+
       <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
         <input
           type="text"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          placeholder="Search words…"
+          placeholder="Search words..."
           style={{
             flex: 1,
             minWidth: '120px',
@@ -532,18 +700,17 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
           <option value="updatedAt">Sort: Last updated</option>
         </select>
         <button onClick={() => fetchWords()} style={{ background: C.surface0, border: `1px solid ${C.surface1}`, borderRadius: '4px', padding: '4px 8px', color: C.text, cursor: 'pointer', fontSize: '12px' }}>
-          ↻ Refresh
+          Refresh
         </button>
       </div>
 
       <div style={{ fontSize: '12px', color: C.subtext, marginBottom: '8px' }}>
         {displayedTotal} words · {displayedKnown} known · {displayedLearning} learning
         <span style={{ color: source === 'server' ? C.green : C.amber, marginLeft: '6px' }}>
-          ● {source === 'server' ? 'Live' : 'Local'}
+          {source === 'server' ? 'Live' : 'Local'}
         </span>
       </div>
 
-      {/* Word table */}
       {filtered.length === 0 ? (
         <div style={{
           textAlign: 'center',
@@ -562,7 +729,7 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
             <thead>
               <tr style={{ borderBottom: `2px solid ${C.surface1}` }}>
-                {['Word', 'Status', 'Last Updated'].map(h => (
+                {['Word', 'Status', 'Last Updated', 'Actions'].map(h => (
                   <th key={h} style={{ textAlign: 'left', padding: '6px 8px', color: C.subtext, fontWeight: 600 }}>{h}</th>
                 ))}
               </tr>
@@ -572,16 +739,58 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
                 <tr key={entry.lemma} style={{ borderBottom: `1px solid ${C.surface0}` }}>
                   <td style={{ padding: '6px 8px', color: C.text, fontWeight: 500 }}>{entry.lemma}</td>
                   <td style={{ padding: '6px 8px' }}>
-                    <span style={{
-                      color: statusColor(entry.status),
-                      fontSize: '12px',
-                      textTransform: 'capitalize',
-                    }}>
-                      {entry.status}
-                    </span>
+                    {entry.status === 'unknown' ? (
+                      <span style={{
+                        color: statusColor(entry.status),
+                        fontSize: '12px',
+                        textTransform: 'capitalize',
+                      }}>
+                        {entry.status}
+                      </span>
+                    ) : (
+                      <select
+                        value={entry.status}
+                        onChange={e => handleStatusChange(entry.lemma, e.target.value as EditableWordStatus)}
+                        disabled={savingLemma === entry.lemma || deletingLemma === entry.lemma}
+                        style={{
+                          background: C.surface0,
+                          border: `1px solid ${C.surface1}`,
+                          borderRadius: '6px',
+                          padding: '4px 8px',
+                          color: statusColor(entry.status),
+                          fontSize: '12px',
+                          outline: 'none',
+                          textTransform: 'capitalize',
+                        }}
+                      >
+                        {EDITABLE_WORD_STATUSES.map(status => (
+                          <option key={status} value={status}>
+                            {status[0].toUpperCase() + status.slice(1)}
+                          </option>
+                        ))}
+                      </select>
+                    )}
                   </td>
                   <td style={{ padding: '6px 8px', color: C.subtext, fontSize: '12px' }}>
-                    {entry.updatedAt ? new Date(entry.updatedAt).toLocaleDateString() : '—'}
+                    {entry.updatedAt ? new Date(entry.updatedAt).toLocaleDateString() : '-'}
+                  </td>
+                  <td style={{ padding: '6px 8px' }}>
+                    <button
+                      onClick={() => handleDelete(entry.lemma)}
+                      disabled={savingLemma === entry.lemma || deletingLemma === entry.lemma}
+                      style={{
+                        background: C.red + '12',
+                        border: `1px solid ${C.red + '50'}`,
+                        color: C.red,
+                        borderRadius: '4px',
+                        padding: '4px 8px',
+                        fontSize: '11px',
+                        cursor: savingLemma === entry.lemma || deletingLemma === entry.lemma ? 'not-allowed' : 'pointer',
+                        opacity: savingLemma === entry.lemma || deletingLemma === entry.lemma ? 0.6 : 1,
+                      }}
+                    >
+                      {deletingLemma === entry.lemma ? 'Removing...' : 'Delete'}
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -602,14 +811,13 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
                   fontSize: '12px',
                 }}
               >
-                {loadingMore ? 'Loading…' : 'Show more'}
+                {loadingMore ? 'Loading...' : 'Show more'}
               </button>
             </div>
           )}
         </div>
       )}
 
-      {/* Server info */}
       <div style={{
         marginTop: '16px',
         padding: '10px',
@@ -625,8 +833,6 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
     </div>
   );
 }
-
-// ─── Audio play button for flashcard rows ────────────────────────────────────
 
 function AudioPlayButton({ url }: { url: string }) {
   const [playing, setPlaying] = useState(false);

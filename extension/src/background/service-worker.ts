@@ -3,6 +3,7 @@ import {
   getLexemes,
   setLexemeStatus,
   bulkSetLexemeStatus,
+  deleteLexeme,
   getSettings,
   setSettings,
   saveFlashcard,
@@ -384,10 +385,17 @@ onMessage(async (msg, sender) => {
       const tabs = await chrome.tabs.query({});
       for (const tab of tabs) {
         if (tab.id) {
-          chrome.tabs.sendMessage(tab.id, {
-            type: 'STATUS_CHANGED',
-            payload: { lemma, status },
-          }).catch(() => {});
+          if (status === 'unknown') {
+            chrome.tabs.sendMessage(tab.id, {
+              type: 'WORD_KNOWLEDGE_DELETED',
+              payload: { lemma },
+            }).catch(() => {});
+          } else {
+            chrome.tabs.sendMessage(tab.id, {
+              type: 'STATUS_CHANGED',
+              payload: { lemma, status },
+            }).catch(() => {});
+          }
         }
       }
       return { ok: true };
@@ -418,9 +426,101 @@ onMessage(async (msg, sender) => {
       const tabs = await chrome.tabs.query({});
       for (const tab of tabs) {
         if (tab.id) {
+          if (status === 'unknown') {
+            for (const lemma of lemmas) {
+              chrome.tabs.sendMessage(tab.id, {
+                type: 'WORD_KNOWLEDGE_DELETED',
+                payload: { lemma },
+              }).catch(() => {});
+            }
+          } else {
+            chrome.tabs.sendMessage(tab.id, {
+              type: 'BULK_STATUS_CHANGED',
+              payload: { lemmas, status },
+            }).catch(() => {});
+          }
+        }
+      }
+      return { ok: true };
+    }
+
+    case 'UPSERT_WORD_KNOWLEDGE': {
+      const normalizedLemma = msg.payload.lemma.trim().toLowerCase();
+      const { status } = msg.payload;
+      if (!normalizedLemma) return { ok: false, error: 'Lemma is required' };
+
+      if (status === 'unknown') {
+        await deleteLexeme(normalizedLemma);
+      } else {
+        await setLexemeStatus(normalizedLemma, status);
+      }
+
+      const s = await getSettings();
+      if (s.authToken) {
+        const apiBase = s.apiBaseUrl || BACKEND_URL;
+        try {
+          const method = status === 'unknown' ? 'DELETE' : 'PUT';
+          const res = await fetch(`${apiBase}/api/word-knowledge/${encodeURIComponent(normalizedLemma)}`, {
+            method,
+            headers: getAuthHeaders(s),
+            ...(status === 'unknown' ? {} : { body: JSON.stringify({ status: status.toUpperCase() }) }),
+          });
+          await refreshTokenIfNeeded(res);
+          if (!res.ok) {
+            return { ok: false, error: await getResponseError(res, `Server returned ${res.status}`) };
+          }
+        } catch (err) {
+          return { ok: false, error: (err as Error).message };
+        }
+      }
+
+      const tabs = await chrome.tabs.query({});
+      for (const tab of tabs) {
+        if (!tab.id) continue;
+        if (status === 'unknown') {
           chrome.tabs.sendMessage(tab.id, {
-            type: 'BULK_STATUS_CHANGED',
-            payload: { lemmas, status },
+            type: 'WORD_KNOWLEDGE_DELETED',
+            payload: { lemma: normalizedLemma },
+          }).catch(() => {});
+        } else {
+          chrome.tabs.sendMessage(tab.id, {
+            type: 'STATUS_CHANGED',
+            payload: { lemma: normalizedLemma, status },
+          }).catch(() => {});
+        }
+      }
+      return { ok: true };
+    }
+
+    case 'DELETE_WORD_KNOWLEDGE': {
+      const normalizedLemma = msg.payload.lemma.trim().toLowerCase();
+      if (!normalizedLemma) return { ok: false, error: 'Lemma is required' };
+
+      await deleteLexeme(normalizedLemma);
+
+      const s = await getSettings();
+      if (s.authToken) {
+        const apiBase = s.apiBaseUrl || BACKEND_URL;
+        try {
+          const res = await fetch(`${apiBase}/api/word-knowledge/${encodeURIComponent(normalizedLemma)}`, {
+            method: 'DELETE',
+            headers: getAuthHeaders(s),
+          });
+          await refreshTokenIfNeeded(res);
+          if (!res.ok) {
+            return { ok: false, error: await getResponseError(res, `Server returned ${res.status}`) };
+          }
+        } catch (err) {
+          return { ok: false, error: (err as Error).message };
+        }
+      }
+
+      const tabs = await chrome.tabs.query({});
+      for (const tab of tabs) {
+        if (tab.id) {
+          chrome.tabs.sendMessage(tab.id, {
+            type: 'WORD_KNOWLEDGE_DELETED',
+            payload: { lemma: normalizedLemma },
           }).catch(() => {});
         }
       }

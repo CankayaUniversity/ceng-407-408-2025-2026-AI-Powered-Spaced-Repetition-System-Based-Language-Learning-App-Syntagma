@@ -19,6 +19,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -76,11 +77,29 @@ class WordKnowledgeServiceTest {
                 .thenReturn(Optional.empty());
         when(wordKnowledgeRepository.save(any(WordKnowledge.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        WordKnowledgeResponse response = wordKnowledgeService.update(1L, "newword", KnowledgeStatus.UNKNOWN);
+        WordKnowledgeResponse response = wordKnowledgeService.update(1L, "newword", KnowledgeStatus.LEARNING);
 
         assertEquals("newword", response.lemma());
-        assertEquals(KnowledgeStatus.UNKNOWN, response.status());
+        assertEquals(KnowledgeStatus.LEARNING, response.status());
         verify(wordKnowledgeRepository).save(any(WordKnowledge.class));
+    }
+
+    @Test
+    void update_UnknownStatus_DeletesEntry() {
+        WordKnowledgeResponse response = wordKnowledgeService.update(1L, "hello", KnowledgeStatus.UNKNOWN);
+
+        assertEquals("hello", response.lemma());
+        assertEquals(KnowledgeStatus.UNKNOWN, response.status());
+        verify(wordKnowledgeRepository).deleteByUserIdAndLemma(1L, "hello");
+        verify(wordKnowledgeRepository, never()).save(any(WordKnowledge.class));
+    }
+
+    @Test
+    void delete_RemovesEntryForUserAndLemma() {
+        wordKnowledgeService.delete(2L, "browser");
+
+        verify(wordKnowledgeRepository).deleteByUserIdAndLemma(2L, "browser");
+        verify(wordKnowledgeRepository, never()).save(any(WordKnowledge.class));
     }
 
     @Test
@@ -98,23 +117,27 @@ class WordKnowledgeServiceTest {
         int updated = wordKnowledgeService.batchUpdate(1L, entries);
 
         assertEquals(3, updated);
-        verify(wordKnowledgeRepository, times(3)).save(any(WordKnowledge.class));
+        verify(wordKnowledgeRepository, times(2)).save(any(WordKnowledge.class));
+        verify(wordKnowledgeRepository).deleteByUserIdAndLemma(1L, "word1");
     }
 
     @Test
-    void markKnownByLevel_SetsKnownAndUnknownStatuses() {
+    void markKnownByLevel_SetsKnownAndDeletesAboveLevelWords() {
         when(wordKnowledgeRepository.findByUserIdAndLemma(anyLong(), anyString()))
                 .thenReturn(Optional.empty());
         when(wordKnowledgeRepository.save(any(WordKnowledge.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(wordKnowledgeRepository.deleteByUserIdAndLemmaIn(eq(1L), anyCollection()))
+                .thenReturn(10L);
 
         int updated = wordKnowledgeService.markKnownByLevel(1L, "a1");
 
         ArgumentCaptor<WordKnowledge> captor = ArgumentCaptor.forClass(WordKnowledge.class);
-        verify(wordKnowledgeRepository, times(updated)).save(captor.capture());
+        verify(wordKnowledgeRepository, atLeastOnce()).save(captor.capture());
+        verify(wordKnowledgeRepository).deleteByUserIdAndLemmaIn(eq(1L), anyCollection());
         List<WordKnowledge> savedWords = captor.getAllValues();
 
-        assertTrue(savedWords.stream().anyMatch(wk -> wk.getStatus() == KnowledgeStatus.KNOWN));
-        assertTrue(savedWords.stream().anyMatch(wk -> wk.getStatus() == KnowledgeStatus.UNKNOWN));
+        assertTrue(updated > 0);
+        assertTrue(savedWords.stream().allMatch(wk -> wk.getStatus() == KnowledgeStatus.KNOWN));
     }
 
     @Test
@@ -122,5 +145,6 @@ class WordKnowledgeServiceTest {
         assertThrows(IllegalArgumentException.class,
                 () -> wordKnowledgeService.markKnownByLevel(1L, "invalid"));
         verify(wordKnowledgeRepository, never()).save(any(WordKnowledge.class));
+        verify(wordKnowledgeRepository, never()).deleteByUserIdAndLemmaIn(anyLong(), anyCollection());
     }
 }

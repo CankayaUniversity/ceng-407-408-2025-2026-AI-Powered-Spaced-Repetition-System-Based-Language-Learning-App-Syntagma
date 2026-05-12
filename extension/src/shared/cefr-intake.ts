@@ -1,5 +1,6 @@
 import type { CEFRLevel, LearnerLevel } from './types';
 import { bulkSetLexemeStatus, getSettings, getAuthHeaders, getLexemes } from './storage';
+import { getAllCefrWords, getCefrWordsUpTo } from './cefr-level-words';
 
 const BACKEND_URL = 'https://syntagma.omerhanyigit.online';
 
@@ -16,6 +17,29 @@ function getCefrLevelForLearner(level: LearnerLevel): CEFRLevel {
 }
 
 type BackendKnowledgeStatus = 'KNOWN' | 'UNKNOWN';
+const BATCH_CHUNK_SIZE = 500;
+
+async function batchSetStatusOnBackend(
+  apiBase: string,
+  headers: Record<string, string>,
+  lemmas: string[],
+  status: BackendKnowledgeStatus,
+): Promise<void> {
+  for (let i = 0; i < lemmas.length; i += BATCH_CHUNK_SIZE) {
+    const chunk = lemmas.slice(i, i + BATCH_CHUNK_SIZE);
+    if (chunk.length === 0) continue;
+    const res = await fetch(`${apiBase}/api/word-knowledge/batch`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        entries: chunk.map(lemma => ({ lemma, status })),
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`Batch ${status} sync failed: ${res.status}`);
+    }
+  }
+}
 
 async function fetchLemmasByStatusFromBackend(
   apiBase: string,
@@ -74,21 +98,32 @@ export async function applyKnownWordsForLevel(level: LearnerLevel): Promise<numb
   const json = await res.json();
   const updated = Number(json?.data?.updated ?? 0);
 
-  const [knownLemmas, unknownLemmas] = await Promise.all([
-    fetchLemmasByStatusFromBackend(apiBase, headers, 'KNOWN'),
-    fetchLemmasByStatusFromBackend(apiBase, headers, 'UNKNOWN'),
-  ]);
-
-  if (unknownLemmas.length > 0) {
-    const localLexemes = await getLexemes();
-    const knownLocally = unknownLemmas.filter(lemma => localLexemes[lemma]?.status === 'known');
-    if (knownLocally.length > 0) {
-      await bulkSetLexemeStatus(knownLocally, 'unknown');
-    }
+  const targetKnownSet = new Set(getCefrWordsUpTo(cefrLevel));
+  const allCefrWords = getAllCefrWords();
+  const wordsOutsideTarget = allCefrWords.filter(lemma => !targetKnownSet.has(lemma));
+  if (wordsOutsideTarget.length > 0) {
+    await batchSetStatusOnBackend(apiBase, headers, wordsOutsideTarget, 'UNKNOWN');
   }
 
-  if (knownLemmas.length > 0) {
-    await bulkSetLexemeStatus(knownLemmas, 'known');
+  const [knownLemmas, localLexemes] = await Promise.all([
+    fetchLemmasByStatusFromBackend(apiBase, headers, 'KNOWN'),
+    getLexemes(),
+  ]);
+
+  const allCefrSet = new Set(allCefrWords);
+  const knownLocallyOutsideTarget = Object.values(localLexemes)
+    .filter(entry => entry.status === 'known')
+    .map(entry => String(entry.lemma ?? '').toLowerCase())
+    .filter(lemma => allCefrSet.has(lemma) && !targetKnownSet.has(lemma));
+  if (knownLocallyOutsideTarget.length > 0) {
+    await bulkSetLexemeStatus(knownLocallyOutsideTarget, 'unknown');
+  }
+
+  const knownWithinTarget = knownLemmas
+    .map(lemma => lemma.toLowerCase())
+    .filter(lemma => targetKnownSet.has(lemma));
+  if (knownWithinTarget.length > 0) {
+    await bulkSetLexemeStatus(knownWithinTarget, 'known');
   }
 
   console.log(`[Syntagma] CEFR intake: marked ${updated} words as known for level ${level}`);

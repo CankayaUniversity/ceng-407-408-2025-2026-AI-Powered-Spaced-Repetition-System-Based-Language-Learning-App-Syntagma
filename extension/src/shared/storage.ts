@@ -91,6 +91,11 @@ export async function setLexemeStatus(lemma: string, status: WordStatus): Promis
   const key = userScopedKey('lexemes', userId);
   const lexemes = await getLexemes();
   const now = Date.now();
+  if (status === 'unknown') {
+    delete lexemes[lemma];
+    await chrome.storage.local.set({ [key]: lexemes });
+    return;
+  }
   if (lexemes[lemma]) {
     lexemes[lemma].status = status;
     lexemes[lemma].lastSeenAt = now;
@@ -114,6 +119,13 @@ export async function bulkSetLexemeStatus(lemmas: string[], status: WordStatus):
   const key = userScopedKey('lexemes', userId);
   const lexemes = await getLexemes();
   const now = Date.now();
+  if (status === 'unknown') {
+    for (const lemma of lemmas) {
+      delete lexemes[lemma];
+    }
+    await chrome.storage.local.set({ [key]: lexemes });
+    return;
+  }
   for (const lemma of lemmas) {
     if (lexemes[lemma]) {
       lexemes[lemma].status = status;
@@ -131,6 +143,14 @@ export async function bulkSetLexemeStatus(lemmas: string[], status: WordStatus):
       };
     }
   }
+  await chrome.storage.local.set({ [key]: lexemes });
+}
+
+export async function deleteLexeme(lemma: string): Promise<void> {
+  const userId = await resolveUserId();
+  const key = userScopedKey('lexemes', userId);
+  const lexemes = await getLexemes();
+  delete lexemes[lemma];
   await chrome.storage.local.set({ [key]: lexemes });
 }
 

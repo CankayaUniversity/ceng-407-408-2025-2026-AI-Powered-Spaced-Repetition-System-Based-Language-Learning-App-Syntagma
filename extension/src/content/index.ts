@@ -407,6 +407,12 @@ chrome.runtime.onMessage.addListener((msg) => {
     }
   }
 
+  if (msg.type === 'WORD_KNOWLEDGE_DELETED') {
+    const { lemma } = msg.payload as { lemma: string };
+    delete currentLexemes[lemma];
+    if (isParsed) updateWordStatus(lemma, 'unknown');
+  }
+
   if (msg.type === 'SETTINGS_UPDATED') {
     const patch = msg.payload as Partial<UserSettings>;
     const prevToken = currentSettings?.authToken ?? null;

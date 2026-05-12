@@ -34,7 +34,7 @@ public class WordKnowledgeService {
         if (status != null) {
             return wordKnowledgeRepository.findByUserIdAndStatus(userId, status, pageable).map(this::toResponse);
         }
-        return wordKnowledgeRepository.findByUserId(userId, pageable).map(this::toResponse);
+        return wordKnowledgeRepository.findByUserIdAndStatusNot(userId, KnowledgeStatus.UNKNOWN, pageable).map(this::toResponse);
     }
 
     public WordKnowledgeResponse getByLemma(Long userId, String lemma) {
@@ -45,6 +45,11 @@ public class WordKnowledgeService {
 
     @Transactional
     public WordKnowledgeResponse update(Long userId, String lemma, KnowledgeStatus status) {
+        if (status == KnowledgeStatus.UNKNOWN) {
+            delete(userId, lemma);
+            return new WordKnowledgeResponse(userId, lemma, KnowledgeStatus.UNKNOWN, LocalDateTime.now());
+        }
+
         WordKnowledge wk = wordKnowledgeRepository.findByUserIdAndLemma(userId, lemma)
                 .orElseGet(() -> {
                     WordKnowledge newWk = new WordKnowledge();
@@ -70,18 +75,29 @@ public class WordKnowledgeService {
     }
 
     @Transactional
+    public void delete(Long userId, String lemma) {
+        wordKnowledgeRepository.deleteByUserIdAndLemma(userId, lemma);
+    }
+
+    @Transactional
     public int markKnownByLevel(Long userId, String level) {
         String normalizedLevel = normalizeAndValidateLevel(level);
         Set<String> knownWords = new LinkedHashSet<>(loadLevelWordsUpTo(normalizedLevel));
         Set<String> allLevelWords = new LinkedHashSet<>(loadAllLevelWords());
 
-        List<WordKnowledgeBatchEntry> entries = allLevelWords.stream()
-                .map(word -> new WordKnowledgeBatchEntry(
-                        word,
-                        knownWords.contains(word) ? KnowledgeStatus.KNOWN : KnowledgeStatus.UNKNOWN
-                ))
+        List<WordKnowledgeBatchEntry> entries = knownWords.stream()
+                .map(word -> new WordKnowledgeBatchEntry(word, KnowledgeStatus.KNOWN))
                 .toList();
-        return batchUpdate(userId, entries);
+
+        int knownUpdated = batchUpdate(userId, entries);
+        List<String> wordsToDelete = allLevelWords.stream()
+                .filter(word -> !knownWords.contains(word))
+                .toList();
+        long deleted = wordsToDelete.isEmpty()
+                ? 0
+                : wordKnowledgeRepository.deleteByUserIdAndLemmaIn(userId, wordsToDelete);
+
+        return knownUpdated + (int) deleted;
     }
 
     private WordKnowledgeResponse toResponse(WordKnowledge wk) {
