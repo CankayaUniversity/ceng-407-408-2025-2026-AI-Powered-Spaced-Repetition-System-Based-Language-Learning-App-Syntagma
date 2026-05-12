@@ -1005,13 +1005,23 @@ function ReaderView({
           // Coordinate transformation: iframe relative -> window relative
           const rect = span.getBoundingClientRect();
           const viewerRect = viewerRef.current?.getBoundingClientRect();
+          const popupWidth = 340;
+          const anchorX = (viewerRect?.left ?? 0) + rect.left + rect.width / 2;
+          const anchorY = (viewerRect?.top ?? 0) + rect.bottom + 8;
+
+          // If there is enough whitespace on the right side of the reader,
+          // center the popup in that area for a more comfortable layout.
+          const rightSpaceStart = viewerRect?.right ?? window.innerWidth;
+          const rightSpaceWidth = Math.max(0, window.innerWidth - rightSpaceStart);
+          const hasUsableRightSpace = rightSpaceWidth >= popupWidth + 56;
+          const preferredRightCenterX = rightSpaceStart + rightSpaceWidth / 2;
           
           setWordPopup({
             word,
             surface,
             sentence,
-            x: (viewerRect?.left ?? 0) + rect.left + rect.width / 2,
-            y: (viewerRect?.top ?? 0) + rect.bottom + 8,
+            x: hasUsableRightSpace ? preferredRightCenterX : anchorX,
+            y: anchorY,
           });
         } else {
           setWordPopup(null);
