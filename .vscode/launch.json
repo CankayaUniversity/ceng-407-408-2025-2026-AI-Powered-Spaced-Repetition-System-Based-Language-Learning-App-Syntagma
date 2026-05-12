@@ -2,6 +2,13 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "type": "java",
+      "name": "BackendApplication",
+      "request": "launch",
+      "mainClass": "com.syntagma.backend.BackendApplication",
+      "projectName": "backend"
+    },
+    {
       "name": "C/C++ Runner: Debug Session",
       "type": "cppdbg",
       "request": "launch",
