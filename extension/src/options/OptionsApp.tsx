@@ -333,7 +333,12 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState<'lemma' | 'status' | 'updatedAt'>('lemma');
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [source, setSource] = useState<'server' | 'local'>('local');
+  const [page, setPage] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+
+  const PAGE_SIZE = 200;
 
   const apiBase = settings.apiBaseUrl || BACKEND_URL;
   const authHeader: Record<string, string> = settings.authToken
@@ -352,16 +357,23 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
     setSource('local');
   }, [settings.authUserId]);
 
-  const fetchWords = useCallback(async () => {
-    setLoading(true);
+  const fetchWords = useCallback(async (pageToLoad = 0, append = false) => {
+    if (pageToLoad === 0) {
+      setLoading(true);
+    } else {
+      setLoadingMore(true);
+    }
     if (!settings.authToken) {
       await loadFromLocal();
+      setPage(0);
+      setHasMore(false);
       setLoading(false);
+      setLoadingMore(false);
       return;
     }
     try {
       const statusParam = filter !== 'all' ? `&status=${filter.toUpperCase()}` : '';
-      const res = await fetch(`${apiBase}/api/word-knowledge?size=200${statusParam}`, {
+      const res = await fetch(`${apiBase}/api/word-knowledge?size=${PAGE_SIZE}&page=${pageToLoad}${statusParam}`, {
         headers: authHeader,
       });
       const newToken = res.headers.get('X-Refreshed-Token');
@@ -374,17 +386,22 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
         status: (wk.status ?? 'UNKNOWN').toLowerCase(),
         updatedAt: wk.updatedAt ? new Date(wk.updatedAt).getTime() : 0,
       }));
-      setWords(mapped);
+      setWords(prev => append ? [...prev, ...mapped] : mapped);
       setSource('server');
+      setPage(pageToLoad);
+      setHasMore(mapped.length === PAGE_SIZE);
     } catch {
       // Server unavailable — fall back to local storage silently
       await loadFromLocal();
+      setPage(0);
+      setHasMore(false);
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
   }, [apiBase, settings.authToken, filter, loadFromLocal]);
 
-  useEffect(() => { fetchWords(); }, [fetchWords]);
+  useEffect(() => { fetchWords(0, false); }, [fetchWords]);
 
   const filtered = words
     .filter(e => !search || e.lemma.toLowerCase().includes(search.toLowerCase()))
@@ -499,7 +516,7 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
               </tr>
             </thead>
             <tbody>
-              {filtered.slice(0, 200).map(entry => (
+              {filtered.map(entry => (
                 <tr key={entry.lemma} style={{ borderBottom: `1px solid ${C.surface0}` }}>
                   <td style={{ padding: '6px 8px', color: C.text, fontWeight: 500 }}>{entry.lemma}</td>
                   <td style={{ padding: '6px 8px' }}>
@@ -518,9 +535,23 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
               ))}
             </tbody>
           </table>
-          {filtered.length > 200 && (
-            <div style={{ textAlign: 'center', padding: '8px', color: C.subtext, fontSize: '12px' }}>
-              Showing first 200 of {filtered.length}
+          {source === 'server' && hasMore && (
+            <div style={{ textAlign: 'center', padding: '10px' }}>
+              <button
+                onClick={() => fetchWords(page + 1, true)}
+                disabled={loadingMore}
+                style={{
+                  background: C.surface0,
+                  border: `1px solid ${C.surface1}`,
+                  borderRadius: '6px',
+                  padding: '6px 12px',
+                  color: C.text,
+                  cursor: loadingMore ? 'not-allowed' : 'pointer',
+                  fontSize: '12px',
+                }}
+              >
+                {loadingMore ? 'Loading…' : 'Show more'}
+              </button>
             </div>
           )}
         </div>
