@@ -4,6 +4,7 @@ import { sendMessage } from '../../shared/messages';
 import { SubtitleDisplay } from './SubtitleDisplay';
 import { AudioRecorder } from './audio-recorder';
 import { buildSentences, findSentenceByCueIndex } from './sentence-grouping';
+import { captureVideoScreenshotWithFallback } from './screenshot-capture';
 import {
   captureYouTubeSubtitles,
   getYouTubeAvailableLanguages,
@@ -127,6 +128,7 @@ export function VideoOverlay({
   const sceneSpeedRef = useRef(false);
   const resumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const interactionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const overlayRootRef = useRef<HTMLDivElement | null>(null);
   // Auto-detected timing offset (YouTube captions open their window before speech).
   const autoOffsetRef          = useRef(0);
   const autoOffsetDetectedRef  = useRef(false);
@@ -422,38 +424,20 @@ export function VideoOverlay({
       }, { zIndex: 2147483647 });
     };
 
-    // Capture the full tab screenshot then crop to the video element's bounds
-    // so the saved image is exactly the video frame (no UI chrome or sidebar).
-    const captureAndOpen = () => {
-      sendMessage<{ dataUrl?: string }>({ type: 'CAPTURE_TAB_SCREENSHOT', payload: null })
-        .then(res => {
-          if (!res?.dataUrl) { doOpen(); return; }
-          const videoRect = video.getBoundingClientRect();
-          const dpr = window.devicePixelRatio || 1;
-          const img = new Image();
-          img.onload = () => {
-            try {
-              const canvas = document.createElement('canvas');
-              canvas.width  = Math.round(videoRect.width  * dpr);
-              canvas.height = Math.round(videoRect.height * dpr);
-              const ctx = canvas.getContext('2d');
-              if (!ctx) { doOpen(res.dataUrl); return; }
-              ctx.drawImage(
-                img,
-                Math.round(videoRect.left * dpr), Math.round(videoRect.top * dpr),
-                Math.round(videoRect.width * dpr), Math.round(videoRect.height * dpr),
-                0, 0,
-                Math.round(videoRect.width * dpr), Math.round(videoRect.height * dpr),
-              );
-              doOpen(canvas.toDataURL('image/jpeg', 0.85));
-            } catch {
-              doOpen(res.dataUrl); // fallback: full tab screenshot
-            }
-          };
-          img.onerror = () => doOpen();
-          img.src = res.dataUrl;
-        })
-        .catch(() => doOpen());
+    const captureAndOpen = async () => {
+      try {
+        const screenshotDataUrl = await captureVideoScreenshotWithFallback({
+          video,
+          overlayElement: overlayRootRef.current,
+          captureTabScreenshot: async () => {
+            const res = await sendMessage<{ dataUrl?: string }>({ type: 'CAPTURE_TAB_SCREENSHOT', payload: null });
+            return res?.dataUrl;
+          },
+        });
+        doOpen(screenshotDataUrl);
+      } catch {
+        doOpen();
+      }
     };
 
     if (settings.interactionDelayMs > 0) {
@@ -742,6 +726,7 @@ export function VideoOverlay({
 
   return (
     <div
+      ref={overlayRootRef}
       data-syntagma-video-overlay=""
       style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 9999 }}
     >
