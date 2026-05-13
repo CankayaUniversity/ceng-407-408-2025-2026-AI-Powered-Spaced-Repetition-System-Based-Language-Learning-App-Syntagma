@@ -26,7 +26,7 @@ import {
   saveCarryover,
   saveLastStudyCount,
 } from '../shared/storage';
-import { updateWordKnowledge } from '../shared/api';
+import { submitReview, updateWordKnowledge } from '../shared/api';
 import { useTheme } from '../shared/theme';
 
 const DEFAULT_CARDS = [];
@@ -202,11 +202,21 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
         reviewHandler(rating);
       }
 
+      const flashcardId = activeCard?.flashcardId;
+      if (flashcardId != null) {
+        submitReview({
+          flashcardId: Number(flashcardId),
+          result: rating,
+          device: 'MOBILE',
+          clientTimestamp: new Date().toISOString(),
+        }).catch(() => {});
+      }
+
       // Show the knowledge status picker before advancing
       setPendingRating(rating);
       setStatusPickerVisible(true);
     },
-    [onReview, routeOnReview]
+    [activeCard, onReview, routeOnReview]
   );
 
   const handleStatusSelect = useCallback(

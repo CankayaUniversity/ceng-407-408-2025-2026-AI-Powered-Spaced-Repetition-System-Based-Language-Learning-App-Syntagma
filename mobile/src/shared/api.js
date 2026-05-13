@@ -103,3 +103,41 @@ export async function updateWordKnowledge(lemma, status) {
 export async function fetchDueCards(limit = 20) {
   return apiRequest(`/api/srs/due?limit=${limit}`);
 }
+
+export async function fetchDailyCards(newLimit = null) {
+  const query = Number.isFinite(newLimit) ? `?newLimit=${newLimit}` : '';
+  return apiRequest(`/api/srs/daily${query}`);
+}
+
+export async function fetchFlashcardsPage(page = 0, size = 100) {
+  return apiRequest(`/api/flashcards?page=${page}&size=${size}&sort=createdAt,desc`);
+}
+
+export async function fetchAllFlashcards({ pageSize = 100, maxPages = 20 } = {}) {
+  const all = [];
+  let page = 0;
+  let hasMore = true;
+
+  while (hasMore && page < maxPages) {
+    const data = await fetchFlashcardsPage(page, pageSize);
+    const content = Array.isArray(data?.content)
+      ? data.content
+      : Array.isArray(data)
+        ? data
+        : [];
+
+    all.push(...content);
+
+    if (Array.isArray(data?.content)) {
+      const totalPages = Number.isFinite(data?.totalPages) ? data.totalPages : null;
+      const isLast = data?.last === true || (totalPages != null ? page >= totalPages - 1 : content.length < pageSize);
+      hasMore = !isLast;
+    } else {
+      hasMore = false;
+    }
+
+    page += 1;
+  }
+
+  return all;
+}

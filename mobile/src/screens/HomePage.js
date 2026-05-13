@@ -11,7 +11,13 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
-import { fetchCollectionById, fetchCollections, fetchReviewStats } from '../shared/api';
+import {
+  fetchAllFlashcards,
+  fetchCollectionById,
+  fetchCollections,
+  fetchDailyCards,
+  fetchReviewStats,
+} from '../shared/api';
 import { getBadgeState, saveBadgeState } from '../shared/storage';
 import { BADGE_TIERS, computeBadgeState } from '../shared/badges';
 import { useTheme } from '../shared/theme';
@@ -73,6 +79,35 @@ export default function HomePage({ navigation }) {
     }, [loadCollections])
   );
 
+  const filterCardsForToday = useCallback(async (cards) => {
+    if (!cards.length) {
+      return cards;
+    }
+
+    try {
+      const daily = await fetchDailyCards();
+      if (!Array.isArray(daily?.cards)) {
+        return cards;
+      }
+
+      const idSet = new Set(
+        daily.cards
+          .map((entry) => entry?.flashcardId)
+          .filter((id) => id != null)
+          .map((id) => Number(id))
+          .filter((id) => Number.isFinite(id))
+      );
+
+      if (!idSet.size) {
+        return [];
+      }
+
+      return cards.filter((card) => idSet.has(Number(card.flashcardId)));
+    } catch (err) {
+      return cards;
+    }
+  }, []);
+
   const handleStart = useCallback(
     async (collection) => {
       if (!collection) {
@@ -90,16 +125,42 @@ export default function HomePage({ navigation }) {
       try {
         const details = await fetchCollectionById(collectionId);
         const items = Array.isArray(details?.items) ? details.items : [];
-        const cards = items.map((item) => ({
+        const mappedItems = items.map((item) => ({
+          flashcardId: item.flashcardId ?? item.id,
           word: item.lemma || item.word || 'Unknown',
           phonetic: '',
-          sentence: item.exampleSentence || item.sourceSentence || '',
+          sentence: '',
           translation: item.translation || '',
           sentenceTranslation: '',
         }));
 
+        let cards = mappedItems;
+
+        if (!cards.length) {
+          const allFlashcards = await fetchAllFlashcards();
+          const filtered = allFlashcards.filter((card) => {
+            const ids = Array.isArray(card?.collectionIds) ? card.collectionIds : [];
+            const allIds = ids.slice();
+            if (card?.collectionId != null) {
+              allIds.push(card.collectionId);
+            }
+            return allIds.some((id) => Number(id) === Number(collectionId));
+          });
+
+          cards = filtered.map((item) => ({
+            flashcardId: item.flashcardId ?? item.id,
+            word: item.lemma || item.word || 'Unknown',
+            phonetic: '',
+            sentence: item.exampleSentence || item.sourceSentence || '',
+            translation: item.translation || '',
+            sentenceTranslation: '',
+          }));
+        }
+
+        const filteredCards = await filterCardsForToday(cards);
+
         navigation.navigate('FlashcardReview', {
-          cards,
+          cards: filteredCards,
           collectionId,
           collectionName: collection.name || details?.name || 'Collection',
         });
@@ -109,7 +170,7 @@ export default function HomePage({ navigation }) {
         setStartingId(null);
       }
     },
-    [navigation]
+    [filterCardsForToday, navigation]
   );
 
   const renderCollectionCard = ({ item }) => {
