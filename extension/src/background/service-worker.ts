@@ -1243,6 +1243,28 @@ onMessage(async (msg, sender) => {
         params = new URLSearchParams({ mode: 'edit', draftKey });
       } else {
         const { panel, word, sentence, sourceUrl, sourceTitle, trMeaning } = msg.payload;
+        // @ts-ignore
+        const screenshotDataUrl = msg.payload.screenshotDataUrl;
+        // @ts-ignore
+        const sentenceAudioDataUrl = msg.payload.sentenceAudioDataUrl;
+        
+        let draftKey: string | undefined = undefined;
+        if (screenshotDataUrl || sentenceAudioDataUrl) {
+          draftKey = `${CARD_CREATOR_DRAFT_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2)}`;
+          await chrome.storage.local.set({
+            [draftKey]: {
+              lemma: word,
+              surfaceForm: word,
+              sentence,
+              sourceUrl,
+              sourceTitle,
+              trMeaning,
+              screenshotDataUrl,
+              sentenceAudioDataUrl,
+            }
+          });
+        }
+        
         params = new URLSearchParams({
           mode: 'create',
           panel: panel ?? 'dictionary',
@@ -1251,6 +1273,7 @@ onMessage(async (msg, sender) => {
           sourceUrl,
           sourceTitle,
           ...(trMeaning ? { trMeaning } : {}),
+          ...(draftKey ? { draftKey } : {}),
         });
       }
       await openCardCreatorWindow(params);

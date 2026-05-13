@@ -411,8 +411,37 @@ function WordPopupInner({
     }
   }, [cardSaved, lemma, surface, sentence, lexeme, translations]);
 
+  const [openingCardCreator, setOpeningCardCreator] = useState(false);
+
   const handleOpenCardCreator = useCallback(async () => {
+    if (openingCardCreator) return;
+    setOpeningCardCreator(true);
     try {
+      let sentenceAudioDataUrl: string | undefined;
+      const hasVideoOverlay = !!document.querySelector('[data-syntagma-video-overlay]');
+      
+      if (hasVideoOverlay) {
+        try {
+          sentenceAudioDataUrl = await new Promise<string | undefined>((resolve) => {
+            const timeout = setTimeout(() => {
+              window.removeEventListener('syntagma:sentence-audio-ready', onReady);
+              resolve(undefined);
+            }, 2500);
+            const onReady = (e: Event) => {
+              clearTimeout(timeout);
+              window.removeEventListener('syntagma:sentence-audio-ready', onReady);
+              resolve((e as CustomEvent).detail?.audioDataUrl);
+            };
+            window.addEventListener('syntagma:sentence-audio-ready', onReady);
+            window.dispatchEvent(new CustomEvent('syntagma:capture-sentence-audio', {
+              detail: (sentenceStartMs !== undefined && sentenceEndMs !== undefined)
+                ? { startMs: sentenceStartMs, endMs: sentenceEndMs }
+                : {},
+            }));
+          });
+        } catch { /* not in video context or capture unavailable */ }
+      }
+
       await sendMessage<{ ok: boolean }>({
         type: 'OPEN_CARD_CREATOR',
         payload: {
@@ -423,10 +452,14 @@ function WordPopupInner({
           sourceUrl: window.location.href,
           sourceTitle: document.title,
           trMeaning: lexeme?.trMeaning ?? (translations[0] ?? ''),
+          screenshotDataUrl: screenshot ?? undefined,
+          sentenceAudioDataUrl,
         },
       });
-    } catch { /* best effort */ }
-  }, [lemma, sentence, lexeme, translations]);
+    } catch { /* best effort */ } finally {
+      setOpeningCardCreator(false);
+    }
+  }, [openingCardCreator, lemma, sentence, lexeme, translations, screenshot, sentenceStartMs, sentenceEndMs]);
 
   const popupStyle: React.CSSProperties = {
     position: 'fixed',

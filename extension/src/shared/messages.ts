@@ -4,7 +4,7 @@ import type { AiResultData } from './backend-ai';
 export type CardCreatorPanel = 'home' | 'flashcards' | 'dictionary';
 
 export type OpenCardCreatorPayload =
-  | { mode?: 'create'; panel?: CardCreatorPanel; word: string; sentence: string; sourceUrl: string; sourceTitle: string; trMeaning?: string }
+  | { mode?: 'create'; panel?: CardCreatorPanel; word: string; sentence: string; sourceUrl: string; sourceTitle: string; trMeaning?: string; screenshotDataUrl?: string; sentenceAudioDataUrl?: string }
   | { mode: 'edit'; card: FlashcardPayload };
 
 export type FlashcardMediaOp = 'keep' | 'replace' | 'remove';

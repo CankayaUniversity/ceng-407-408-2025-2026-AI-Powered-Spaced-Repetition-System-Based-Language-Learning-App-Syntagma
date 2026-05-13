@@ -244,13 +244,31 @@ export function CardCreatorApp() {
         ]);
         if (cancelled) return;
 
-        if (initialMode === 'edit' && draftKey) {
+        if (draftKey) {
           const draftResult = await chrome.storage.local.get(draftKey);
           await chrome.storage.local.remove(draftKey);
           if (cancelled) return;
           const draft = draftResult[draftKey] as FlashcardPayload | undefined;
           if (draft) {
-            loadCardIntoEditor(draft, currentSettings.activeCollectionId);
+            if (initialMode === 'edit') {
+              loadCardIntoEditor(draft, currentSettings.activeCollectionId);
+            } else {
+              setSearch(draft.surfaceForm || draft.lemma || '');
+              setTargetWord(draft.surfaceForm || draft.lemma || '');
+              setSentence(draft.sentence || '');
+              setTranslation(draft.trMeaning || '');
+              setSourceUrl(draft.sourceUrl || '');
+              setSourceTitle(draft.sourceTitle || '');
+              if (draft.screenshotDataUrl) {
+                setScreenshotPreview(draft.screenshotDataUrl);
+                setMediaOps(prev => ({ ...prev, screenshot: 'replace' }));
+              }
+              if (draft.sentenceAudioDataUrl) {
+                setAudioPreview(draft.sentenceAudioDataUrl);
+                setAudioReplacementDataUrl(draft.sentenceAudioDataUrl);
+                setMediaOps(prev => ({ ...prev, audio: 'replace' }));
+              }
+            }
           } else {
             setSaveMsg({ text: 'Could not load flashcard draft.', ok: false });
           }
