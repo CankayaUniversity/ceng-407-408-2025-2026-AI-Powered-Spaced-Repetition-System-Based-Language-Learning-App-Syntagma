@@ -1,6 +1,14 @@
 import type { WordStatus, LearnerLevel, UserSettings, FlashcardPayload } from './types';
 import type { AiResultData } from './backend-ai';
 
+export type CardCreatorPanel = 'home' | 'flashcards' | 'dictionary';
+
+export type OpenCardCreatorPayload =
+  | { mode?: 'create'; panel?: CardCreatorPanel; word: string; sentence: string; sourceUrl: string; sourceTitle: string }
+  | { mode: 'edit'; card: FlashcardPayload };
+
+export type FlashcardMediaOp = 'keep' | 'replace' | 'remove';
+
 export type ExtensionMessage =
   | { type: 'PARSE_PAGE_FOR_COMPREHENSION'; payload: { tabId: number; pageUrl: string } }
   | { type: 'GET_COMPREHENSION_STATS'; payload: { pageUrl: string } }
@@ -19,6 +27,18 @@ export type ExtensionMessage =
   | { type: 'OPEN_EXTERNAL_DICTIONARY'; payload: { provider: 'tureng' | 'cambridge' | 'oxford' | 'merriam-webster'; word: string } }
   | { type: 'LOOKUP_DICTIONARY'; payload: { word: string } }
   | { type: 'CREATE_FLASHCARD'; payload: FlashcardPayload }
+  | {
+    type: 'UPDATE_FLASHCARD';
+    payload: {
+      id: string;
+      card: FlashcardPayload;
+      selectedCollectionId: number | null;
+      mediaOps?: {
+        screenshot?: FlashcardMediaOp;
+        audio?: FlashcardMediaOp;
+      };
+    };
+  }
   | { type: 'FETCH_FLASHCARDS'; payload: null }
   | { type: 'DELETE_FLASHCARD'; payload: { id: string } }
   | { type: 'FETCH_COLLECTIONS'; payload: null }
@@ -28,7 +48,7 @@ export type ExtensionMessage =
   | { type: 'GET_SETTINGS'; payload: null }
   | { type: 'SET_SETTINGS'; payload: Partial<UserSettings> }
   | { type: 'OPEN_OPTIONS_PAGE'; payload: null }
-  | { type: 'OPEN_CARD_CREATOR'; payload: { word: string; sentence: string; sourceUrl: string; sourceTitle: string } }
+  | { type: 'OPEN_CARD_CREATOR'; payload: OpenCardCreatorPayload }
   | { type: 'LOGIN'; payload: { email: string; password: string } }
   | { type: 'REGISTER'; payload: { email: string; password: string; learnerLevel: LearnerLevel } }
   | { type: 'LOGOUT'; payload: null }

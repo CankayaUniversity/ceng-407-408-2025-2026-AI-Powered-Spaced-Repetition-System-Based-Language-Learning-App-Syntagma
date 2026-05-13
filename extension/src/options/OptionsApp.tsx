@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type { UserSettings, LexemeEntry, FlashcardPayload, WordStatus } from '../shared/types';
 import { DEFAULT_SETTINGS, userScopedKey } from '../shared/storage';
 import { sendMessage } from '../shared/messages';
+import { cardMatchesCollection, resolveCardCollectionLabel } from '../shared/flashcards';
 
 const C = {
   base: '#F5F1E9',
@@ -895,7 +896,7 @@ function AudioPlayButton({ url }: { url: string }) {
       }}
     >
       {error ? (
-        <>✕ Error</>
+        <>✁EError</>
       ) : playing ? (
         <>
           <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor">
@@ -964,9 +965,27 @@ function FlashcardsTab({ settings, onUpdate }: { settings: UserSettings; onUpdat
 
   useEffect(() => { fetchCollections(); }, [fetchCollections]);
   useEffect(() => { fetchCards(); }, [fetchCards]);
+  useEffect(() => {
+    const flashcardStorageKey = userScopedKey('flashcards', settings.authUserId);
+    const onChanged = (changes: Record<string, chrome.storage.StorageChange>, areaName: string) => {
+      if (areaName !== 'local') return;
+      if (!changes[flashcardStorageKey]?.newValue) return;
+      setCards((changes[flashcardStorageKey].newValue ?? []) as FlashcardPayload[]);
+    };
+    chrome.storage.onChanged.addListener(onChanged);
+    return () => chrome.storage.onChanged.removeListener(onChanged);
+  }, [settings.authUserId]);
+
+  const collectionNameById = useMemo(() => {
+    const map: Record<number, string> = {};
+    for (const collection of collections) {
+      map[collection.collectionId] = collection.name;
+    }
+    return map;
+  }, [collections]);
 
   const filteredCards = viewFilter !== null
-    ? cards.filter(c => c.collectionId != null && Number(c.collectionId) === Number(viewFilter))
+    ? cards.filter(card => cardMatchesCollection(card, viewFilter))
     : cards;
 
   const toggleSelect = (id: string) => {
@@ -993,6 +1012,17 @@ function FlashcardsTab({ settings, onUpdate }: { settings: UserSettings; onUpdat
     }
     setCards(prev => prev.filter(c => c.id !== id));
     setSelected(prev => { const next = new Set(prev); next.delete(id); return next; });
+  };
+
+  const handleEditCard = async (card: FlashcardPayload) => {
+    try {
+      await sendMessage({
+        type: 'OPEN_CARD_CREATOR',
+        payload: { mode: 'edit', card },
+      });
+    } catch (err) {
+      console.error('[Syntagma] Failed to open card editor:', err);
+    }
   };
 
   const handleCreateCollection = async () => {
@@ -1059,7 +1089,7 @@ function FlashcardsTab({ settings, onUpdate }: { settings: UserSettings; onUpdat
         <div style={{ marginBottom: '12px' }}>
           <div style={{ fontSize: '12px', color: C.subtext, marginBottom: '6px' }}>
             Saving to: <strong style={{ color: C.text }}>{settings.activeCollectionName || 'No deck (unsorted)'}</strong>
-            <span style={{ marginLeft: '6px', color: C.surface2 }}>— change in General tab</span>
+            <span style={{ marginLeft: '6px', color: C.surface2 }}> Echange in General tab</span>
           </div>
           <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '8px' }}>
             <button
@@ -1105,7 +1135,7 @@ function FlashcardsTab({ settings, onUpdate }: { settings: UserSettings; onUpdat
                     cursor: 'pointer',
                   }}
                 >
-                  ×
+                  ÁE
                 </button>
               </div>
             ))}
@@ -1152,7 +1182,7 @@ function FlashcardsTab({ settings, onUpdate }: { settings: UserSettings; onUpdat
       <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', alignItems: 'center' }}>
         <span style={{ fontSize: '13px', color: C.subtext, flex: 1 }}>
           {filteredCards.length} cards · {selected.size} selected
-          {!error && <span style={{ color: C.green, marginLeft: '6px' }}>● Live</span>}
+          {!error && <span style={{ color: C.green, marginLeft: '6px' }}>◁ELive</span>}
         </span>
         <button onClick={() => fetchCards()} style={{ background: C.surface0, border: `1px solid ${C.surface1}`, borderRadius: '4px', padding: '4px 8px', color: C.text, cursor: 'pointer', fontSize: '12px' }}>
           ↻ Refresh
@@ -1234,9 +1264,24 @@ function FlashcardsTab({ settings, onUpdate }: { settings: UserSettings; onUpdat
                   {card.sentence}
                 </div>
                 <div style={{ fontSize: '11px', color: C.surface2, marginTop: '2px' }}>
-                  {card.deckName} · {new Date(card.createdAt).toLocaleDateString()}
+                  {resolveCardCollectionLabel(card, collectionNameById)} - {new Date(card.createdAt).toLocaleDateString()}
                 </div>
               </div>
+              <button
+                onClick={e => { e.stopPropagation(); handleEditCard(card); }}
+                style={{
+                  background: 'transparent',
+                  border: `1px solid ${C.surface1}`,
+                  color: C.blue,
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '11px',
+                  padding: '2px 6px',
+                  flexShrink: 0,
+                }}
+              >
+                Edit
+              </button>
               <button
                 onClick={e => { e.stopPropagation(); handleDeleteCard(card.id); }}
                 style={{
@@ -1249,7 +1294,7 @@ function FlashcardsTab({ settings, onUpdate }: { settings: UserSettings; onUpdat
                   flexShrink: 0,
                 }}
               >
-                ×
+                ÁE
               </button>
             </div>
           ))}
@@ -1347,10 +1392,10 @@ function VideoTab({ settings, onUpdate }: { settings: UserSettings; onUpdate: (p
         onChange={v => onUpdate({ sceneSkipMode: v as UserSettings['sceneSkipMode'] })}
         options={[
           { value: 'off', label: 'Off' },
-          { value: '2x', label: '2× speed' },
-          { value: '4x', label: '4× speed' },
-          { value: '6x', label: '6× speed' },
-          { value: '8x', label: '8× speed' },
+          { value: '2x', label: '2ÁEspeed' },
+          { value: '4x', label: '4ÁEspeed' },
+          { value: '6x', label: '6ÁEspeed' },
+          { value: '8x', label: '8ÁEspeed' },
           { value: 'jump', label: 'Jump to next subtitle' },
         ]}
       />
@@ -1366,12 +1411,10 @@ function VideoTab({ settings, onUpdate }: { settings: UserSettings; onUpdate: (p
   );
 }
 
-type TabId = 'general' | 'words' | 'flashcards' | 'video';
+type TabId = 'general' | 'video';
 
 const TABS: Array<{ id: TabId; label: string }> = [
   { id: 'general', label: 'General' },
-  { id: 'words', label: 'Word Browser' },
-  { id: 'flashcards', label: 'Flashcards' },
   { id: 'video', label: 'Video' },
 ];
 
@@ -1480,6 +1523,32 @@ export function OptionsApp() {
           ))}
 
           <div style={{ flex: 1 }} />
+          <button
+            onClick={() => {
+              sendMessage({
+                type: 'OPEN_CARD_CREATOR',
+                payload: {
+                  mode: 'create',
+                  panel: 'home',
+                  word: '',
+                  sentence: '',
+                  sourceUrl: '',
+                  sourceTitle: '',
+                },
+              }).catch(() => {});
+            }}
+            style={{
+              background: 'transparent',
+              border: `1px solid ${C.surface1}`,
+              borderRadius: '6px',
+              color: C.subtext,
+              fontSize: '12px',
+              padding: '6px 10px',
+              cursor: 'pointer',
+            }}
+          >
+            Open Workspace
+          </button>
           {saveStatus !== 'idle' && (
             <span style={{ fontSize: '12px', color: saveStatus === 'saved' ? C.green : C.subtext }}>
               {saveStatus === 'saving' ? 'Saving…' : 'Saved'}
@@ -1490,11 +1559,11 @@ export function OptionsApp() {
         {/* Content */}
         <div style={{ maxWidth: '700px', margin: '0 auto', padding: '24px' }}>
           {activeTab === 'general' && <GeneralTab settings={settings} onUpdate={handleUpdate} />}
-          {activeTab === 'words' && <WordBrowserTab settings={settings} />}
-          {activeTab === 'flashcards' && <FlashcardsTab settings={settings} onUpdate={handleUpdate} />}
           {activeTab === 'video' && <VideoTab settings={settings} onUpdate={handleUpdate} />}
         </div>
       </div>
     </>
   );
 }
+
+

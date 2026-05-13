@@ -6,7 +6,6 @@ import {
   deleteLexeme,
   getSettings,
   setSettings,
-  saveFlashcard,
   getFlashcards,
   getAuthHeaders,
   userScopedKey,
@@ -17,6 +16,11 @@ import {
   explainSentence as backendExplainSentence,
 } from '../shared/backend-ai';
 import type { FlashcardPayload, LexemeEntry } from '../shared/types';
+import {
+  buildBackendFlashcardPayload,
+  mapBackendFlashcard,
+  mergeFlashcardWithLocalFields,
+} from '../shared/flashcards';
 import { populateDictionary, lookupTranslation } from './dictionary-db';
 import { applyKnownWordsForLevel } from '../shared/cefr-intake';
 
@@ -25,7 +29,7 @@ populateDictionary().catch(console.error);
 
 // Keep the MV3 service worker alive via a periodic no-op.
 // The direct call covers every SW wakeup (module code re-runs each time).
-// The onStartup listener was redundant — module-level keepAlive() already
+// The onStartup listener was redundant 窶・module-level keepAlive() already
 // runs when the browser starts and wakes the SW, so it was creating a second
 // concurrent interval on every browser startup.
 setInterval(chrome.runtime.getPlatformInfo, 20e3);
@@ -34,6 +38,23 @@ const BACKEND_URL = 'https://syntagma.omerhanyigit.online';
 const MEDIA_URL_CACHE_KEY = 'flashcardMediaUrls';
 const SCREENSHOT_URL_CACHE_KEY = 'flashcardScreenshotUrls';
 const MEDIA_URL_REFRESH_MARGIN_MS = 30_000;
+const CARD_CREATOR_DRAFT_PREFIX = 'cardCreatorDraft:';
+const CARD_CREATOR_DEFAULT_DIMENSIONS = {
+  width: 1100,
+  height: 760,
+};
+
+chrome.action.onClicked.addListener(() => {
+  const params = new URLSearchParams({
+    mode: 'create',
+    panel: 'home',
+    word: '',
+    sentence: '',
+    sourceUrl: '',
+    sourceTitle: '',
+  });
+  openCardCreatorWindow(params);
+});
 
 interface CachedMediaUrls {
   screenshotUrl?: string;
@@ -43,6 +64,12 @@ interface CachedMediaUrls {
 type MediaUrlCache = Record<string, CachedMediaUrls>;
 // Keep the old type alias so the screenshot-only cache key still works during migration.
 type ScreenshotUrlCache = Record<string, { url: string; expiresAt: number }>;
+
+interface MediaAssetRecord {
+  mediaId: number;
+  type: string;
+  createdAt?: string;
+}
 
 async function refreshTokenIfNeeded(response: Response): Promise<void> {
   const newToken = response.headers.get('X-Refreshed-Token');
@@ -80,20 +107,42 @@ function _computeComprehension(entries: LexemeEntry[], totalTokenCount: number):
   return Math.round(((known + 0.5 * learning) / Math.max(totalTokenCount, 1)) * 100);
 }
 
-function mapBackendFlashcard(fc: any): FlashcardPayload {
-  return {
-    id: String(fc.flashcardId),
-    lemma: fc.lemma ?? '',
-    surfaceForm: fc.lemma ?? '',
-    sentence: fc.sourceSentence ?? '',
-    sourceUrl: '',
-    sourceTitle: fc.exampleSentence ?? '',
-    trMeaning: fc.translation ?? '',
-    createdAt: fc.createdAt ? new Date(fc.createdAt).getTime() : Date.now(),
-    deckName: 'Syntagma',
-    tags: ['syntagma'],
-    collectionId: fc.collectionId != null ? Number(fc.collectionId) : null,
-  };
+function withDeckName(card: FlashcardPayload): FlashcardPayload {
+  const fallbackId = card.collectionId ?? card.collectionIds?.[0];
+  const fallbackDeckName = fallbackId != null ? `Collection #${fallbackId}` : 'Syntagma';
+  return { ...card, deckName: card.deckName || fallbackDeckName };
+}
+
+async function upsertFlashcardInLocalCache(settings: Awaited<ReturnType<typeof getSettings>>, card: FlashcardPayload): Promise<void> {
+  const fcKey = userScopedKey('flashcards', settings.authUserId);
+  const existing = await chrome.storage.local.get(fcKey);
+  const cards = (existing[fcKey] ?? []) as FlashcardPayload[];
+  const index = cards.findIndex(item => item.id === card.id);
+  if (index >= 0) {
+    cards[index] = card;
+  } else {
+    cards.push(card);
+  }
+  await chrome.storage.local.set({ [fcKey]: cards });
+}
+
+async function removeFlashcardFromLocalCache(settings: Awaited<ReturnType<typeof getSettings>>, flashcardId: string): Promise<void> {
+  const fcKey = userScopedKey('flashcards', settings.authUserId);
+  const existing = await chrome.storage.local.get(fcKey);
+  const cards = (existing[fcKey] ?? []) as FlashcardPayload[];
+  await chrome.storage.local.set({
+    [fcKey]: cards.filter(card => card.id !== flashcardId),
+  });
+}
+
+function openCardCreatorWindow(params: URLSearchParams): void {
+  chrome.windows.create({
+    url: chrome.runtime.getURL(`card-creator.html?${params.toString()}`),
+    type: 'popup',
+    width: CARD_CREATOR_DEFAULT_DIMENSIONS.width,
+    height: CARD_CREATOR_DEFAULT_DIMENSIONS.height,
+    focused: true,
+  });
 }
 
 async function getResponseError(response: Response, fallback: string): Promise<string> {
@@ -267,6 +316,60 @@ async function uploadAudioMedia(
   return urlJson.data?.downloadUrl;
 }
 
+function pickLatestMediaAsset(assets: MediaAssetRecord[], type: 'SCREENSHOT' | 'AUDIO'): MediaAssetRecord | undefined {
+  const candidates = assets.filter(asset => asset.type === type);
+  if (candidates.length === 0) return undefined;
+
+  return candidates.sort((a, b) => {
+    const aTime = Date.parse(a.createdAt ?? '');
+    const bTime = Date.parse(b.createdAt ?? '');
+    if (Number.isFinite(aTime) && Number.isFinite(bTime)) return bTime - aTime;
+    return b.mediaId - a.mediaId;
+  })[0];
+}
+
+async function fetchFlashcardMediaAssets(
+  apiBase: string,
+  settings: Awaited<ReturnType<typeof getSettings>>,
+  flashcardId: string
+): Promise<MediaAssetRecord[]> {
+  const mediaResponse = await fetch(`${apiBase}/api/flashcards/${encodeURIComponent(flashcardId)}/media`, {
+    headers: getAuthHeaders(settings),
+  });
+  await refreshTokenIfNeeded(mediaResponse);
+  if (!mediaResponse.ok) {
+    throw new Error(await getResponseError(mediaResponse, `Media list failed (${mediaResponse.status})`));
+  }
+
+  const mediaJson = await mediaResponse.json();
+  const assets = Array.isArray(mediaJson?.data) ? mediaJson.data : [];
+  return assets
+    .map((asset: unknown) => {
+      const record = asset as Record<string, unknown>;
+      return {
+        mediaId: Number(record.mediaId),
+        type: String(record.type ?? ''),
+        createdAt: typeof record.createdAt === 'string' ? record.createdAt : undefined,
+      };
+    })
+    .filter((asset: MediaAssetRecord) => Number.isFinite(asset.mediaId));
+}
+
+async function deleteMediaAssetById(
+  apiBase: string,
+  settings: Awaited<ReturnType<typeof getSettings>>,
+  mediaId: number
+): Promise<void> {
+  const response = await fetch(`${apiBase}/api/media/${mediaId}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(settings),
+  });
+  await refreshTokenIfNeeded(response);
+  if (!response.ok) {
+    throw new Error(await getResponseError(response, `Media delete failed (${response.status})`));
+  }
+}
+
 async function getMediaUrls(
   apiBase: string,
   settings: Awaited<ReturnType<typeof getSettings>>,
@@ -278,21 +381,19 @@ async function getMediaUrls(
     return { screenshotUrl: cached.screenshotUrl, audioUrl: cached.audioUrl };
   }
 
-  const mediaResponse = await fetch(`${apiBase}/api/flashcards/${encodeURIComponent(flashcardId)}/media`, {
-    headers: getAuthHeaders(settings),
-  });
-  await refreshTokenIfNeeded(mediaResponse);
-  if (!mediaResponse.ok) return {};
-
-  const mediaJson = await mediaResponse.json();
-  const assets: any[] = mediaJson.data ?? [];
+  let assets: MediaAssetRecord[] = [];
+  try {
+    assets = await fetchFlashcardMediaAssets(apiBase, settings, flashcardId);
+  } catch {
+    return {};
+  }
 
   const result: { screenshotUrl?: string; audioUrl?: string } = {};
   let minExpiresAt = Infinity;
 
   // Resolve download URLs for both SCREENSHOT and AUDIO assets in parallel
-  const screenshot = assets.find((a: any) => a.type === 'SCREENSHOT');
-  const audio = assets.find((a: any) => a.type === 'AUDIO');
+  const screenshot = pickLatestMediaAsset(assets, 'SCREENSHOT');
+  const audio = pickLatestMediaAsset(assets, 'AUDIO');
 
   const resolveUrl = async (mediaId: number | undefined): Promise<{ url?: string; expiresAt?: number }> => {
     if (!mediaId) return {};
@@ -422,7 +523,7 @@ onMessage(async (msg, sender) => {
         }
       }
 
-      // Send one BULK_STATUS_CHANGED per tab instead of O(tabs × lemmas) messages.
+      // Send one BULK_STATUS_CHANGED per tab instead of O(tabs ﾃ・lemmas) messages.
       const tabs = await chrome.tabs.query({});
       for (const tab of tabs) {
         if (tab.id) {
@@ -620,60 +721,156 @@ onMessage(async (msg, sender) => {
         return { ok: false, error: 'Not logged in' };
       }
       const card = msg.payload;
-      if (settings.authToken) {
-        const apiBase = settings.apiBaseUrl || BACKEND_URL;
-        const payload: Record<string, unknown> = {
-          lemma: card.lemma,
-          translation: card.trMeaning || '',
-          sourceSentence: card.sentence || '',
-          exampleSentence: `${card.surfaceForm} — from ${card.sourceTitle || 'web'}`,
-          knowledgeStatus: 'LEARNING',
+      const apiBase = settings.apiBaseUrl || BACKEND_URL;
+      const selectedCollectionId =
+        card.collectionId != null
+          ? Number(card.collectionId)
+          : settings.activeCollectionId != null
+            ? Number(settings.activeCollectionId)
+            : null;
+      const cardForRequest: FlashcardPayload = {
+        ...card,
+        exampleSentence: card.exampleSentence ?? `${card.surfaceForm} - from ${card.sourceTitle || 'web'}`,
+        knowledgeStatus: card.knowledgeStatus ?? 'LEARNING',
+      };
+      const payload = buildBackendFlashcardPayload(cardForRequest, selectedCollectionId);
+      try {
+        const res = await fetch(`${apiBase}/api/flashcards`, {
+          method: 'POST',
+          headers: getAuthHeaders(settings),
+          body: JSON.stringify(payload),
+        });
+        await refreshTokenIfNeeded(res);
+        if (!res.ok) {
+          return { ok: false, error: await getResponseError(res, `Server returned ${res.status}`) };
+        }
+        const json = await res.json();
+        const serverCard = withDeckName(mapBackendFlashcard(json.data ?? {}, card.deckName || settings.activeCollectionName || 'Syntagma'));
+        const flashcardId = Number(serverCard.id);
+        const [screenshotUrl, audioUrl] = Number.isFinite(flashcardId)
+          ? await Promise.all([
+              uploadScreenshotMedia(apiBase, settings, flashcardId, card).catch(() => undefined),
+              uploadAudioMedia(apiBase, settings, flashcardId, card).catch(() => undefined),
+            ])
+          : [undefined, undefined];
+        const savedCard: FlashcardPayload = {
+          ...mergeFlashcardWithLocalFields(cardForRequest, serverCard),
+          collectionId: selectedCollectionId,
+          screenshotDataUrl: screenshotUrl ?? card.screenshotDataUrl,
+          audioUrl: audioUrl ?? card.audioUrl,
+          sentenceAudioDataUrl: undefined,
         };
-        if (settings.activeCollectionId != null) {
-          payload.collectionId = Number(settings.activeCollectionId);
-          console.log('[Syntagma] Creating flashcard with collectionId:', settings.activeCollectionId);
-        } else {
-          console.log('[Syntagma] Creating flashcard WITHOUT collectionId. settings.activeCollectionId =', settings.activeCollectionId);
-        }
-        try {
-          const res = await fetch(`${apiBase}/api/flashcards`, {
-            method: 'POST',
-            headers: getAuthHeaders(settings),
-            body: JSON.stringify(payload),
-          });
-          await refreshTokenIfNeeded(res);
-          if (!res.ok) {
-            return { ok: false, error: await getResponseError(res, `Server returned ${res.status}`) };
-          }
-          const json = await res.json();
-          const serverCard = mapBackendFlashcard(json.data ?? {});
-          const flashcardId = Number(serverCard.id);
-          // Upload screenshot and sentence audio in parallel (both are optional / soft-fail).
-          const [screenshotUrl, audioUrl] = Number.isFinite(flashcardId)
-            ? await Promise.all([
-                uploadScreenshotMedia(apiBase, settings, flashcardId, card).catch(() => undefined),
-                uploadAudioMedia(apiBase, settings, flashcardId, card).catch(() => undefined),
-              ])
-            : [undefined, undefined];
-          const savedCard: FlashcardPayload = {
-            ...card,
-            ...serverCard,
-            sourceUrl: card.sourceUrl,
-            sourceTitle: card.sourceTitle,
-            deckName: card.deckName,
-            tags: card.tags,
-            screenshotDataUrl: screenshotUrl ?? card.screenshotDataUrl,
-            audioUrl: audioUrl ?? card.audioUrl,
-          };
-          await saveFlashcard(savedCard);
-          return { ok: true, card: savedCard };
-        } catch (err) {
-          console.error('[Syntagma] Backend sync error:', err);
-          return { ok: false, error: (err as Error).message };
-        }
+        await upsertFlashcardInLocalCache(settings, savedCard);
+        return { ok: true, card: savedCard };
+      } catch (err) {
+        console.error('[Syntagma] Backend sync error:', err);
+        return { ok: false, error: (err as Error).message };
       }
+    }
 
-      return { ok: true };
+    case 'UPDATE_FLASHCARD': {
+      const settings = await getSettings();
+      if (!settings.authToken) {
+        return { ok: false, error: 'Not logged in' };
+      }
+      const { id, card, selectedCollectionId, mediaOps } = msg.payload;
+      const apiBase = settings.apiBaseUrl || BACKEND_URL;
+      const localCards = await getFlashcards();
+      const existingCard = localCards.find(item => item.id === id);
+      const screenshotOp = mediaOps?.screenshot ?? 'keep';
+      const audioOp = mediaOps?.audio ?? 'keep';
+      const cardForRequest: FlashcardPayload = {
+        ...card,
+        exampleSentence: card.exampleSentence ?? `${card.surfaceForm} - from ${card.sourceTitle || 'web'}`,
+        knowledgeStatus: card.knowledgeStatus ?? 'LEARNING',
+        screenshotDataUrl:
+          screenshotOp === 'replace'
+            ? card.screenshotDataUrl
+            : screenshotOp === 'remove'
+              ? undefined
+              : card.screenshotDataUrl ?? existingCard?.screenshotDataUrl,
+        audioUrl:
+          audioOp === 'remove'
+            ? undefined
+            : card.audioUrl ?? existingCard?.audioUrl,
+        sentenceAudioDataUrl:
+          audioOp === 'replace'
+            ? card.sentenceAudioDataUrl
+            : audioOp === 'remove'
+              ? undefined
+              : card.sentenceAudioDataUrl ?? existingCard?.sentenceAudioDataUrl,
+      };
+      const payload = buildBackendFlashcardPayload(cardForRequest, selectedCollectionId);
+      try {
+        const res = await fetch(`${apiBase}/api/flashcards/${encodeURIComponent(id)}`, {
+          method: 'PUT',
+          headers: getAuthHeaders(settings),
+          body: JSON.stringify(payload),
+        });
+        await refreshTokenIfNeeded(res);
+        if (!res.ok) {
+          return { ok: false, error: await getResponseError(res, `Server returned ${res.status}`) };
+        }
+        const json = await res.json();
+        const serverCard = withDeckName(mapBackendFlashcard(json.data ?? {}, card.deckName || settings.activeCollectionName || 'Syntagma'));
+        const numericFlashcardId = Number(serverCard.id || id);
+        const cacheResult = await chrome.storage.local.get(MEDIA_URL_CACHE_KEY);
+        const mediaCache = (cacheResult[MEDIA_URL_CACHE_KEY] ?? {}) as MediaUrlCache;
+
+        if ((screenshotOp === 'replace' && !cardForRequest.screenshotDataUrl) || (audioOp === 'replace' && !cardForRequest.sentenceAudioDataUrl)) {
+          return { ok: false, error: 'Missing replacement media file.' };
+        }
+
+        if (screenshotOp !== 'keep' || audioOp !== 'keep') {
+          const currentAssets = await fetchFlashcardMediaAssets(apiBase, settings, id);
+          if (screenshotOp !== 'keep') {
+            const currentScreenshot = pickLatestMediaAsset(currentAssets, 'SCREENSHOT');
+            if (currentScreenshot) {
+              await deleteMediaAssetById(apiBase, settings, currentScreenshot.mediaId);
+            }
+          }
+          if (audioOp !== 'keep') {
+            const currentAudio = pickLatestMediaAsset(currentAssets, 'AUDIO');
+            if (currentAudio) {
+              await deleteMediaAssetById(apiBase, settings, currentAudio.mediaId);
+            }
+          }
+        }
+
+        let uploadedScreenshotUrl: string | undefined;
+        let uploadedAudioUrl: string | undefined;
+        if (Number.isFinite(numericFlashcardId)) {
+          if (screenshotOp === 'replace') {
+            uploadedScreenshotUrl = await uploadScreenshotMedia(apiBase, settings, numericFlashcardId, cardForRequest).catch(() => undefined);
+          }
+          if (audioOp === 'replace') {
+            uploadedAudioUrl = await uploadAudioMedia(apiBase, settings, numericFlashcardId, cardForRequest).catch(() => undefined);
+          }
+        }
+
+        delete mediaCache[id];
+        const refreshedUrls: { screenshotUrl?: string; audioUrl?: string } =
+          await getMediaUrls(apiBase, settings, id, mediaCache).catch(() => ({}));
+        const savedCard: FlashcardPayload = {
+          ...mergeFlashcardWithLocalFields(cardForRequest, serverCard),
+          collectionId: selectedCollectionId,
+          screenshotDataUrl:
+            screenshotOp === 'remove'
+              ? undefined
+              : refreshedUrls.screenshotUrl ?? uploadedScreenshotUrl ?? cardForRequest.screenshotDataUrl,
+          audioUrl:
+            audioOp === 'remove'
+              ? undefined
+              : refreshedUrls.audioUrl ?? uploadedAudioUrl ?? cardForRequest.audioUrl,
+          sentenceAudioDataUrl: undefined,
+        };
+        await upsertFlashcardInLocalCache(settings, savedCard);
+        await chrome.storage.local.set({ [MEDIA_URL_CACHE_KEY]: mediaCache });
+        return { ok: true, card: savedCard };
+      } catch (err) {
+        console.error('[Syntagma] Failed to update flashcard:', err);
+        return { ok: false, error: (err as Error).message };
+      }
     }
 
     case 'FETCH_FLASHCARDS': {
@@ -693,7 +890,7 @@ onMessage(async (msg, sender) => {
         const json = await res.json();
         const content = json.data?.content ?? json.data ?? [];
         console.log('[Syntagma] Fetched flashcards raw sample:', JSON.stringify(content[0]));
-        const baseCards = content.map(mapBackendFlashcard);
+        const baseCards = content.map((fc: unknown) => withDeckName(mapBackendFlashcard(fc as Record<string, unknown>)));
         console.log('[Syntagma] Mapped cards sample:', JSON.stringify(baseCards[0]));
         const cacheResult = await chrome.storage.local.get(MEDIA_URL_CACHE_KEY);
         const mediaCache = (cacheResult[MEDIA_URL_CACHE_KEY] ?? {}) as MediaUrlCache;
@@ -732,6 +929,7 @@ onMessage(async (msg, sender) => {
         if (!res.ok) {
           return { ok: false, error: await getResponseError(res, `Server returned ${res.status}`) };
         }
+        await removeFlashcardFromLocalCache(settings, msg.payload.id);
         return { ok: true };
       } catch (err) {
         console.error('[Syntagma] Failed to delete flashcard:', err);
@@ -971,15 +1169,40 @@ onMessage(async (msg, sender) => {
     }
 
     case 'OPEN_CARD_CREATOR': {
-      const { word, sentence, sourceUrl, sourceTitle } = msg.payload;
-      const params = new URLSearchParams({ word, sentence, sourceUrl, sourceTitle });
-      chrome.windows.create({
-        url: chrome.runtime.getURL(`card-creator.html?${params}`),
-        type: 'popup',
-        width: 900,
-        height: 640,
-        focused: true,
-      });
+      let params: URLSearchParams;
+      if (msg.payload.mode === 'edit') {
+        const settings = await getSettings();
+        const apiBase = settings.apiBaseUrl || BACKEND_URL;
+        const cacheResult = await chrome.storage.local.get(MEDIA_URL_CACHE_KEY);
+        const mediaCache = (cacheResult[MEDIA_URL_CACHE_KEY] ?? {}) as MediaUrlCache;
+        let draftCard = msg.payload.card;
+        if (settings.authToken && draftCard.id) {
+          const refreshedUrls: { screenshotUrl?: string; audioUrl?: string } =
+            await getMediaUrls(apiBase, settings, draftCard.id, mediaCache).catch(() => ({}));
+          draftCard = {
+            ...draftCard,
+            screenshotDataUrl: refreshedUrls.screenshotUrl ?? draftCard.screenshotDataUrl,
+            audioUrl: refreshedUrls.audioUrl ?? draftCard.audioUrl,
+          };
+        }
+        const draftKey = `${CARD_CREATOR_DRAFT_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        await chrome.storage.local.set({
+          [draftKey]: draftCard,
+          [MEDIA_URL_CACHE_KEY]: mediaCache,
+        });
+        params = new URLSearchParams({ mode: 'edit', draftKey });
+      } else {
+        const { panel, word, sentence, sourceUrl, sourceTitle } = msg.payload;
+        params = new URLSearchParams({
+          mode: 'create',
+          panel: panel ?? 'dictionary',
+          word,
+          sentence,
+          sourceUrl,
+          sourceTitle,
+        });
+      }
+      openCardCreatorWindow(params);
       return { ok: true };
     }
 
@@ -990,7 +1213,7 @@ onMessage(async (msg, sender) => {
 
       const apiBase = settings.apiBaseUrl || BACKEND_URL;
       try {
-        // 1. Convert data URL → Blob
+        // 1. Convert data URL 竊・Blob
         const resp = await fetch(audioDataUrl);
         const blob = await resp.blob();
         const ext = mimeType.includes('webm') ? 'webm' : 'ogg';
@@ -1058,7 +1281,7 @@ onMessage(async (msg, sender) => {
 });
 
 // Context menu for "Look up in Syntagma"
-// Must be created inside onInstalled — not at module top level.
+// Must be created inside onInstalled 窶・not at module top level.
 // MV3 service workers restart on every event wakeup; calling
 // contextMenus.create at module scope causes "Cannot create item with
 // duplicate id syntagma-lookup" errors on every restart after the first.

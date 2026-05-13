@@ -230,6 +230,7 @@ function handleOpenAdvancedCreator(lemma?: string, sentence?: string) {
   sendMessage({
     type: 'OPEN_CARD_CREATOR',
     payload: {
+      mode: 'create',
       word: lemma ?? '',
       sentence: sentence ?? '',
       sourceUrl: window.location.href,

@@ -8,6 +8,7 @@ import { lookupFrequency, initFrequencyTable } from '../shared/frequency';
 import { lemmatize } from '../shared/lemmatizer';
 import { usePageAnalysis } from '../content/hooks/usePageAnalysis';
 import { MiniDonut, StatsPopup, StatsUIColors } from '../content/components/StatsUI';
+import { collectWholeBookAnalysisFromBuffer } from './reader-analysis';
 
 // ─── Colors (matching extension theme) ──────────────────────────────────────
 
@@ -1017,6 +1018,9 @@ function ReaderView({
   const [showToc, setShowToc] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [chapterTokens, setChapterTokens] = useState<Token[]>([]);
+  const [bookTokens, setBookTokens] = useState<Token[]>([]);
+  const [bookBlocks, setBookBlocks] = useState<Token[][]>([]);
+  const [bookAnalysisLoading, setBookAnalysisLoading] = useState(false);
   const [currentChapter, setCurrentChapter] = useState('');
   const [progress, setProgress] = useState(bookMeta.progress);
   const [fontSize, setFontSize] = useState(settings.readerDefaultFontSize);
@@ -1033,6 +1037,7 @@ function ReaderView({
   const lexemesRef = useRef(lexemes);
   const settingsRef = useRef(settings);
   const lastSavedPageRef = useRef<number>(bookMeta.lastPage);
+  const locationsReadyRef = useRef(false);
   useEffect(() => { lexemesRef.current = lexemes; }, [lexemes]);
   useEffect(() => { settingsRef.current = settings; }, [settings]);
   useEffect(() => { lastSavedPageRef.current = bookMeta.lastPage; }, [bookMeta.id, bookMeta.lastPage]);
@@ -1089,8 +1094,34 @@ function ReaderView({
 
     async function init() {
       try {
+        setBookAnalysisLoading(true);
+        setBookTokens([]);
+        setBookBlocks([]);
+        locationsReadyRef.current = false;
+
         const buffer = await loadEpubBuffer(bookMeta.id);
         if (destroyed) return;
+
+        const analysisPromise = collectWholeBookAnalysisFromBuffer(buffer, lexemesRef.current)
+          .then(({ tokens, blocks, scannedSections, failedSections }) => {
+            if (destroyed) return { scannedSections, failedSections };
+            setBookTokens(tokens);
+            setBookBlocks(blocks);
+            return { scannedSections, failedSections };
+          })
+          .catch((error) => {
+            console.error('[Syntagma Reader] Failed to analyze whole book:', error);
+            if (!destroyed) {
+              setBookTokens([]);
+              setBookBlocks([]);
+            }
+            return { scannedSections: 0, failedSections: 1 };
+          })
+          .finally(() => {
+            if (!destroyed) {
+              setBookAnalysisLoading(false);
+            }
+          });
 
         const book = ePub(buffer);
         bookRef.current = book;
@@ -1184,13 +1215,29 @@ function ReaderView({
 
         await rendition.display();
 
-        // Generate locations for progress tracking, then restore the saved location index.
-        await book.locations.generate(1024);
-        if (!destroyed && bookMeta.lastPage > 0) {
-          const savedCfi = book.locations.cfiFromLocation(bookMeta.lastPage);
-          if (typeof savedCfi === 'string' && savedCfi) {
-            await rendition.display(savedCfi);
+        // Generate locations for progress tracking only when spine sections are healthy.
+        const analysisMeta = await analysisPromise;
+        const shouldGenerateLocations = analysisMeta.failedSections === 0;
+        if (shouldGenerateLocations) {
+          try {
+            await book.locations.generate(1024);
+            locationsReadyRef.current = true;
+            if (!destroyed && bookMeta.lastPage > 0) {
+              const savedCfi = book.locations.cfiFromLocation(bookMeta.lastPage);
+              if (typeof savedCfi === 'string' && savedCfi) {
+                await rendition.display(savedCfi);
+              }
+            }
+          } catch (error) {
+            locationsReadyRef.current = false;
+            console.warn('[Syntagma Reader] Failed to generate locations for this EPUB:', error);
           }
+        } else {
+          locationsReadyRef.current = false;
+          console.warn(
+            '[Syntagma Reader] Skipping location generation due to broken spine sections:',
+            analysisMeta,
+          );
         }
         updateProgress(rendition);
 
@@ -1208,6 +1255,9 @@ function ReaderView({
           }
         });
       } catch (err) {
+        if (!destroyed) {
+          setBookAnalysisLoading(false);
+        }
         console.error('[Syntagma Reader] Failed to load ebook:', err);
       }
     }
@@ -1235,10 +1285,17 @@ function ReaderView({
   }
 
   async function savePosition(bookId: string) {
+    if (!locationsReadyRef.current) return;
     const loc = renditionRef.current?.currentLocation() as any;
     const cfi = loc?.start?.cfi;
     if (!cfi || !bookRef.current) return;
-    const nextPage = Number((bookRef.current.locations as any).locationFromCfi(cfi));
+    let nextPage = -1;
+    try {
+      nextPage = Number((bookRef.current.locations as any).locationFromCfi(cfi));
+    } catch (error) {
+      console.warn('[Syntagma Reader] Skipping progress save due to invalid CFI mapping:', error);
+      return;
+    }
     if (!Number.isFinite(nextPage) || nextPage < 0) return;
     const normalizedPage = Math.floor(nextPage);
     if (normalizedPage === lastSavedPageRef.current) return;
@@ -1304,7 +1361,7 @@ function ReaderView({
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const analysis = usePageAnalysis(chapterTokens, lexemes);
+  const analysis = usePageAnalysis(bookTokens, lexemes, { blocks: bookBlocks });
   const pct = analysis.comprehensionScore;
   const scoreColor = pct >= 90 ? StatsUIColors.green : pct >= 70 ? StatsUIColors.amber : StatsUIColors.red;
   
@@ -1348,7 +1405,7 @@ function ReaderView({
         <button
           ref={statsRef}
           onClick={() => setShowStats(v => !v)}
-          title="Chapter analysis"
+          title={bookAnalysisLoading ? 'Analyzing book...' : 'Book analysis'}
           style={{
             background: showStats ? theme.border : 'transparent',
             border: `1px solid ${theme.border}`,
@@ -1526,6 +1583,8 @@ function ReaderView({
           anchorLeft={statsAnchorLeft}
           onClose={() => setShowStats(false)}
           isFixed={false}
+          title="Book Analysis"
+          emptyMessage={bookAnalysisLoading ? 'Analyzing book...' : undefined}
         />
       )}
     </div>

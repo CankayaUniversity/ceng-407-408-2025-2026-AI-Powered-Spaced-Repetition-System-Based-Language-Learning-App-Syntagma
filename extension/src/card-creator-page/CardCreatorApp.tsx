@@ -1,272 +1,1098 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { sendMessage } from '../shared/messages';
-import type { FlashcardPayload, UserSettings } from '../shared/types';
-import { DEFAULT_SETTINGS } from '../shared/storage';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { sendMessage, type FlashcardMediaOp } from '../shared/messages';
+import type { FlashcardPayload, LexemeEntry, UserSettings, WordStatus } from '../shared/types';
+import { DEFAULT_SETTINGS, userScopedKey } from '../shared/storage';
+import {
+  cardMatchesCollection,
+  resolveCardCollectionLabel,
+  resolvePreferredCollectionId,
+} from '../shared/flashcards';
 
 const C = {
-  base:     '#F5F1E9',
-  surface0: '#FFFFFF',
-  surface1: '#E2DACE',
-  surface2: '#C9BEAD',
-  text:     '#4A3B2C',
-  subtext:  '#877666',
-  blue:     '#98C1D9',
-  red:      '#D97762',
-  amber:    '#E9C46A',
-  green:    '#A8B693',
+  bg: '#0B1220',
+  sidebar: '#0F172A',
+  panel: '#111B32',
+  panelAlt: '#0D1528',
+  line: '#243550',
+  text: '#E8EEF9',
+  muted: '#98A9C4',
+  accent: '#55D5FF',
+  accentSoft: '#1A3658',
+  success: '#4AD89A',
+  danger: '#FF6B81',
+  warning: '#FFB347',
+  input: '#1A2840',
+  inputAlt: '#202E4B',
+  button: '#1E3A5F',
+  buttonPrimary: '#FF8A4C',
 };
 
-const CARD_TYPES = ['Basic', 'Basic (reversed)', 'Cloze'];
-const DECK_NAMES = ['Syntagma', 'English Vocab', 'Sentences', 'Phrases'];
+interface CollectionItem {
+  collectionId: number;
+  name: string;
+}
+
+interface WordBrowserEntry {
+  lemma: string;
+  status: WordStatus;
+  updatedAt: number;
+}
+
+type AppPanel = 'home' | 'flashcards' | 'dictionary';
+type DictionaryView = 'lookup' | 'word-browser';
+type EditorMode = 'create' | 'edit';
+type KnowledgeStatusValue = 'KNOWN' | 'LEARNING' | 'UNKNOWN' | 'IGNORED';
+
+const KNOWLEDGE_STATUSES: KnowledgeStatusValue[] = ['LEARNING', 'KNOWN', 'UNKNOWN', 'IGNORED'];
+
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') resolve(reader.result);
+      else reject(new Error('Failed to read file.'));
+    };
+    reader.onerror = () => reject(new Error('Failed to read file.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function normalizeWordStatus(value: string): WordStatus {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'known' || normalized === 'learning' || normalized === 'ignored') return normalized;
+  return 'unknown';
+}
+
+function statusColor(status: WordStatus): string {
+  if (status === 'known') return C.success;
+  if (status === 'learning') return C.warning;
+  if (status === 'ignored') return C.muted;
+  return C.danger;
+}
 
 export function CardCreatorApp() {
-  const params = new URLSearchParams(window.location.search);
-  const initialWord     = params.get('word')        ?? '';
-  const initialSentence = params.get('sentence')    ?? '';
-  const sourceUrl       = params.get('sourceUrl')   ?? '';
-  const sourceTitle     = params.get('sourceTitle') ?? '';
+  const params = useMemo(() => new URLSearchParams(window.location.search), []);
+  const initialMode: EditorMode = params.get('mode') === 'edit' ? 'edit' : 'create';
+  const initialPanelParam = params.get('panel');
+  const initialPanel: AppPanel =
+    initialPanelParam === 'home' || initialPanelParam === 'flashcards' || initialPanelParam === 'dictionary'
+      ? initialPanelParam
+      : 'dictionary';
+  const draftKey = params.get('draftKey');
+  const initialWord = params.get('word') ?? '';
+  const initialSentence = params.get('sentence') ?? '';
+  const initialSourceUrl = params.get('sourceUrl') ?? '';
+  const initialSourceTitle = params.get('sourceTitle') ?? '';
 
+  const [loading, setLoading] = useState(true);
   const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
-  const [search, setSearch]         = useState(initialWord);
-  const [dictResults, setDictResults] = useState<string[]>([]);
-  const [dictLoading, setDictLoading] = useState(false);
-  const [cardType, setCardType]     = useState(CARD_TYPES[0]);
-  const [deck, setDeck]             = useState(DECK_NAMES[0]);
-  const [targetWord, setTargetWord] = useState(initialWord);
-  const [sentence, setSentence]     = useState(initialSentence);
-  const [sentenceTr, setSentenceTr] = useState('');
-  const [definition, setDefinition] = useState('');
-  const [notes, setNotes]           = useState('');
-  const [saving, setSaving]         = useState(false);
-  const [saveMsg, setSaveMsg]       = useState<{ text: string; ok: boolean } | null>(null);
-  const searchRef = useRef<HTMLInputElement>(null);
+  const [collections, setCollections] = useState<CollectionItem[]>([]);
+  const [flashcards, setFlashcards] = useState<FlashcardPayload[]>([]);
+  const [wordEntries, setWordEntries] = useState<WordBrowserEntry[]>([]);
 
-  useEffect(() => {
-    sendMessage<UserSettings>({ type: 'GET_SETTINGS', payload: null })
-      .then(s => {
-        setSettings(s);
-        setDeck(s.ankiDeckName || DECK_NAMES[0]);
-      })
-      .catch(() => {});
-    searchRef.current?.focus();
+  const [activePanel, setActivePanel] = useState<AppPanel>(initialPanel);
+  const [dictionaryView, setDictionaryView] = useState<DictionaryView>('lookup');
+  const [editorMode, setEditorMode] = useState<EditorMode>(initialMode);
+  const [editingCard, setEditingCard] = useState<FlashcardPayload | null>(null);
+
+  const [search, setSearch] = useState(initialWord);
+  const [targetWord, setTargetWord] = useState(initialWord);
+  const [sentence, setSentence] = useState(initialSentence);
+  const [exampleSentence, setExampleSentence] = useState('');
+  const [translation, setTranslation] = useState('');
+  const [knowledgeStatus, setKnowledgeStatus] = useState<KnowledgeStatusValue>('LEARNING');
+  const [selectedCollectionId, setSelectedCollectionId] = useState<number | null>(null);
+  const [sourceUrl, setSourceUrl] = useState(initialSourceUrl);
+  const [sourceTitle, setSourceTitle] = useState(initialSourceTitle);
+
+  const [dictionaryResults, setDictionaryResults] = useState<string[]>([]);
+  const [dictionaryLoading, setDictionaryLoading] = useState(false);
+  const [wordBrowserSearch, setWordBrowserSearch] = useState('');
+  const [flashcardFilter, setFlashcardFilter] = useState<number | null>(null);
+  const [listLoading, setListLoading] = useState(false);
+
+  const [screenshotPreview, setScreenshotPreview] = useState<string | undefined>(undefined);
+  const [audioPreview, setAudioPreview] = useState<string | undefined>(undefined);
+  const [audioReplacementDataUrl, setAudioReplacementDataUrl] = useState<string | undefined>(undefined);
+  const [mediaOps, setMediaOps] = useState<{ screenshot: FlashcardMediaOp; audio: FlashcardMediaOp }>({
+    screenshot: 'keep',
+    audio: 'keep',
+  });
+
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<{ text: string; ok: boolean } | null>(null);
+
+  const searchRef = useRef<HTMLInputElement>(null);
+  const screenshotInputRef = useRef<HTMLInputElement>(null);
+  const audioInputRef = useRef<HTMLInputElement>(null);
+
+  const collectionNameById = useMemo(() => {
+    const map: Record<number, string> = {};
+    for (const coll of collections) map[coll.collectionId] = coll.name;
+    return map;
+  }, [collections]);
+
+  const filteredWordEntries = useMemo(() => {
+    const query = wordBrowserSearch.trim().toLowerCase();
+    return wordEntries
+      .filter(entry => !query || entry.lemma.includes(query))
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+  }, [wordEntries, wordBrowserSearch]);
+
+  const filteredFlashcards = useMemo(() => {
+    if (flashcardFilter == null) return flashcards;
+    return flashcards.filter(card => cardMatchesCollection(card, flashcardFilter));
+  }, [flashcards, flashcardFilter]);
+
+  const selectedCollectionName = useMemo(
+    () => collections.find(c => c.collectionId === selectedCollectionId)?.name ?? null,
+    [collections, selectedCollectionId]
+  );
+
+  const loadCollections = useCallback(async () => {
+    const result = await sendMessage<{ ok: boolean; collections?: CollectionItem[] }>({
+      type: 'FETCH_COLLECTIONS',
+      payload: null,
+    }).catch(() => ({ ok: false as const }));
+    if (result.ok) setCollections(result.collections ?? []);
   }, []);
 
+  const loadFlashcards = useCallback(async (currentSettings: UserSettings) => {
+    setListLoading(true);
+    try {
+      const result = await sendMessage<{ ok: boolean; cards?: FlashcardPayload[]; error?: string }>({
+        type: 'FETCH_FLASHCARDS',
+        payload: null,
+      });
+      if (result.ok) {
+        setFlashcards(result.cards ?? []);
+        return;
+      }
+      throw new Error(result.error ?? 'Could not fetch flashcards');
+    } catch {
+      const key = userScopedKey('flashcards', currentSettings.authUserId);
+      const cache = await chrome.storage.local.get(key);
+      setFlashcards((cache[key] ?? []) as FlashcardPayload[]);
+    } finally {
+      setListLoading(false);
+    }
+  }, []);
+
+  const loadWordBrowser = useCallback(async (currentSettings: UserSettings) => {
+    const key = userScopedKey('lexemes', currentSettings.authUserId);
+    const result = await chrome.storage.local.get(key);
+    const lexemes = Object.values((result[key] ?? {}) as Record<string, LexemeEntry>);
+    setWordEntries(lexemes.map(entry => ({
+      lemma: entry.lemma,
+      status: entry.status,
+      updatedAt: entry.lastSeenAt ?? entry.createdAt ?? 0,
+    })));
+  }, []);
+
+  const loadCardIntoEditor = useCallback((card: FlashcardPayload, fallbackCollectionId: number | null) => {
+    const word = card.surfaceForm || card.lemma || '';
+    setEditorMode('edit');
+    setEditingCard(card);
+    setSearch(word);
+    setTargetWord(word);
+    setSentence(card.sentence || '');
+    setExampleSentence(card.exampleSentence || '');
+    setTranslation(card.trMeaning || '');
+    setKnowledgeStatus(card.knowledgeStatus ?? 'LEARNING');
+    setSourceUrl(card.sourceUrl || '');
+    setSourceTitle(card.sourceTitle || '');
+    setSelectedCollectionId(resolvePreferredCollectionId(card, fallbackCollectionId));
+    setScreenshotPreview(card.screenshotDataUrl);
+    setAudioPreview(card.audioUrl);
+    setAudioReplacementDataUrl(undefined);
+    setMediaOps({ screenshot: 'keep', audio: 'keep' });
+    setSaveMsg(null);
+    setActivePanel('dictionary');
+    setDictionaryView('lookup');
+  }, []);
+
+  const resetEditorToCreateMode = useCallback(() => {
+    setEditorMode('create');
+    setEditingCard(null);
+    setExampleSentence('');
+    setKnowledgeStatus('LEARNING');
+    setSelectedCollectionId(settings.activeCollectionId);
+    setScreenshotPreview(undefined);
+    setAudioPreview(undefined);
+    setAudioReplacementDataUrl(undefined);
+    setMediaOps({ screenshot: 'keep', audio: 'keep' });
+    setSaveMsg(null);
+  }, [settings.activeCollectionId]);
+
   useEffect(() => {
-    if (!search.trim()) { setDictResults([]); return; }
-    const tid = setTimeout(async () => {
-      setDictLoading(true);
+    let cancelled = false;
+
+    (async () => {
       try {
-        const res = await sendMessage<{ translations: string[] }>({
+        const currentSettings = await sendMessage<UserSettings>({ type: 'GET_SETTINGS', payload: null });
+        if (cancelled) return;
+        setSettings(currentSettings);
+        setSelectedCollectionId(currentSettings.activeCollectionId);
+
+        await Promise.all([
+          loadCollections(),
+          loadFlashcards(currentSettings),
+          loadWordBrowser(currentSettings),
+        ]);
+        if (cancelled) return;
+
+        if (initialMode === 'edit' && draftKey) {
+          const draftResult = await chrome.storage.local.get(draftKey);
+          await chrome.storage.local.remove(draftKey);
+          if (cancelled) return;
+          const draft = draftResult[draftKey] as FlashcardPayload | undefined;
+          if (draft) {
+            loadCardIntoEditor(draft, currentSettings.activeCollectionId);
+          } else {
+            setSaveMsg({ text: 'Could not load flashcard draft.', ok: false });
+          }
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [draftKey, initialMode, loadCardIntoEditor, loadCollections, loadFlashcards, loadWordBrowser]);
+
+  useEffect(() => {
+    if (!search.trim()) {
+      setDictionaryResults([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      setDictionaryLoading(true);
+      try {
+        const result = await sendMessage<{ translations: string[] }>({
           type: 'LOOKUP_DICTIONARY',
           payload: { word: search.trim() },
         });
-        setDictResults(res?.translations ?? []);
-      } catch { setDictResults([]); }
-      setDictLoading(false);
-    }, 350);
-    return () => clearTimeout(tid);
+        setDictionaryResults(result.translations ?? []);
+      } catch {
+        setDictionaryResults([]);
+      } finally {
+        setDictionaryLoading(false);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
   }, [search]);
 
-  const handleCreate = useCallback(async () => {
-    if (!targetWord.trim()) return;
-    setSaving(true);
-    try {
-      const card: FlashcardPayload = {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        lemma: targetWord.trim().toLowerCase(),
-        surfaceForm: targetWord.trim(),
-        sentence: sentence.trim(),
-        sourceUrl,
-        sourceTitle,
-        trMeaning: definition.trim() || dictResults[0] || '',
-        createdAt: Date.now(),
-        deckName: deck,
-        tags: ['syntagma', 'advanced-creator'],
-      };
-      const result = await sendMessage<{ ok: boolean; error?: string }>({
-        type: 'CREATE_FLASHCARD',
-        payload: card,
-      });
-      if (!result.ok) throw new Error(result.error ?? 'Could not create card');
-      setSaveMsg({ text: 'Card created!', ok: true });
-      setTimeout(() => { setSaveMsg(null); window.close(); }, 1200);
-    } catch (err) {
-      setSaveMsg({ text: (err as Error).message, ok: false });
-    }
-    setSaving(false);
-  }, [targetWord, sentence, definition, deck, dictResults, sourceUrl, sourceTitle]);
+  useEffect(() => {
+    if (!settings.authUserId) return;
+    const flashcardsKey = userScopedKey('flashcards', settings.authUserId);
+    const lexemesKey = userScopedKey('lexemes', settings.authUserId);
+
+    const onChanged = (changes: Record<string, chrome.storage.StorageChange>, areaName: string) => {
+      if (areaName !== 'local') return;
+      if (changes[flashcardsKey]?.newValue) {
+        setFlashcards((changes[flashcardsKey].newValue ?? []) as FlashcardPayload[]);
+      }
+      if (changes[lexemesKey]?.newValue) {
+        const entries = Object.values((changes[lexemesKey].newValue ?? {}) as Record<string, LexemeEntry>);
+        setWordEntries(entries.map(entry => ({
+          lemma: entry.lemma,
+          status: entry.status,
+          updatedAt: entry.lastSeenAt ?? entry.createdAt ?? 0,
+        })));
+      }
+    };
+
+    chrome.storage.onChanged.addListener(onChanged);
+    return () => chrome.storage.onChanged.removeListener(onChanged);
+  }, [settings.authUserId]);
 
   useEffect(() => {
-    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') window.close(); };
-    window.addEventListener('keydown', h);
-    return () => window.removeEventListener('keydown', h);
+    searchRef.current?.focus();
   }, []);
 
+  const updateWordStatus = useCallback(async (lemma: string, status: WordStatus) => {
+    const result = await sendMessage<{ ok: boolean; error?: string }>({
+      type: 'UPSERT_WORD_KNOWLEDGE',
+      payload: { lemma, status },
+    });
+    if (!result.ok) throw new Error(result.error ?? 'Could not update word.');
+  }, []);
+
+  const handleScreenshotReplace = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const dataUrl = await fileToDataUrl(file);
+    setScreenshotPreview(dataUrl);
+    setMediaOps(prev => ({ ...prev, screenshot: 'replace' }));
+    event.target.value = '';
+  }, []);
+
+  const handleAudioReplace = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const dataUrl = await fileToDataUrl(file);
+    setAudioPreview(dataUrl);
+    setAudioReplacementDataUrl(dataUrl);
+    setMediaOps(prev => ({ ...prev, audio: 'replace' }));
+    event.target.value = '';
+  }, []);
+
+  const resetScreenshotMedia = useCallback(() => {
+    if (editingCard?.screenshotDataUrl) {
+      setScreenshotPreview(editingCard.screenshotDataUrl);
+      setMediaOps(prev => ({ ...prev, screenshot: 'keep' }));
+      return;
+    }
+    setScreenshotPreview(undefined);
+    setMediaOps(prev => ({ ...prev, screenshot: 'keep' }));
+  }, [editingCard?.screenshotDataUrl]);
+
+  const resetAudioMedia = useCallback(() => {
+    if (editingCard?.audioUrl) {
+      setAudioPreview(editingCard.audioUrl);
+      setAudioReplacementDataUrl(undefined);
+      setMediaOps(prev => ({ ...prev, audio: 'keep' }));
+      return;
+    }
+    setAudioPreview(undefined);
+    setAudioReplacementDataUrl(undefined);
+    setMediaOps(prev => ({ ...prev, audio: 'keep' }));
+  }, [editingCard?.audioUrl]);
+
+  const handleSave = useCallback(async () => {
+    if (!targetWord.trim()) return;
+    setSaving(true);
+    setSaveMsg(null);
+
+    const normalizedWord = targetWord.trim();
+    const card: FlashcardPayload = {
+      id: editingCard?.id ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      lemma: normalizedWord.toLowerCase(),
+      surfaceForm: normalizedWord,
+      sentence: sentence.trim(),
+      exampleSentence: exampleSentence.trim(),
+      sourceUrl,
+      sourceTitle,
+      trMeaning: translation.trim() || dictionaryResults[0] || '',
+      knowledgeStatus,
+      createdAt: editingCard?.createdAt ?? Date.now(),
+      updatedAt: Date.now(),
+      deckName: selectedCollectionName ?? settings.activeCollectionName ?? settings.ankiDeckName ?? 'Syntagma',
+      tags: editingCard?.tags ?? ['syntagma', 'workspace-creator'],
+      collectionId: selectedCollectionId,
+      collectionIds: editingCard?.collectionIds ?? [],
+      screenshotDataUrl:
+        mediaOps.screenshot === 'replace'
+          ? screenshotPreview
+          : mediaOps.screenshot === 'remove'
+            ? undefined
+            : screenshotPreview,
+      audioUrl: mediaOps.audio === 'remove' ? undefined : audioPreview,
+      sentenceAudioDataUrl: mediaOps.audio === 'replace' ? audioReplacementDataUrl : undefined,
+    };
+
+    try {
+      if (editorMode === 'edit' && editingCard) {
+        const result = await sendMessage<{ ok: boolean; card?: FlashcardPayload; error?: string }>({
+          type: 'UPDATE_FLASHCARD',
+          payload: {
+            id: editingCard.id,
+            card,
+            selectedCollectionId,
+            mediaOps,
+          },
+        });
+        if (!result.ok) throw new Error(result.error ?? 'Could not update card');
+        if (result.card) {
+          setFlashcards(prev => prev.map(item => (item.id === result.card!.id ? result.card! : item)));
+          loadCardIntoEditor(result.card, selectedCollectionId);
+        }
+        setSaveMsg({ text: 'Flashcard updated.', ok: true });
+      } else {
+        const result = await sendMessage<{ ok: boolean; card?: FlashcardPayload; error?: string }>({
+          type: 'CREATE_FLASHCARD',
+          payload: card,
+        });
+        if (!result.ok) throw new Error(result.error ?? 'Could not create card');
+        if (result.card) {
+          setFlashcards(prev => [result.card!, ...prev]);
+        }
+        setSaveMsg({ text: 'Flashcard created.', ok: true });
+      }
+    } catch (error) {
+      setSaveMsg({ text: (error as Error).message, ok: false });
+    } finally {
+      setSaving(false);
+    }
+  }, [
+    audioPreview,
+    audioReplacementDataUrl,
+    dictionaryResults,
+    editorMode,
+    editingCard,
+    exampleSentence,
+    knowledgeStatus,
+    loadCardIntoEditor,
+    mediaOps,
+    screenshotPreview,
+    selectedCollectionId,
+    selectedCollectionName,
+    sentence,
+    settings.activeCollectionName,
+    settings.ankiDeckName,
+    sourceTitle,
+    sourceUrl,
+    targetWord,
+    translation,
+  ]);
+
+  const navButtonStyle = (active: boolean): React.CSSProperties => ({
+    background: active ? C.accentSoft : 'transparent',
+    color: active ? C.accent : C.muted,
+    border: `1px solid ${active ? C.accentSoft : 'transparent'}`,
+    borderRadius: '8px',
+    width: '100%',
+    textAlign: 'left',
+    padding: '9px 10px',
+    cursor: 'pointer',
+    fontSize: '12px',
+    fontWeight: active ? 700 : 500,
+  });
+
   const inputStyle: React.CSSProperties = {
-    width: '100%', background: C.base, border: `1px solid ${C.surface1}`,
-    borderRadius: '6px', padding: '8px 10px', fontSize: '13px',
-    color: C.text, outline: 'none', boxSizing: 'border-box',
+    width: '100%',
+    background: C.input,
+    border: `1px solid ${C.line}`,
+    borderRadius: '8px',
+    color: C.text,
+    padding: '10px 12px',
+    fontSize: '13px',
+    outline: 'none',
+    boxSizing: 'border-box',
   };
-  const labelStyle: React.CSSProperties = {
-    fontSize: '11px', fontWeight: 600, color: C.subtext,
-    textTransform: 'uppercase', letterSpacing: '0.5px',
-    marginBottom: '4px', display: 'block',
+
+  const sectionLabelStyle: React.CSSProperties = {
+    color: C.muted,
+    fontSize: '11px',
+    fontWeight: 700,
+    letterSpacing: '0.04em',
+    textTransform: 'uppercase',
+    marginBottom: '6px',
+    display: 'block',
   };
-  const fieldStyle: React.CSSProperties = { marginBottom: '12px' };
+
+  if (loading) {
+    return (
+      <div style={{ background: C.bg, color: C.muted, height: '100vh', display: 'grid', placeItems: 'center' }}>
+        Loading workspace...
+      </div>
+    );
+  }
 
   return (
     <div style={{
-      height: '100vh', display: 'flex', flexDirection: 'column',
-      background: C.surface0,
+      display: 'flex',
+      height: '100vh',
+      background: C.bg,
+      color: C.text,
       fontFamily: 'system-ui, -apple-system, sans-serif',
-      fontSize: '13px', color: C.text,
+      overflow: 'hidden',
     }}>
-      {/* Header */}
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '12px 18px', borderBottom: `1px solid ${C.surface1}`,
-        background: C.base, flexShrink: 0,
+      <aside style={{
+        width: '210px',
+        background: C.sidebar,
+        borderRight: `1px solid ${C.line}`,
+        padding: '12px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '8px',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <span style={{ color: C.blue, fontWeight: 800, fontSize: '15px' }}>Syn</span>
-          <span style={{ color: C.amber, fontWeight: 800, fontSize: '15px' }}>tagma</span>
-          <span style={{ color: C.subtext, fontSize: '12px' }}>— Card Creator</span>
+        <div style={{ marginBottom: '8px' }}>
+          <div style={{ fontSize: '16px', fontWeight: 800, color: C.accent }}>Syntagma</div>
+          <div style={{ color: C.muted, fontSize: '11px' }}>Workspace</div>
         </div>
-        <button onClick={() => window.close()} style={{
-          background: 'transparent', border: 'none', cursor: 'pointer',
-          color: C.subtext, fontSize: '20px', lineHeight: 1, padding: '2px 6px',
-        }}>×</button>
-      </div>
 
-      {/* Search bar */}
-      <div style={{ padding: '10px 18px', borderBottom: `1px solid ${C.surface1}`, background: C.base, flexShrink: 0 }}>
-        <input
-          ref={searchRef}
-          value={search}
-          onChange={e => { setSearch(e.target.value); setTargetWord(e.target.value); }}
-          placeholder="Search word or phrase…"
-          style={{ ...inputStyle, fontSize: '15px', padding: '10px 14px' }}
-        />
-      </div>
+        <button style={navButtonStyle(activePanel === 'home')} onClick={() => setActivePanel('home')}>
+          Home
+        </button>
+        <button style={navButtonStyle(activePanel === 'flashcards')} onClick={() => setActivePanel('flashcards')}>
+          Flashcards
+        </button>
+        <button style={navButtonStyle(activePanel === 'dictionary')} onClick={() => setActivePanel('dictionary')}>
+          Dictionary + Card Edit
+        </button>
+        <button
+          style={navButtonStyle(false)}
+          onClick={() => sendMessage({ type: 'OPEN_READER', payload: null }).catch(() => {})}
+        >
+          Open eBook Reader
+        </button>
 
-      {/* Main area */}
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+        <div style={{ flex: 1 }} />
+        <button
+          style={navButtonStyle(false)}
+          onClick={() => sendMessage({ type: 'OPEN_OPTIONS_PAGE', payload: null }).catch(() => {})}
+        >
+          Settings
+        </button>
+      </aside>
 
-        {/* Left: dictionary */}
-        <div style={{ flex: 1, padding: '16px 18px', overflowY: 'auto', borderRight: `1px solid ${C.surface1}` }}>
-          {targetWord && (
-            <div style={{ marginBottom: '14px' }}>
-              <span style={{ fontSize: '22px', fontWeight: 700, color: C.text }}>{targetWord}</span>
+      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        <header style={{
+          height: '58px',
+          borderBottom: `1px solid ${C.line}`,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '0 16px',
+          background: C.panelAlt,
+        }}>
+          <div>
+            <div style={{ fontSize: '16px', fontWeight: 700 }}>
+              {activePanel === 'home' && 'Home'}
+              {activePanel === 'flashcards' && 'Flashcards'}
+              {activePanel === 'dictionary' && 'Dictionary + Card Edit'}
             </div>
-          )}
+            <div style={{ color: C.muted, fontSize: '11px' }}>
+              {settings.authEmail ?? 'Not logged in'}
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            {editorMode === 'edit' && (
+              <button
+                style={{
+                  background: C.button,
+                  border: `1px solid ${C.line}`,
+                  color: C.text,
+                  borderRadius: '8px',
+                  padding: '8px 12px',
+                  fontSize: '12px',
+                  cursor: 'pointer',
+                }}
+                onClick={resetEditorToCreateMode}
+              >
+                New Card
+              </button>
+            )}
+            <button
+              style={{
+                background: 'transparent',
+                border: `1px solid ${C.line}`,
+                color: C.muted,
+                borderRadius: '8px',
+                padding: '8px 12px',
+                fontSize: '12px',
+                cursor: 'pointer',
+              }}
+              onClick={() => window.close()}
+            >
+              Close
+            </button>
+          </div>
+        </header>
 
-          <div style={{ marginBottom: '16px' }}>
-            <span style={labelStyle}>Dictionary Translations</span>
-            {dictLoading ? (
-              <span style={{ color: C.subtext, fontSize: '13px' }}>Looking up…</span>
-            ) : dictResults.length > 0 ? (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' }}>
-                {dictResults.map((tr, i) => (
-                  <button key={i} onClick={() => setDefinition(tr)} style={{
-                    background: definition === tr ? C.blue : C.surface1,
-                    color: definition === tr ? C.base : C.text,
-                    border: 'none', borderRadius: '6px',
-                    padding: '6px 12px', fontSize: '13px', cursor: 'pointer', fontWeight: 500,
-                  }}>{tr}</button>
+        {activePanel === 'home' && (
+          <div style={{ flex: 1, padding: '20px', overflow: 'auto' }}>
+            <div style={{
+              background: C.panel,
+              border: `1px solid ${C.line}`,
+              borderRadius: '12px',
+              padding: '24px',
+              maxWidth: '860px',
+            }}>
+              <h1 style={{ margin: 0, fontSize: '28px', lineHeight: 1.2 }}>Welcome to your Syntagma workspace</h1>
+              <p style={{ marginTop: '12px', color: C.muted, maxWidth: '620px', lineHeight: 1.6 }}>
+                Look up words, browse your flashcards, edit cards (including image/audio), and jump into the reader from one place.
+              </p>
+              <div style={{ display: 'flex', gap: '10px', marginTop: '18px' }}>
+                <button style={{ ...navButtonStyle(false), width: 'auto' }} onClick={() => setActivePanel('dictionary')}>
+                  Go To Dictionary + Card Edit
+                </button>
+                <button style={{ ...navButtonStyle(false), width: 'auto' }} onClick={() => setActivePanel('flashcards')}>
+                  Open Flashcards
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activePanel === 'flashcards' && (
+          <div style={{ flex: 1, padding: '16px', overflow: 'auto' }}>
+            <div style={{ marginBottom: '10px', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+              <button
+                onClick={() => setFlashcardFilter(null)}
+                style={{
+                  background: flashcardFilter == null ? C.accentSoft : C.input,
+                  color: flashcardFilter == null ? C.accent : C.text,
+                  border: `1px solid ${C.line}`,
+                  borderRadius: '999px',
+                  padding: '5px 12px',
+                  fontSize: '12px',
+                  cursor: 'pointer',
+                }}
+              >
+                All
+              </button>
+              {collections.map(collection => (
+                <button
+                  key={collection.collectionId}
+                  onClick={() => setFlashcardFilter(collection.collectionId)}
+                  style={{
+                    background: flashcardFilter === collection.collectionId ? C.accentSoft : C.input,
+                    color: flashcardFilter === collection.collectionId ? C.accent : C.text,
+                    border: `1px solid ${C.line}`,
+                    borderRadius: '999px',
+                    padding: '5px 12px',
+                    fontSize: '12px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {collection.name}
+                </button>
+              ))}
+            </div>
+
+            {listLoading ? (
+              <div style={{ color: C.muted, padding: '20px 0' }}>Loading flashcards...</div>
+            ) : filteredFlashcards.length === 0 ? (
+              <div style={{ color: C.muted, padding: '24px 0' }}>No flashcards found.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {filteredFlashcards.map(card => (
+                  <div
+                    key={card.id}
+                    style={{
+                      background: C.panel,
+                      border: `1px solid ${C.line}`,
+                      borderRadius: '10px',
+                      padding: '10px',
+                      display: 'flex',
+                      gap: '10px',
+                    }}
+                  >
+                    {(card.screenshotDataUrl || card.audioUrl) && (
+                      <div style={{ width: '92px', flexShrink: 0 }}>
+                        {card.screenshotDataUrl && (
+                          <img
+                            src={card.screenshotDataUrl}
+                            alt="card screenshot"
+                            style={{ width: '92px', height: '60px', objectFit: 'cover', borderRadius: '6px', border: `1px solid ${C.line}` }}
+                          />
+                        )}
+                        {card.audioUrl && (
+                          <audio controls style={{ width: '92px', marginTop: '6px', height: '22px' }}>
+                            <source src={card.audioUrl} />
+                          </audio>
+                        )}
+                      </div>
+                    )}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: '15px' }}>{card.surfaceForm || card.lemma}</div>
+                      <div style={{ color: C.accent, fontSize: '13px', marginTop: '2px' }}>{card.trMeaning}</div>
+                      <div style={{ color: C.muted, fontSize: '12px', marginTop: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {card.sentence}
+                      </div>
+                      <div style={{ color: C.muted, fontSize: '11px', marginTop: '4px' }}>
+                        {resolveCardCollectionLabel(card, collectionNameById)}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => loadCardIntoEditor(card, settings.activeCollectionId)}
+                      style={{
+                        alignSelf: 'start',
+                        background: C.button,
+                        border: `1px solid ${C.line}`,
+                        color: C.text,
+                        borderRadius: '8px',
+                        fontSize: '12px',
+                        padding: '6px 10px',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Edit
+                    </button>
+                  </div>
                 ))}
               </div>
-            ) : (
-              <span style={{ color: C.subtext, fontSize: '13px' }}>
-                {search.trim() ? 'No results found.' : 'Type a word to look up.'}
-              </span>
             )}
           </div>
+        )}
 
-          {sentence && (
-            <div style={{ marginBottom: '14px' }}>
-              <span style={labelStyle}>Source Sentence</span>
+        {activePanel === 'dictionary' && (
+          <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+            <section style={{
+              width: '45%',
+              minWidth: '330px',
+              borderRight: `1px solid ${C.line}`,
+              background: C.panelAlt,
+              padding: '16px',
+              overflow: 'auto',
+            }}>
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+                <button
+                  onClick={() => setDictionaryView('lookup')}
+                  style={{
+                    flex: 1,
+                    background: dictionaryView === 'lookup' ? C.accentSoft : C.input,
+                    color: dictionaryView === 'lookup' ? C.accent : C.text,
+                    border: `1px solid ${C.line}`,
+                    borderRadius: '8px',
+                    padding: '8px 10px',
+                    fontSize: '12px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Dictionary
+                </button>
+                <button
+                  onClick={() => setDictionaryView('word-browser')}
+                  style={{
+                    flex: 1,
+                    background: dictionaryView === 'word-browser' ? C.accentSoft : C.input,
+                    color: dictionaryView === 'word-browser' ? C.accent : C.text,
+                    border: `1px solid ${C.line}`,
+                    borderRadius: '8px',
+                    padding: '8px 10px',
+                    fontSize: '12px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Word Browser
+                </button>
+              </div>
+
+              {dictionaryView === 'lookup' ? (
+                <>
+                  <input
+                    ref={searchRef}
+                    value={search}
+                    onChange={event => { setSearch(event.target.value); setTargetWord(event.target.value); }}
+                    placeholder="Search keyword..."
+                    style={{ ...inputStyle, marginBottom: '10px' }}
+                  />
+
+                  {targetWord.trim() && (
+                    <div style={{ fontSize: '24px', fontWeight: 700, marginBottom: '8px' }}>{targetWord.trim()}</div>
+                  )}
+
+                  <div style={{ marginBottom: '14px' }}>
+                    <span style={sectionLabelStyle}>Translations</span>
+                    {dictionaryLoading ? (
+                      <div style={{ color: C.muted, fontSize: '12px' }}>Looking up dictionary...</div>
+                    ) : dictionaryResults.length ? (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                        {dictionaryResults.map(result => (
+                          <button
+                            key={result}
+                            onClick={() => setTranslation(result)}
+                            style={{
+                              background: translation === result ? C.accentSoft : C.input,
+                              color: translation === result ? C.accent : C.text,
+                              border: `1px solid ${C.line}`,
+                              borderRadius: '999px',
+                              padding: '6px 10px',
+                              fontSize: '12px',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {result}
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div style={{ color: C.muted, fontSize: '12px' }}>
+                        {search.trim() ? 'No translation found.' : 'Type a word to search.'}
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ marginBottom: '14px' }}>
+                    <span style={sectionLabelStyle}>Sentence</span>
+                    <div style={{ background: C.input, border: `1px solid ${C.line}`, borderRadius: '8px', padding: '10px 12px', minHeight: '70px', color: C.text }}>
+                      {sentence || 'No sentence selected yet.'}
+                    </div>
+                  </div>
+
+                  <div>
+                    <span style={sectionLabelStyle}>Source</span>
+                    <div style={{ color: C.muted, fontSize: '12px' }}>{sourceTitle || sourceUrl || 'Unknown source'}</div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <input
+                    value={wordBrowserSearch}
+                    onChange={event => setWordBrowserSearch(event.target.value)}
+                    placeholder="Filter words..."
+                    style={{ ...inputStyle, marginBottom: '10px' }}
+                  />
+                  <div style={{ color: C.muted, fontSize: '12px', marginBottom: '8px' }}>
+                    {filteredWordEntries.length} tracked words
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '7px' }}>
+                    {filteredWordEntries.slice(0, 200).map(entry => (
+                      <div
+                        key={entry.lemma}
+                        style={{
+                          background: C.input,
+                          border: `1px solid ${C.line}`,
+                          borderRadius: '8px',
+                          padding: '8px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                        }}
+                      >
+                        <span style={{ fontWeight: 600, fontSize: '13px', flex: 1 }}>{entry.lemma}</span>
+                        <select
+                          value={entry.status}
+                          onChange={async event => {
+                            const nextStatus = normalizeWordStatus(event.target.value);
+                            setWordEntries(prev => prev.map(item => (
+                              item.lemma === entry.lemma
+                                ? { ...item, status: nextStatus, updatedAt: Date.now() }
+                                : item
+                            )));
+                            try {
+                              await updateWordStatus(entry.lemma, nextStatus);
+                            } catch (error) {
+                              setSaveMsg({ text: (error as Error).message, ok: false });
+                              setWordEntries(prev => prev.map(item => (
+                                item.lemma === entry.lemma ? entry : item
+                              )));
+                            }
+                          }}
+                          style={{
+                            background: C.inputAlt,
+                            color: statusColor(entry.status),
+                            border: `1px solid ${C.line}`,
+                            borderRadius: '6px',
+                            fontSize: '12px',
+                            padding: '4px 6px',
+                          }}
+                        >
+                          <option value="unknown">unknown</option>
+                          <option value="learning">learning</option>
+                          <option value="known">known</option>
+                          <option value="ignored">ignored</option>
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </section>
+
+            <section style={{ flex: 1, padding: '16px', overflow: 'auto' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '10px' }}>
+                <div>
+                  <span style={sectionLabelStyle}>Deck</span>
+                  <select
+                    value={selectedCollectionId ?? ''}
+                    onChange={event => {
+                      const value = event.target.value;
+                      setSelectedCollectionId(value ? Number(value) : null);
+                    }}
+                    style={inputStyle}
+                  >
+                    <option value="">No deck (unsorted)</option>
+                    {collections.map(collection => (
+                      <option key={collection.collectionId} value={collection.collectionId}>
+                        {collection.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <span style={sectionLabelStyle}>Knowledge Status</span>
+                  <select
+                    value={knowledgeStatus}
+                    onChange={event => setKnowledgeStatus(event.target.value as KnowledgeStatusValue)}
+                    style={inputStyle}
+                  >
+                    {KNOWLEDGE_STATUSES.map(item => (
+                      <option key={item} value={item}>{item}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ marginBottom: '10px' }}>
+                <span style={sectionLabelStyle}>Target Word</span>
+                <input
+                  value={targetWord}
+                  onChange={event => setTargetWord(event.target.value)}
+                  placeholder="The word you want to learn"
+                  style={inputStyle}
+                />
+              </div>
+
+              <div style={{ marginBottom: '10px' }}>
+                <span style={sectionLabelStyle}>Source Sentence</span>
+                <textarea
+                  value={sentence}
+                  onChange={event => setSentence(event.target.value)}
+                  rows={3}
+                  style={{ ...inputStyle, resize: 'vertical' }}
+                  placeholder="Sentence the target word is in"
+                />
+              </div>
+
+              <div style={{ marginBottom: '10px' }}>
+                <span style={sectionLabelStyle}>Example Sentence</span>
+                <textarea
+                  value={exampleSentence}
+                  onChange={event => setExampleSentence(event.target.value)}
+                  rows={2}
+                  style={{ ...inputStyle, resize: 'vertical' }}
+                  placeholder="Optional example sentence"
+                />
+              </div>
+
+              <div style={{ marginBottom: '14px' }}>
+                <span style={sectionLabelStyle}>Translation</span>
+                <textarea
+                  value={translation}
+                  onChange={event => setTranslation(event.target.value)}
+                  rows={2}
+                  style={{ ...inputStyle, resize: 'vertical' }}
+                  placeholder="Meaning in Turkish"
+                />
+              </div>
+
               <div style={{
-                background: C.base, borderRadius: '6px', padding: '10px 12px',
-                fontSize: '13px', color: C.text, lineHeight: 1.6, fontStyle: 'italic',
-              }}>{sentence}</div>
-            </div>
-          )}
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr',
+                gap: '10px',
+                marginBottom: '12px',
+              }}>
+                <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: '10px', padding: '10px' }}>
+                  <span style={sectionLabelStyle}>Image</span>
+                  {screenshotPreview ? (
+                    <img
+                      src={screenshotPreview}
+                      alt="Flashcard image"
+                      style={{ width: '100%', height: '110px', objectFit: 'cover', borderRadius: '6px', border: `1px solid ${C.line}` }}
+                    />
+                  ) : (
+                    <div style={{ background: C.input, border: `1px solid ${C.line}`, borderRadius: '6px', height: '110px', display: 'grid', placeItems: 'center', color: C.muted, fontSize: '12px' }}>
+                      No image
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
+                    <button
+                      onClick={() => screenshotInputRef.current?.click()}
+                      style={{ flex: 1, background: C.button, color: C.text, border: `1px solid ${C.line}`, borderRadius: '6px', padding: '6px', fontSize: '12px', cursor: 'pointer' }}
+                    >
+                      Replace
+                    </button>
+                    <button
+                      onClick={() => { setScreenshotPreview(undefined); setMediaOps(prev => ({ ...prev, screenshot: 'remove' })); }}
+                      style={{ flex: 1, background: C.input, color: C.danger, border: `1px solid ${C.line}`, borderRadius: '6px', padding: '6px', fontSize: '12px', cursor: 'pointer' }}
+                    >
+                      Remove
+                    </button>
+                    <button
+                      onClick={resetScreenshotMedia}
+                      style={{ flex: 1, background: C.input, color: C.muted, border: `1px solid ${C.line}`, borderRadius: '6px', padding: '6px', fontSize: '12px', cursor: 'pointer' }}
+                    >
+                      Keep
+                    </button>
+                  </div>
+                  <input
+                    ref={screenshotInputRef}
+                    type="file"
+                    accept="image/*"
+                    style={{ display: 'none' }}
+                    onChange={handleScreenshotReplace}
+                  />
+                </div>
 
-          {sourceTitle && (
-            <div>
-              <span style={labelStyle}>Source</span>
-              <span style={{ fontSize: '12px', color: C.subtext }}>{sourceTitle}</span>
-            </div>
-          )}
-        </div>
+                <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: '10px', padding: '10px' }}>
+                  <span style={sectionLabelStyle}>Audio</span>
+                  {audioPreview ? (
+                    <audio controls style={{ width: '100%', marginTop: '6px' }}>
+                      <source src={audioPreview} />
+                    </audio>
+                  ) : (
+                    <div style={{ background: C.input, border: `1px solid ${C.line}`, borderRadius: '6px', height: '110px', display: 'grid', placeItems: 'center', color: C.muted, fontSize: '12px' }}>
+                      No audio
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
+                    <button
+                      onClick={() => audioInputRef.current?.click()}
+                      style={{ flex: 1, background: C.button, color: C.text, border: `1px solid ${C.line}`, borderRadius: '6px', padding: '6px', fontSize: '12px', cursor: 'pointer' }}
+                    >
+                      Replace
+                    </button>
+                    <button
+                      onClick={() => {
+                        setAudioPreview(undefined);
+                        setAudioReplacementDataUrl(undefined);
+                        setMediaOps(prev => ({ ...prev, audio: 'remove' }));
+                      }}
+                      style={{ flex: 1, background: C.input, color: C.danger, border: `1px solid ${C.line}`, borderRadius: '6px', padding: '6px', fontSize: '12px', cursor: 'pointer' }}
+                    >
+                      Remove
+                    </button>
+                    <button
+                      onClick={resetAudioMedia}
+                      style={{ flex: 1, background: C.input, color: C.muted, border: `1px solid ${C.line}`, borderRadius: '6px', padding: '6px', fontSize: '12px', cursor: 'pointer' }}
+                    >
+                      Keep
+                    </button>
+                  </div>
+                  <input
+                    ref={audioInputRef}
+                    type="file"
+                    accept="audio/*"
+                    style={{ display: 'none' }}
+                    onChange={handleAudioReplace}
+                  />
+                </div>
+              </div>
 
-        {/* Right: form */}
-        <div style={{ width: '300px', padding: '16px 18px', overflowY: 'auto', background: C.base, flexShrink: 0 }}>
-          <div style={fieldStyle}>
-            <label style={labelStyle}>Card Type</label>
-            <select value={cardType} onChange={e => setCardType(e.target.value)} style={inputStyle}>
-              {CARD_TYPES.map(t => <option key={t}>{t}</option>)}
-            </select>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                  onClick={handleSave}
+                  disabled={saving || !targetWord.trim()}
+                  style={{
+                    flex: 1,
+                    background: saving ? C.input : C.buttonPrimary,
+                    color: saving ? C.muted : '#1A1025',
+                    border: 'none',
+                    borderRadius: '10px',
+                    padding: '12px',
+                    fontSize: '14px',
+                    fontWeight: 700,
+                    cursor: saving || !targetWord.trim() ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {saving ? 'Saving...' : editorMode === 'edit' ? 'Save Changes' : 'Create Card'}
+                </button>
+              </div>
+
+              {saveMsg && (
+                <div style={{
+                  marginTop: '10px',
+                  background: saveMsg.ok ? `${C.success}33` : `${C.danger}33`,
+                  color: saveMsg.ok ? C.success : C.danger,
+                  border: `1px solid ${saveMsg.ok ? C.success : C.danger}`,
+                  borderRadius: '8px',
+                  padding: '8px 10px',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                }}>
+                  {saveMsg.text}
+                </div>
+              )}
+            </section>
           </div>
-
-          <div style={fieldStyle}>
-            <label style={labelStyle}>Deck</label>
-            <select value={deck} onChange={e => setDeck(e.target.value)} style={inputStyle}>
-              {DECK_NAMES.map(d => <option key={d}>{d}</option>)}
-            </select>
-          </div>
-
-          <div style={fieldStyle}>
-            <label style={labelStyle}>Target Word</label>
-            <input value={targetWord} onChange={e => setTargetWord(e.target.value)}
-              style={inputStyle} placeholder="Word or phrase" />
-          </div>
-
-          <div style={fieldStyle}>
-            <label style={labelStyle}>Sentence</label>
-            <textarea value={sentence} onChange={e => setSentence(e.target.value)}
-              rows={3} style={{ ...inputStyle, resize: 'vertical' }} placeholder="Example sentence…" />
-          </div>
-
-          <div style={fieldStyle}>
-            <label style={labelStyle}>Sentence Translation (TR)</label>
-            <textarea value={sentenceTr} onChange={e => setSentenceTr(e.target.value)}
-              rows={2} style={{ ...inputStyle, resize: 'vertical' }} placeholder="Türkçe çeviri…" />
-          </div>
-
-          <div style={fieldStyle}>
-            <label style={labelStyle}>Definition / Meaning</label>
-            <textarea value={definition} onChange={e => setDefinition(e.target.value)}
-              rows={2} style={{ ...inputStyle, resize: 'vertical' }} placeholder="Türkçe anlam…" />
-          </div>
-
-          <div style={fieldStyle}>
-            <label style={labelStyle}>Notes</label>
-            <textarea value={notes} onChange={e => setNotes(e.target.value)}
-              rows={2} style={{ ...inputStyle, resize: 'vertical' }} placeholder="Personal notes…" />
-          </div>
-
-          <button
-            onClick={handleCreate}
-            disabled={saving || !targetWord.trim()}
-            style={{
-              width: '100%', background: saving ? C.surface1 : C.blue,
-              color: saving ? C.subtext : C.base, border: 'none',
-              borderRadius: '8px', padding: '11px', fontSize: '14px',
-              fontWeight: 700, cursor: saving || !targetWord.trim() ? 'not-allowed' : 'pointer',
-              transition: 'all 0.15s',
-            }}
-          >{saving ? 'Saving…' : 'Create Card'}</button>
-
-          {saveMsg && (
-            <div style={{
-              marginTop: '10px', padding: '8px 12px', borderRadius: '6px',
-              background: saveMsg.ok ? C.green : C.red, color: C.base,
-              fontSize: '13px', fontWeight: 600, textAlign: 'center',
-            }}>{saveMsg.text}</div>
-          )}
-        </div>
-      </div>
+        )}
+      </main>
     </div>
   );
 }
