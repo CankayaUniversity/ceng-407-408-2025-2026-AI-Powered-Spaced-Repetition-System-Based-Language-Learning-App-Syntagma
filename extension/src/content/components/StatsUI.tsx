@@ -62,9 +62,19 @@ export interface StatsPopupProps {
   onClose: () => void;
   themeColors?: typeof StatsUIColors;
   isFixed?: boolean;
+  title?: string;
+  emptyMessage?: string;
 }
 
-export function StatsPopup({ analysis, anchorLeft, onClose, themeColors = StatsUIColors, isFixed = true }: StatsPopupProps) {
+export function StatsPopup({
+  analysis,
+  anchorLeft,
+  onClose,
+  themeColors = StatsUIColors,
+  isFixed = true,
+  title = 'Page Analysis',
+  emptyMessage = 'No words analyzed yet.',
+}: StatsPopupProps) {
   const ref = useRef<HTMLDivElement>(null);
   const { counts, comprehensionScore, iPlusOneSentences } = analysis;
   const total = counts.total;
@@ -121,12 +131,12 @@ export function StatsPopup({ analysis, anchorLeft, onClose, themeColors = StatsU
         textTransform: 'uppercase', letterSpacing: '0.6px',
         marginBottom: '16px', textAlign: 'center',
       }}>
-        Page Analysis
+        {title}
       </div>
 
       {total === 0 ? (
         <div style={{ textAlign: 'center', color: themeColors.subtext, fontSize: '13px', padding: '24px 0' }}>
-          No words analyzed yet.
+          {emptyMessage}
         </div>
       ) : (
         <>

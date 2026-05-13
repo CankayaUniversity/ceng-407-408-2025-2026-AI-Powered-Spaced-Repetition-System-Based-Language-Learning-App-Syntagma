@@ -40,17 +40,21 @@ export interface FlashcardPayload {
   lemma: string;
   surfaceForm: string;
   sentence: string;
+  exampleSentence?: string;
   sourceUrl: string;
   sourceTitle: string;
   trMeaning: string;
+  knowledgeStatus?: 'KNOWN' | 'LEARNING' | 'UNKNOWN' | 'IGNORED';
   audioUrl?: string;
   screenshotDataUrl?: string;
   sentenceAudioDataUrl?: string;
   videoTimestamp?: number;
   createdAt: number;
+  updatedAt?: number;
   deckName: string;
   tags: string[];
   collectionId?: number | null;
+  collectionIds?: number[];
 }
 
 export interface UserSettings {
