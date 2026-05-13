@@ -14,11 +14,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { useTheme } from '../shared/theme';
 import { updateWordKnowledge } from '../shared/api';
-
-// We fetch word knowledge via the generic apiRequest since the endpoint uses X-User-Id header
-import { getAuth } from '../shared/storage';
+import { getAuth, getCache, saveCache } from '../shared/storage';
+import { enqueueWordKnowledge } from '../shared/offline';
 
 const API_BASE_URL = 'https://syntagma.omerhanyigit.online';
+const cacheWKKey = (filter) => `syntagma.cache.wordknowledge.${filter}`;
 
 const STATUSES = ['ALL', 'KNOWN', 'LEARNING', 'UNKNOWN', 'IGNORED'];
 
@@ -76,9 +76,16 @@ export default function FlashcardLibraryScreen() {
       const data = await fetchWordKnowledge(filter === 'ALL' ? null : filter);
       const list = Array.isArray(data?.content) ? data.content : Array.isArray(data) ? data : [];
       setWords(list);
+      saveCache(cacheWKKey(filter), list).catch(() => {});
     } catch (err) {
-      setError(err?.message || 'Could not load vocabulary.');
-      setWords([]);
+      const cached = await getCache(cacheWKKey(filter)).catch(() => null);
+      if (cached) {
+        setWords(Array.isArray(cached) ? cached : []);
+        setError('');
+      } else {
+        setError(err?.message || 'Could not load vocabulary.');
+        setWords([]);
+      }
     } finally {
       setLoading(false);
     }
@@ -108,19 +115,21 @@ export default function FlashcardLibraryScreen() {
 
     try {
       await updateWordKnowledge(lemma, newStatus);
-      // Update local state
-      setWords((prev) =>
-        prev.map((w) =>
-          w.lemma === lemma ? { ...w, status: newStatus } : w
-        )
-      );
-    } catch (err) {
-      // Silently fail — the UI will still show old status
-    } finally {
-      setUpdatingLemma(null);
-      setSelectedWord(null);
+    } catch {
+      enqueueWordKnowledge(lemma, newStatus).catch(() => {});
     }
-  }, [selectedWord]);
+
+    setWords((prev) => {
+      const updated = prev.map((w) =>
+        w.lemma === lemma ? { ...w, status: newStatus } : w
+      );
+      saveCache(cacheWKKey(activeFilter), updated).catch(() => {});
+      return updated;
+    });
+
+    setUpdatingLemma(null);
+    setSelectedWord(null);
+  }, [selectedWord, activeFilter]);
 
   const renderFilterChip = (filter) => {
     const isActive = filter === activeFilter;

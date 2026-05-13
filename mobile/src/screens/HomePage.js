@@ -18,9 +18,14 @@ import {
   fetchDailyCards,
   fetchReviewStats,
 } from '../shared/api';
-import { getBadgeState, saveBadgeState } from '../shared/storage';
+import { getBadgeState, getCache, saveCache, saveBadgeState } from '../shared/storage';
+import { flushQueues, getReviewedIdsToday } from '../shared/offline';
 import { BADGE_TIERS, computeBadgeState } from '../shared/badges';
 import { useTheme } from '../shared/theme';
+
+const CACHE_COLLECTIONS = 'syntagma.cache.collections';
+const cacheCollectionKey = (id) => `syntagma.cache.collection.${id}`;
+const CACHE_DAILY = 'syntagma.cache.daily';
 
 export default function HomePage({ navigation }) {
   const { colors, isDark } = useTheme();
@@ -32,6 +37,7 @@ export default function HomePage({ navigation }) {
   const [badgeState, setBadgeState] = useState(null);
 
   const loadCollections = useCallback(async () => {
+    flushQueues().catch(() => {});
     try {
       setLoading(true);
       setError('');
@@ -44,9 +50,16 @@ export default function HomePage({ navigation }) {
             ? data.collections
             : [];
       setCollections(list);
+      saveCache(CACHE_COLLECTIONS, list).catch(() => {});
     } catch (err) {
-      setError(err?.message || 'Collections could not be loaded.');
-      setCollections([]);
+      const cached = await getCache(CACHE_COLLECTIONS).catch(() => null);
+      if (cached) {
+        setCollections(cached);
+        setError('');
+      } else {
+        setError(err?.message || 'Collections could not be loaded.');
+        setCollections([]);
+      }
     } finally {
       setLoading(false);
     }
@@ -84,28 +97,43 @@ export default function HomePage({ navigation }) {
       return cards;
     }
 
+    let dailyCards = null;
+
     try {
       const daily = await fetchDailyCards();
-      if (!Array.isArray(daily?.cards)) {
-        return cards;
+      if (Array.isArray(daily?.cards)) {
+        dailyCards = daily.cards;
+        saveCache(CACHE_DAILY, daily).catch(() => {});
       }
+    } catch {
+      const cached = await getCache(CACHE_DAILY).catch(() => null);
+      if (Array.isArray(cached?.cards)) {
+        dailyCards = cached.cards;
+      }
+    }
 
+    let filtered = cards;
+
+    if (dailyCards !== null) {
       const idSet = new Set(
-        daily.cards
+        dailyCards
           .map((entry) => entry?.flashcardId)
           .filter((id) => id != null)
           .map((id) => Number(id))
           .filter((id) => Number.isFinite(id))
       );
-
-      if (!idSet.size) {
-        return [];
-      }
-
-      return cards.filter((card) => idSet.has(Number(card.flashcardId)));
-    } catch (err) {
-      return cards;
+      filtered = idSet.size ? cards.filter((card) => idSet.has(Number(card.flashcardId))) : [];
     }
+
+    const reviewedIds = await getReviewedIdsToday().catch(() => []);
+    if (reviewedIds.length > 0) {
+      const reviewedSet = new Set(reviewedIds.map(String));
+      filtered = filtered.filter(
+        (c) => !reviewedSet.has(String(c.flashcardId ?? c.id))
+      );
+    }
+
+    return filtered;
   }, []);
 
   const handleStart = useCallback(
@@ -157,6 +185,8 @@ export default function HomePage({ navigation }) {
           }));
         }
 
+        saveCache(cacheCollectionKey(collectionId), cards).catch(() => {});
+
         const filteredCards = await filterCardsForToday(cards);
 
         navigation.navigate('FlashcardReview', {
@@ -165,7 +195,17 @@ export default function HomePage({ navigation }) {
           collectionName: collection.name || details?.name || 'Collection',
         });
       } catch (err) {
-        setError(err?.message || 'Collection could not be loaded.');
+        const cachedCards = await getCache(cacheCollectionKey(collectionId)).catch(() => null);
+        if (Array.isArray(cachedCards) && cachedCards.length > 0) {
+          const filteredCards = await filterCardsForToday(cachedCards);
+          navigation.navigate('FlashcardReview', {
+            cards: filteredCards,
+            collectionId,
+            collectionName: collection.name || 'Collection',
+          });
+        } else {
+          setError(err?.message || 'Collection could not be loaded.');
+        }
       } finally {
         setStartingId(null);
       }

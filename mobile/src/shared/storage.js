@@ -157,3 +157,99 @@ export async function getBadgeState() {
     return null;
   }
 }
+
+export async function saveCache(key, data) {
+  await AsyncStorage.setItem(key, JSON.stringify({ data, savedAt: Date.now() }));
+}
+
+export async function getCache(key, maxAgeMs = Infinity) {
+  const stored = await AsyncStorage.getItem(key);
+  if (!stored) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(stored);
+    if (maxAgeMs !== Infinity && Date.now() - parsed.savedAt > maxAgeMs) {
+      return null;
+    }
+    return parsed.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getQueue(key) {
+  const stored = await AsyncStorage.getItem(key);
+  if (!stored) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(stored);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function appendToQueue(key, item) {
+  const queue = await getQueue(key);
+  queue.push(item);
+  await AsyncStorage.setItem(key, JSON.stringify(queue));
+}
+
+export async function shiftQueue(key) {
+  const queue = await getQueue(key);
+  if (!queue.length) {
+    return null;
+  }
+  const item = queue.shift();
+  await AsyncStorage.setItem(key, JSON.stringify(queue));
+  return item;
+}
+
+export async function clearQueue(key) {
+  await AsyncStorage.removeItem(key);
+}
+
+export async function getReviewDelta(dateStr) {
+  const stored = await AsyncStorage.getItem(`syntagma.review.delta.${dateStr}`);
+  if (!stored) {
+    return 0;
+  }
+  try {
+    const parsed = JSON.parse(stored);
+    return Number.isFinite(parsed?.count) ? parsed.count : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export async function incrementReviewDelta(dateStr) {
+  const current = await getReviewDelta(dateStr);
+  await AsyncStorage.setItem(
+    `syntagma.review.delta.${dateStr}`,
+    JSON.stringify({ count: current + 1 })
+  );
+}
+
+export async function getReviewedIds(dateStr) {
+  const stored = await AsyncStorage.getItem(`syntagma.reviewed.today.${dateStr}`);
+  if (!stored) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(stored);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function addReviewedId(dateStr, id) {
+  const ids = await getReviewedIds(dateStr);
+  const strId = String(id);
+  if (!ids.includes(strId)) {
+    ids.push(strId);
+    await AsyncStorage.setItem(`syntagma.reviewed.today.${dateStr}`, JSON.stringify(ids));
+  }
+}

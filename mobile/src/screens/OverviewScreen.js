@@ -4,9 +4,13 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { fetchReviewStats } from '../shared/api';
+import { getCache, saveCache } from '../shared/storage';
+import { flushQueues, getReviewDeltaToday } from '../shared/offline';
 import { useTheme } from '../shared/theme';
 
 const TABS = ['WEEK', 'MONTH'];
+const cacheStatsKey = (period) => `syntagma.cache.reviewstats.${period}`;
+const todayStr = () => new Date().toISOString().slice(0, 10);
 
 const WEEK_DAYS = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 
@@ -31,14 +35,35 @@ export default function OverviewScreen() {
   const [error, setError] = useState('');
 
   const loadStats = useCallback(async (period) => {
+    flushQueues().catch(() => {});
     try {
       setLoading(true);
       setError('');
-      const data = await fetchReviewStats(period.toLowerCase());
-      setStats(data);
+      const rawStats = await fetchReviewStats(period.toLowerCase());
+      saveCache(cacheStatsKey(period), rawStats).catch(() => {});
+      setStats(rawStats);
     } catch (err) {
-      setError(err?.message || 'Stats could not be loaded.');
-      setStats(null);
+      let rawStats = await getCache(cacheStatsKey(period)).catch(() => null);
+      if (rawStats) {
+        const delta = await getReviewDeltaToday().catch(() => 0);
+        if (delta > 0) {
+          const today = todayStr();
+          rawStats = {
+            ...rawStats,
+            totalReviews: (rawStats.totalReviews ?? 0) + delta,
+            reviewsByDay: Array.isArray(rawStats.reviewsByDay)
+              ? rawStats.reviewsByDay.map((d) =>
+                  d.date === today ? { ...d, count: (d.count ?? 0) + delta } : d
+                )
+              : rawStats.reviewsByDay,
+          };
+        }
+        setStats(rawStats);
+        setError('');
+      } else {
+        setError(err?.message || 'Stats could not be loaded.');
+        setStats(null);
+      }
     } finally {
       setLoading(false);
     }

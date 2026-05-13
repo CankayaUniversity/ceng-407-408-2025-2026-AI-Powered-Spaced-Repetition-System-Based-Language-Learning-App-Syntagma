@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -10,6 +10,7 @@ import FlashcardLibraryScreen from '../screens/FlashcardLibraryScreen';
 import OverviewScreen from '../screens/OverviewScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import { useTheme } from '../shared/theme';
+import { flushQueues } from '../shared/offline';
 
 const Tab = createBottomTabNavigator();
 const HomeStackNav = createNativeStackNavigator();
@@ -46,6 +47,10 @@ function TabIcon({ focused, icon, colors, styles }) {
 export default function MainTabs() {
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
+
+  useEffect(() => {
+    flushQueues().catch(() => {});
+  }, []);
 
   return (
     <Tab.Navigator
