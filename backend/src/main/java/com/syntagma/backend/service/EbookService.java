@@ -78,7 +78,8 @@ public class EbookService {
     @Transactional
     public EbookResponse updateProgress(Long userId, Long ebookId, EbookProgressUpdateRequest request) {
         Ebook ebook = getOwnedEbook(userId, ebookId);
-        ebook.setLastPage(request.lastPage());
+        int normalizedLastPage = Math.max(0, request.lastPage());
+        ebook.setLastPage(normalizedLastPage);
         ebook.setUpdatedAt(LocalDateTime.now());
         Ebook saved = ebookRepository.save(ebook);
         return toResponse(saved);

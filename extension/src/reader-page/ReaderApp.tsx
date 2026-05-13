@@ -1214,34 +1214,10 @@ function ReaderView({
         });
 
         await rendition.display();
-
-        // Generate locations for progress tracking only when spine sections are healthy.
-        const analysisMeta = await analysisPromise;
-        const shouldGenerateLocations = analysisMeta.failedSections === 0;
-        if (shouldGenerateLocations) {
-          try {
-            await book.locations.generate(1024);
-            locationsReadyRef.current = true;
-            if (!destroyed && bookMeta.lastPage > 0) {
-              const savedCfi = book.locations.cfiFromLocation(bookMeta.lastPage);
-              if (typeof savedCfi === 'string' && savedCfi) {
-                await rendition.display(savedCfi);
-              }
-            }
-          } catch (error) {
-            locationsReadyRef.current = false;
-            console.warn('[Syntagma Reader] Failed to generate locations for this EPUB:', error);
-          }
-        } else {
-          locationsReadyRef.current = false;
-          console.warn(
-            '[Syntagma Reader] Skipping location generation due to broken spine sections:',
-            analysisMeta,
-          );
-        }
         updateProgress(rendition);
 
-        // Track location changes
+        // Track location changes immediately so we do not miss user navigation while
+        // whole-book analysis is still running in the background.
         rendition.on('relocated', (location: any) => {
           if (destroyed) return;
           savePosition(bookMeta.id);
@@ -1254,6 +1230,40 @@ function ReaderView({
             if (chapter) setCurrentChapter(chapter.label);
           }
         });
+
+        // Whole-book analysis powers stats UI only; it should never block
+        // location generation or reading-position persistence.
+        void analysisPromise.then((analysisMeta) => {
+          if (destroyed || analysisMeta.failedSections === 0) return;
+          console.warn(
+            '[Syntagma Reader] Whole-book analysis skipped some spine sections:',
+            analysisMeta,
+          );
+        });
+
+        // Generate locations as soon as possible for progress save/restore.
+        try {
+          await book.locations.generate(1024);
+          if (destroyed) return;
+          locationsReadyRef.current = true;
+
+          if (bookMeta.lastPage > 0) {
+            try {
+              const savedCfi = book.locations.cfiFromLocation(bookMeta.lastPage);
+              if (typeof savedCfi === 'string' && savedCfi) {
+                await rendition.display(savedCfi);
+              }
+            } catch (error) {
+              console.warn('[Syntagma Reader] Failed to restore saved EPUB location:', error);
+            }
+          }
+
+          updateProgress(rendition);
+          void savePosition(bookMeta.id);
+        } catch (error) {
+          locationsReadyRef.current = false;
+          console.warn('[Syntagma Reader] Failed to generate locations for this EPUB:', error);
+        }
       } catch (err) {
         if (!destroyed) {
           setBookAnalysisLoading(false);
