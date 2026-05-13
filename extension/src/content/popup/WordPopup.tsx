@@ -362,17 +362,13 @@ function WordPopupInner({
     if (cardSaved !== 'idle') return;
     setCardSaved('saving');
     try {
-      // Trigger on-demand audio capture: VideoOverlay will seek the video to
-      // the current subtitle's start, play through to the end, and record the
-      // tab audio. We wait for the result via a response event.
       let sentenceAudioDataUrl: string | undefined;
       try {
         sentenceAudioDataUrl = await new Promise<string | undefined>((resolve) => {
           const timeout = setTimeout(() => {
             window.removeEventListener('syntagma:sentence-audio-ready', onReady);
-            resolve(undefined); // Give up after 35s (max cue = 30s + buffer)
+            resolve(undefined);
           }, 35_000);
-
           const onReady = (e: Event) => {
             clearTimeout(timeout);
             window.removeEventListener('syntagma:sentence-audio-ready', onReady);
@@ -414,6 +410,23 @@ function WordPopupInner({
       setTimeout(() => setCardSaved('idle'), 2000);
     }
   }, [cardSaved, lemma, surface, sentence, lexeme, translations]);
+
+  const handleOpenCardCreator = useCallback(async () => {
+    try {
+      await sendMessage<{ ok: boolean }>({
+        type: 'OPEN_CARD_CREATOR',
+        payload: {
+          mode: 'create',
+          panel: 'dictionary',
+          word: lemma,
+          sentence,
+          sourceUrl: window.location.href,
+          sourceTitle: document.title,
+          trMeaning: lexeme?.trMeaning ?? (translations[0] ?? ''),
+        },
+      });
+    } catch { /* best effort */ }
+  }, [lemma, sentence, lexeme, translations]);
 
   const popupStyle: React.CSSProperties = {
     position: 'fixed',
@@ -478,7 +491,7 @@ function WordPopupInner({
         <div style={{ display: 'flex', gap: '6px' }}>
           <button
             onClick={handleSaveCard}
-            title={!settings.authToken ? 'Log in to save cards' : cardSaved === 'done' ? 'Card saved!' : cardSaved === 'error' ? 'Save failed' : 'Add to flashcards'}
+            title={!settings.authToken ? 'Log in to save cards' : cardSaved === 'done' ? 'Card saved!' : cardSaved === 'error' ? 'Save failed' : 'Quick add to flashcards'}
             disabled={!settings.authToken || cardSaved === 'saving'}
             style={{
               width: '32px',
@@ -513,6 +526,31 @@ function WordPopupInner({
                 <line x1="9" y1="15" x2="15" y2="15"></line>
               </svg>
             )}
+          </button>
+          <button
+            onClick={handleOpenCardCreator}
+            title={!settings.authToken ? 'Log in to edit cards' : 'Open in card creator'}
+            disabled={!settings.authToken}
+            style={{
+              width: '32px',
+              height: '32px',
+              borderRadius: '16px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: C.blue,
+              color: C.base,
+              border: 'none',
+              cursor: settings.authToken ? 'pointer' : 'default',
+              padding: 0,
+              transition: 'background 0.2s',
+              flexShrink: 0,
+            }}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+            </svg>
           </button>
         </div>
       </div>

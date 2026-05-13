@@ -25,7 +25,11 @@ const LEVELS: Array<{ value: LearnerLevel; label: string }> = [
   { value: 'advanced',           label: 'C2 · Advanced (~9,190 words)' },
 ];
 
-export function AuthApp() {
+interface AuthAppProps {
+  inline?: boolean;
+}
+
+export function AuthApp({ inline }: AuthAppProps = {}) {
   const [view, setView] = useState<View>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -62,7 +66,7 @@ export function AuthApp() {
       });
       if (result.ok) {
         setSuccess(true);
-        setTimeout(() => window.close(), 800);
+        if (!inline) setTimeout(() => window.close(), 800);
       } else {
         setError(result.error ?? 'Something went wrong');
       }

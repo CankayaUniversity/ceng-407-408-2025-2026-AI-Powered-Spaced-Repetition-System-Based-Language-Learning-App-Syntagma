@@ -9,22 +9,22 @@ import {
 } from '../shared/flashcards';
 
 const C = {
-  bg: '#0B1220',
-  sidebar: '#0F172A',
-  panel: '#111B32',
-  panelAlt: '#0D1528',
-  line: '#243550',
-  text: '#E8EEF9',
-  muted: '#98A9C4',
-  accent: '#55D5FF',
-  accentSoft: '#1A3658',
-  success: '#4AD89A',
-  danger: '#FF6B81',
-  warning: '#FFB347',
-  input: '#1A2840',
-  inputAlt: '#202E4B',
-  button: '#1E3A5F',
-  buttonPrimary: '#FF8A4C',
+  bg: '#F5F1E9',
+  sidebar: '#FFFFFF',
+  panel: '#FFFFFF',
+  panelAlt: '#F5F1E9',
+  line: '#E2DACE',
+  text: '#4A3B2C',
+  muted: '#877666',
+  accent: '#98C1D9',
+  accentSoft: '#E8F0F6',
+  success: '#A8B693',
+  danger: '#D97762',
+  warning: '#E9C46A',
+  input: '#FFFFFF',
+  inputAlt: '#F5F1E9',
+  button: '#E2DACE',
+  buttonPrimary: '#98C1D9',
 };
 
 interface CollectionItem {
@@ -83,6 +83,7 @@ export function CardCreatorApp() {
   const initialSentence = params.get('sentence') ?? '';
   const initialSourceUrl = params.get('sourceUrl') ?? '';
   const initialSourceTitle = params.get('sourceTitle') ?? '';
+  const initialTranslation = params.get('trMeaning') ?? '';
 
   const [loading, setLoading] = useState(true);
   const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
@@ -99,7 +100,7 @@ export function CardCreatorApp() {
   const [targetWord, setTargetWord] = useState(initialWord);
   const [sentence, setSentence] = useState(initialSentence);
   const [exampleSentence, setExampleSentence] = useState('');
-  const [translation, setTranslation] = useState('');
+  const [translation, setTranslation] = useState(initialTranslation);
   const [knowledgeStatus, setKnowledgeStatus] = useState<KnowledgeStatusValue>('LEARNING');
   const [selectedCollectionId, setSelectedCollectionId] = useState<number | null>(null);
   const [sourceUrl, setSourceUrl] = useState(initialSourceUrl);
@@ -108,6 +109,8 @@ export function CardCreatorApp() {
   const [dictionaryResults, setDictionaryResults] = useState<string[]>([]);
   const [dictionaryLoading, setDictionaryLoading] = useState(false);
   const [wordBrowserSearch, setWordBrowserSearch] = useState('');
+  const [wordBrowserPage, setWordBrowserPage] = useState(0);
+  const WORDS_PER_PAGE = 10;
   const [flashcardFilter, setFlashcardFilter] = useState<number | null>(null);
   const [listLoading, setListLoading] = useState(false);
 
@@ -136,7 +139,7 @@ export function CardCreatorApp() {
     const query = wordBrowserSearch.trim().toLowerCase();
     return wordEntries
       .filter(entry => !query || entry.lemma.includes(query))
-      .sort((a, b) => b.updatedAt - a.updatedAt);
+      .sort((a, b) => a.lemma.localeCompare(b.lemma));
   }, [wordEntries, wordBrowserSearch]);
 
   const filteredFlashcards = useMemo(() => {
@@ -525,7 +528,7 @@ export function CardCreatorApp() {
         </button>
         <button
           style={navButtonStyle(false)}
-          onClick={() => sendMessage({ type: 'OPEN_READER', payload: null }).catch(() => {})}
+          onClick={() => sendMessage({ type: 'OPEN_READER', payload: null }).catch(() => { })}
         >
           Open eBook Reader
         </button>
@@ -533,9 +536,22 @@ export function CardCreatorApp() {
         <div style={{ flex: 1 }} />
         <button
           style={navButtonStyle(false)}
-          onClick={() => sendMessage({ type: 'OPEN_OPTIONS_PAGE', payload: null }).catch(() => {})}
+          onClick={() => sendMessage({ type: 'OPEN_OPTIONS_PAGE', payload: null }).catch(() => { })}
         >
           Settings
+        </button>
+        <button
+          style={{
+            ...navButtonStyle(false),
+            color: C.danger,
+            border: `1px solid ${C.danger}40`,
+          }}
+          onClick={async () => {
+            await sendMessage({ type: 'LOGOUT', payload: null });
+            window.close();
+          }}
+        >
+          Sign Out
         </button>
       </aside>
 
@@ -824,63 +840,124 @@ export function CardCreatorApp() {
                 <>
                   <input
                     value={wordBrowserSearch}
-                    onChange={event => setWordBrowserSearch(event.target.value)}
+                    onChange={event => { setWordBrowserSearch(event.target.value); setWordBrowserPage(0); }}
                     placeholder="Filter words..."
                     style={{ ...inputStyle, marginBottom: '10px' }}
                   />
-                  <div style={{ color: C.muted, fontSize: '12px', marginBottom: '8px' }}>
-                    {filteredWordEntries.length} tracked words
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '7px' }}>
-                    {filteredWordEntries.slice(0, 200).map(entry => (
-                      <div
-                        key={entry.lemma}
-                        style={{
-                          background: C.input,
-                          border: `1px solid ${C.line}`,
-                          borderRadius: '8px',
-                          padding: '8px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '8px',
-                        }}
-                      >
-                        <span style={{ fontWeight: 600, fontSize: '13px', flex: 1 }}>{entry.lemma}</span>
-                        <select
-                          value={entry.status}
-                          onChange={async event => {
-                            const nextStatus = normalizeWordStatus(event.target.value);
-                            setWordEntries(prev => prev.map(item => (
-                              item.lemma === entry.lemma
-                                ? { ...item, status: nextStatus, updatedAt: Date.now() }
-                                : item
-                            )));
-                            try {
-                              await updateWordStatus(entry.lemma, nextStatus);
-                            } catch (error) {
-                              setSaveMsg({ text: (error as Error).message, ok: false });
-                              setWordEntries(prev => prev.map(item => (
-                                item.lemma === entry.lemma ? entry : item
-                              )));
-                            }
-                          }}
-                          style={{
-                            background: C.inputAlt,
-                            color: statusColor(entry.status),
-                            border: `1px solid ${C.line}`,
-                            borderRadius: '6px',
-                            fontSize: '12px',
-                            padding: '4px 6px',
-                          }}
-                        >
-                          <option value="unknown">unknown</option>
-                          <option value="learning">learning</option>
-                          <option value="known">known</option>
-                          <option value="ignored">ignored</option>
-                        </select>
-                      </div>
-                    ))}
-                  </div>
+                  {(() => {
+                    const totalPages = Math.max(1, Math.ceil(filteredWordEntries.length / WORDS_PER_PAGE));
+                    const safePage = Math.min(wordBrowserPage, totalPages - 1);
+                    const startIdx = safePage * WORDS_PER_PAGE;
+                    const pageEntries = filteredWordEntries.slice(startIdx, startIdx + WORDS_PER_PAGE);
+                    return (
+                      <>
+                        <div style={{ color: C.muted, fontSize: '12px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span>{filteredWordEntries.length} tracked words</span>
+                          {totalPages > 1 && (
+                            <span>Page {safePage + 1} / {totalPages}</span>
+                          )}
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '7px' }}>
+                          {pageEntries.map(entry => (
+                            <div
+                              key={entry.lemma}
+                              style={{
+                                background: C.input,
+                                border: `1px solid ${C.line}`,
+                                borderRadius: '8px',
+                                padding: '8px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '8px',
+                              }}
+                            >
+                              <span style={{ fontWeight: 600, fontSize: '13px', flex: 1 }}>{entry.lemma}</span>
+                              <select
+                                value={entry.status}
+                                onChange={async event => {
+                                  const nextStatus = normalizeWordStatus(event.target.value);
+                                  setWordEntries(prev => prev.map(item => (
+                                    item.lemma === entry.lemma
+                                      ? { ...item, status: nextStatus, updatedAt: Date.now() }
+                                      : item
+                                  )));
+                                  try {
+                                    await updateWordStatus(entry.lemma, nextStatus);
+                                  } catch (error) {
+                                    setSaveMsg({ text: (error as Error).message, ok: false });
+                                    setWordEntries(prev => prev.map(item => (
+                                      item.lemma === entry.lemma ? entry : item
+                                    )));
+                                  }
+                                }}
+                                style={{
+                                  background: C.inputAlt,
+                                  color: statusColor(entry.status),
+                                  border: `1px solid ${C.line}`,
+                                  borderRadius: '6px',
+                                  fontSize: '12px',
+                                  padding: '4px 6px',
+                                }}
+                              >
+                                <option value="unknown">unknown</option>
+                                <option value="learning">learning</option>
+                                <option value="known">known</option>
+                                <option value="ignored">ignored</option>
+                              </select>
+                            </div>
+                          ))}
+                        </div>
+                        {totalPages > 1 && (
+                          <div style={{ display: 'flex', justifyContent: 'center', gap: '6px', marginTop: '12px' }}>
+                            <button
+                              disabled={safePage === 0}
+                              onClick={() => setWordBrowserPage(0)}
+                              style={{
+                                background: C.button, border: `1px solid ${C.line}`, borderRadius: '6px',
+                                padding: '4px 10px', cursor: safePage === 0 ? 'default' : 'pointer',
+                                opacity: safePage === 0 ? 0.4 : 1, fontSize: '12px', color: C.text,
+                              }}
+                            >
+                              ««
+                            </button>
+                            <button
+                              disabled={safePage === 0}
+                              onClick={() => setWordBrowserPage(p => Math.max(0, p - 1))}
+                              style={{
+                                background: C.button, border: `1px solid ${C.line}`, borderRadius: '6px',
+                                padding: '4px 10px', cursor: safePage === 0 ? 'default' : 'pointer',
+                                opacity: safePage === 0 ? 0.4 : 1, fontSize: '12px', color: C.text,
+                              }}
+                            >
+                              ‹ Prev
+                            </button>
+                            <button
+                              disabled={safePage >= totalPages - 1}
+                              onClick={() => setWordBrowserPage(p => Math.min(totalPages - 1, p + 1))}
+                              style={{
+                                background: C.button, border: `1px solid ${C.line}`, borderRadius: '6px',
+                                padding: '4px 10px', cursor: safePage >= totalPages - 1 ? 'default' : 'pointer',
+                                opacity: safePage >= totalPages - 1 ? 0.4 : 1, fontSize: '12px', color: C.text,
+                              }}
+                            >
+                              Next ›
+                            </button>
+                            <button
+                              disabled={safePage >= totalPages - 1}
+                              onClick={() => setWordBrowserPage(totalPages - 1)}
+                              style={{
+                                background: C.button, border: `1px solid ${C.line}`, borderRadius: '6px',
+                                padding: '4px 10px', cursor: safePage >= totalPages - 1 ? 'default' : 'pointer',
+                                opacity: safePage >= totalPages - 1 ? 0.4 : 1, fontSize: '12px', color: C.text,
+                              }}
+                            >
+                              »»
+                            </button>
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
                 </>
               )}
             </section>
@@ -1062,7 +1139,7 @@ export function CardCreatorApp() {
                   style={{
                     flex: 1,
                     background: saving ? C.input : C.buttonPrimary,
-                    color: saving ? C.muted : '#1A1025',
+                    color: saving ? C.muted : '#FFFFFF',
                     border: 'none',
                     borderRadius: '10px',
                     padding: '12px',

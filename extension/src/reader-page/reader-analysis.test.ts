@@ -1,11 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
-import type { LexemeEntry, WordStatus } from '../shared/types';
-import {
-  collectWholeBookAnalysisFromBook,
-  extractTokenBlocksFromDocument,
-  isLinearSection,
-  type AnalysisSection,
-} from './reader-analysis';
+import { describe, expect, it } from 'vitest';
+import type { WordStatus } from '../shared/types';
+import type { LexemeEntry } from '../shared/types';
+import { extractTokenBlocksFromDocument } from './reader-analysis';
 
 function createLexeme(lemma: string, status: WordStatus): LexemeEntry {
   const now = Date.now();
@@ -19,22 +15,6 @@ function createLexeme(lemma: string, status: WordStatus): LexemeEntry {
     lastSeenAt: now,
     createdAt: now,
   };
-}
-
-function createSection(linear: boolean | string | undefined, html: string) {
-  const section: AnalysisSection = {
-    linear,
-    document: undefined,
-    load: vi.fn(async () => {
-      const doc = new DOMParser().parseFromString(html, 'text/html');
-      section.document = doc;
-      return doc.documentElement;
-    }),
-    unload: vi.fn(() => {
-      section.document = undefined;
-    }),
-  };
-  return section;
 }
 
 describe('reader-analysis', () => {
@@ -51,72 +31,31 @@ describe('reader-analysis', () => {
     expect(blocks[1].map(token => token.surface)).toEqual(['Gamma']);
   });
 
-  it('collects whole-book tokens from linear spine sections and destroys the analysis book', async () => {
-    const section1 = createSection(true, '<html><body><p>Known Alpha</p></body></html>');
-    const section2 = createSection('no', '<html><body><p>Skipped Words</p></body></html>');
-    const section3 = createSection(undefined, '<html><body><p>Beta</p><p>Beta</p></body></html>');
-    const destroy = vi.fn();
-
-    const result = await collectWholeBookAnalysisFromBook(
-      {
-        ready: Promise.resolve(),
-        request: vi.fn(),
-        spine: {
-          each: (callback) => {
-            [section1, section2, section3].forEach(callback);
-          },
-        },
-        destroy,
-      },
-      {
-        known: createLexeme('known', 'known'),
-      },
+  it('falls back to full text extraction when no block elements found', () => {
+    const doc = new DOMParser().parseFromString(
+      '<html><body>Hello World Outside</body></html>',
+      'text/html',
     );
 
-    expect(isLinearSection(section2)).toBe(false);
-    expect(section1.load).toHaveBeenCalledTimes(1);
-    expect(section2.load).toHaveBeenCalledTimes(0);
-    expect(section3.load).toHaveBeenCalledTimes(1);
-    expect(section1.unload).toHaveBeenCalledTimes(1);
-    expect(section3.unload).toHaveBeenCalledTimes(1);
-    expect(destroy).toHaveBeenCalledTimes(1);
-    expect(result.blocks).toHaveLength(3);
-    expect(result.tokens).toHaveLength(4);
-    expect(result.scannedSections).toBe(2);
-    expect(result.failedSections).toBe(0);
+    const blocks = extractTokenBlocksFromDocument(doc, {});
+
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].map(token => token.surface)).toEqual(['Hello', 'World', 'Outside']);
   });
 
-  it('continues analysis when a section load fails and still unloads/destroys', async () => {
-    const section: AnalysisSection = {
-      linear: true,
-      load: vi.fn(async () => {
-        throw new Error('load failed');
-      }),
-      unload: vi.fn(),
-    };
-    const okSection = createSection(true, '<html><body><p>Alpha</p></body></html>');
-    const destroy = vi.fn();
-
-    const result = await collectWholeBookAnalysisFromBook(
-      {
-        ready: Promise.resolve(),
-        request: vi.fn(),
-        spine: {
-          each: (callback) => {
-            callback(section);
-            callback(okSection);
-          },
-        },
-        destroy,
-      },
-      {},
+  it('applies lexeme status to extracted tokens', () => {
+    const doc = new DOMParser().parseFromString(
+      '<html><body><p>Known Alpha Beta</p></body></html>',
+      'text/html',
     );
 
-    expect(section.unload).toHaveBeenCalledTimes(1);
-    expect(okSection.unload).toHaveBeenCalledTimes(1);
-    expect(destroy).toHaveBeenCalledTimes(1);
-    expect(result.tokens).toHaveLength(1);
-    expect(result.scannedSections).toBe(2);
-    expect(result.failedSections).toBe(1);
+    const lexemes = { known: createLexeme('known', 'known') };
+    const blocks = extractTokenBlocksFromDocument(doc, lexemes);
+
+    expect(blocks).toHaveLength(1);
+    const knownToken = blocks[0].find(t => t.lemma === 'known');
+    expect(knownToken?.status).toBe('known');
+    const unknownToken = blocks[0].find(t => t.surface === 'Alpha');
+    expect(unknownToken?.status).toBe('unknown');
   });
 });

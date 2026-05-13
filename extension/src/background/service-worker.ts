@@ -44,7 +44,7 @@ const CARD_CREATOR_DEFAULT_DIMENSIONS = {
   height: 760,
 };
 
-chrome.action.onClicked.addListener(() => {
+chrome.action.onClicked.addListener(async () => {
   const params = new URLSearchParams({
     mode: 'create',
     panel: 'home',
@@ -53,7 +53,7 @@ chrome.action.onClicked.addListener(() => {
     sourceUrl: '',
     sourceTitle: '',
   });
-  openCardCreatorWindow(params);
+  await openCardCreatorWindow(params);
 });
 
 interface CachedMediaUrls {
@@ -135,15 +135,55 @@ async function removeFlashcardFromLocalCache(settings: Awaited<ReturnType<typeof
   });
 }
 
-function openCardCreatorWindow(params: URLSearchParams): void {
-  chrome.windows.create({
+let cardCreatorWindowId: number | null = null;
+
+async function findExistingCardCreatorWindow(): Promise<number | null> {
+  try {
+    const allWindows = await chrome.windows.getAll({ windowTypes: ['popup'] });
+    for (const w of allWindows) {
+      if (!w.id) continue;
+      const tabs = await chrome.tabs.query({ windowId: w.id });
+      if (tabs.some(t => t.url?.includes('card-creator.html'))) return w.id;
+    }
+  } catch {}
+  return null;
+}
+
+async function openCardCreatorWindow(params: URLSearchParams): Promise<void> {
+  // Try the cached window ID first
+  if (cardCreatorWindowId != null) {
+    try {
+      const existing = await chrome.windows.get(cardCreatorWindowId);
+      if (existing) {
+        await chrome.windows.update(cardCreatorWindowId, { focused: true });
+        return;
+      }
+    } catch {
+      cardCreatorWindowId = null;
+    }
+  }
+
+  // Scan for orphaned card-creator windows (SW restart loses the variable)
+  const orphan = await findExistingCardCreatorWindow();
+  if (orphan != null) {
+    cardCreatorWindowId = orphan;
+    await chrome.windows.update(orphan, { focused: true });
+    return;
+  }
+
+  const win = await chrome.windows.create({
     url: chrome.runtime.getURL(`card-creator.html?${params.toString()}`),
     type: 'popup',
     width: CARD_CREATOR_DEFAULT_DIMENSIONS.width,
     height: CARD_CREATOR_DEFAULT_DIMENSIONS.height,
     focused: true,
   });
+  cardCreatorWindowId = win?.id ?? null;
 }
+
+chrome.windows.onRemoved.addListener((windowId) => {
+  if (windowId === cardCreatorWindowId) cardCreatorWindowId = null;
+});
 
 async function getResponseError(response: Response, fallback: string): Promise<string> {
   try {
@@ -1192,7 +1232,7 @@ onMessage(async (msg, sender) => {
         });
         params = new URLSearchParams({ mode: 'edit', draftKey });
       } else {
-        const { panel, word, sentence, sourceUrl, sourceTitle } = msg.payload;
+        const { panel, word, sentence, sourceUrl, sourceTitle, trMeaning } = msg.payload;
         params = new URLSearchParams({
           mode: 'create',
           panel: panel ?? 'dictionary',
@@ -1200,9 +1240,10 @@ onMessage(async (msg, sender) => {
           sentence,
           sourceUrl,
           sourceTitle,
+          ...(trMeaning ? { trMeaning } : {}),
         });
       }
-      openCardCreatorWindow(params);
+      await openCardCreatorWindow(params);
       return { ok: true };
     }
 
