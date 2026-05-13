@@ -421,8 +421,16 @@ export function CardCreatorApp() {
         if (!result.ok) throw new Error(result.error ?? 'Could not create card');
         if (result.card) {
           setFlashcards(prev => [result.card!, ...prev]);
+          loadCardIntoEditor(result.card, selectedCollectionId);
         }
         setSaveMsg({ text: 'Flashcard created.', ok: true });
+      }
+      
+      // Sync knowledge status
+      try {
+        await updateWordStatus(normalizedWord.toLowerCase(), normalizeWordStatus(knowledgeStatus));
+      } catch (e) {
+        console.warn('Failed to sync word status', e);
       }
     } catch (error) {
       setSaveMsg({ text: (error as Error).message, ok: false });
@@ -449,6 +457,7 @@ export function CardCreatorApp() {
     sourceUrl,
     targetWord,
     translation,
+    updateWordStatus,
   ]);
 
   const navButtonStyle = (active: boolean): React.CSSProperties => ({

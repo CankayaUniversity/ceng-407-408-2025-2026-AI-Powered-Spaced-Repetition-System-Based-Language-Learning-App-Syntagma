@@ -368,7 +368,7 @@ function WordPopupInner({
           const timeout = setTimeout(() => {
             window.removeEventListener('syntagma:sentence-audio-ready', onReady);
             resolve(undefined);
-          }, 35_000);
+          }, 2500);
           const onReady = (e: Event) => {
             clearTimeout(timeout);
             window.removeEventListener('syntagma:sentence-audio-ready', onReady);

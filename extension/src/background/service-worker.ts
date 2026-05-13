@@ -150,12 +150,18 @@ async function findExistingCardCreatorWindow(): Promise<number | null> {
 }
 
 async function openCardCreatorWindow(params: URLSearchParams): Promise<void> {
+  const targetUrl = chrome.runtime.getURL(`card-creator.html?${params.toString()}`);
+
   // Try the cached window ID first
   if (cardCreatorWindowId != null) {
     try {
       const existing = await chrome.windows.get(cardCreatorWindowId);
       if (existing) {
         await chrome.windows.update(cardCreatorWindowId, { focused: true });
+        const tabs = await chrome.tabs.query({ windowId: cardCreatorWindowId });
+        if (tabs.length > 0 && tabs[0].id) {
+          await chrome.tabs.update(tabs[0].id, { url: targetUrl });
+        }
         return;
       }
     } catch {
@@ -168,6 +174,10 @@ async function openCardCreatorWindow(params: URLSearchParams): Promise<void> {
   if (orphan != null) {
     cardCreatorWindowId = orphan;
     await chrome.windows.update(orphan, { focused: true });
+    const tabs = await chrome.tabs.query({ windowId: orphan });
+    if (tabs.length > 0 && tabs[0].id) {
+      await chrome.tabs.update(tabs[0].id, { url: targetUrl });
+    }
     return;
   }
 
