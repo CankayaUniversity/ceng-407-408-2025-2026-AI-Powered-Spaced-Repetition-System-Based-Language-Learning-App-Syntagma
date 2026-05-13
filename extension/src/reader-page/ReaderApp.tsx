@@ -1067,6 +1067,17 @@ function ReaderView({
         });
         updateWordUnderlines(renditionRef.current, lemma, status, settingsRef.current);
       }
+      if (msg.type === 'WORD_KNOWLEDGE_DELETED') {
+        const { lemma } = msg.payload;
+        setLexemes(prev => {
+          if (!prev[lemma]) return prev;
+          const next = { ...prev };
+          delete next[lemma];
+          lexemesRef.current = next;
+          return next;
+        });
+        updateWordUnderlines(renditionRef.current, lemma, 'unknown', settingsRef.current);
+      }
     };
     chrome.runtime.onMessage.addListener(listener);
     return () => chrome.runtime.onMessage.removeListener(listener);

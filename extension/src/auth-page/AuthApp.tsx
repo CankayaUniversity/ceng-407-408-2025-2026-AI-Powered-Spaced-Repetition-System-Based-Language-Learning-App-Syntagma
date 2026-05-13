@@ -18,11 +18,11 @@ const C = {
 type View = 'login' | 'register';
 
 const LEVELS: Array<{ value: LearnerLevel; label: string }> = [
-  { value: 'beginner',           label: 'A1 : Beginner' },
-  { value: 'elementary',         label: 'A2 : Elementary' },
-  { value: 'intermediate',       label: 'B1 : Intermediate' },
-  { value: 'upper-intermediate', label: 'B2 : Upper Intermediate' },
-  { value: 'advanced',           label: 'C1/C2 : Advanced' },
+  { value: 'beginner',           label: 'A1 · Beginner (~1,235 words)' },
+  { value: 'elementary',         label: 'A2 · Elementary (~2,531 words)' },
+  { value: 'intermediate',       label: 'B1 · Intermediate (~4,535 words)' },
+  { value: 'upper-intermediate', label: 'B2 · Upper Intermediate (~6,983 words)' },
+  { value: 'advanced',           label: 'C2 · Advanced (~9,190 words)' },
 ];
 
 export function AuthApp() {

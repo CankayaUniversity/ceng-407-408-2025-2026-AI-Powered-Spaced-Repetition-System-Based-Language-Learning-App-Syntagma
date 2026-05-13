@@ -16,6 +16,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -33,7 +34,7 @@ public class WordKnowledgeService {
         if (status != null) {
             return wordKnowledgeRepository.findByUserIdAndStatus(userId, status, pageable).map(this::toResponse);
         }
-        return wordKnowledgeRepository.findByUserId(userId, pageable).map(this::toResponse);
+        return wordKnowledgeRepository.findByUserIdAndStatusNot(userId, KnowledgeStatus.UNKNOWN, pageable).map(this::toResponse);
     }
 
     public WordKnowledgeResponse getByLemma(Long userId, String lemma) {
@@ -44,6 +45,11 @@ public class WordKnowledgeService {
 
     @Transactional
     public WordKnowledgeResponse update(Long userId, String lemma, KnowledgeStatus status) {
+        if (status == KnowledgeStatus.UNKNOWN) {
+            delete(userId, lemma);
+            return new WordKnowledgeResponse(userId, lemma, KnowledgeStatus.UNKNOWN, LocalDateTime.now());
+        }
+
         WordKnowledge wk = wordKnowledgeRepository.findByUserIdAndLemma(userId, lemma)
                 .orElseGet(() -> {
                     WordKnowledge newWk = new WordKnowledge();
@@ -69,12 +75,29 @@ public class WordKnowledgeService {
     }
 
     @Transactional
+    public void delete(Long userId, String lemma) {
+        wordKnowledgeRepository.deleteByUserIdAndLemma(userId, lemma);
+    }
+
+    @Transactional
     public int markKnownByLevel(Long userId, String level) {
-        List<String> words = loadLevelWordsUpTo(level);
-        List<WordKnowledgeBatchEntry> entries = words.stream()
+        String normalizedLevel = normalizeAndValidateLevel(level);
+        Set<String> knownWords = new LinkedHashSet<>(loadLevelWordsUpTo(normalizedLevel));
+        Set<String> allLevelWords = new LinkedHashSet<>(loadAllLevelWords());
+
+        List<WordKnowledgeBatchEntry> entries = knownWords.stream()
                 .map(word -> new WordKnowledgeBatchEntry(word, KnowledgeStatus.KNOWN))
                 .toList();
-        return batchUpdate(userId, entries);
+
+        int knownUpdated = batchUpdate(userId, entries);
+        List<String> wordsToDelete = allLevelWords.stream()
+                .filter(word -> !knownWords.contains(word))
+                .toList();
+        long deleted = wordsToDelete.isEmpty()
+                ? 0
+                : wordKnowledgeRepository.deleteByUserIdAndLemmaIn(userId, wordsToDelete);
+
+        return knownUpdated + (int) deleted;
     }
 
     private WordKnowledgeResponse toResponse(WordKnowledge wk) {
@@ -86,11 +109,16 @@ public class WordKnowledgeService {
         );
     }
 
-    private List<String> loadLevelWords(String level) {
+    private String normalizeAndValidateLevel(String level) {
         String normalized = level == null ? "" : level.trim().toLowerCase(Locale.ROOT);
         if (!SUPPORTED_LEVELS.contains(normalized)) {
             throw new IllegalArgumentException("Unsupported level: " + level);
         }
+        return normalized;
+    }
+
+    private List<String> loadLevelWords(String level) {
+        String normalized = normalizeAndValidateLevel(level);
 
         String resourcePath = "levels/" + normalized + ".txt";
         List<String> words = new ArrayList<>();
@@ -112,10 +140,7 @@ public class WordKnowledgeService {
     }
 
     private List<String> loadLevelWordsUpTo(String level) {
-        String normalized = level == null ? "" : level.trim().toLowerCase(Locale.ROOT);
-        if (!SUPPORTED_LEVELS.contains(normalized)) {
-            throw new IllegalArgumentException("Unsupported level: " + level);
-        }
+        String normalized = normalizeAndValidateLevel(level);
 
         List<String> all = new ArrayList<>();
         for (String current : LEVEL_ORDER) {
@@ -123,6 +148,14 @@ public class WordKnowledgeService {
             if (current.equals(normalized)) {
                 break;
             }
+        }
+        return all;
+    }
+
+    private List<String> loadAllLevelWords() {
+        List<String> all = new ArrayList<>();
+        for (String current : LEVEL_ORDER) {
+            all.addAll(loadLevelWords(current));
         }
         return all;
     }
