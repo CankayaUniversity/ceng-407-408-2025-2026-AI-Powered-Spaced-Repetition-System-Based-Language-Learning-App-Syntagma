@@ -368,7 +368,7 @@ function WordPopupInner({
           const timeout = setTimeout(() => {
             window.removeEventListener('syntagma:sentence-audio-ready', onReady);
             resolve(undefined);
-          }, 2500);
+          }, 35_000);
           const onReady = (e: Event) => {
             clearTimeout(timeout);
             window.removeEventListener('syntagma:sentence-audio-ready', onReady);
@@ -409,7 +409,7 @@ function WordPopupInner({
       setCardSaved('error');
       setTimeout(() => setCardSaved('idle'), 2000);
     }
-  }, [cardSaved, lemma, surface, sentence, lexeme, translations]);
+  }, [cardSaved, lemma, surface, sentence, lexeme, translations, screenshot, sentenceStartMs, sentenceEndMs, handleStatusChange]);
 
   const [openingCardCreator, setOpeningCardCreator] = useState(false);
 
@@ -419,14 +419,14 @@ function WordPopupInner({
     try {
       let sentenceAudioDataUrl: string | undefined;
       const hasVideoOverlay = !!document.querySelector('[data-syntagma-video-overlay]');
-      
+
       if (hasVideoOverlay) {
         try {
           sentenceAudioDataUrl = await new Promise<string | undefined>((resolve) => {
             const timeout = setTimeout(() => {
               window.removeEventListener('syntagma:sentence-audio-ready', onReady);
               resolve(undefined);
-            }, 2500);
+            }, 35_000);
             const onReady = (e: Event) => {
               clearTimeout(timeout);
               window.removeEventListener('syntagma:sentence-audio-ready', onReady);
@@ -442,6 +442,7 @@ function WordPopupInner({
         } catch { /* not in video context or capture unavailable */ }
       }
 
+      console.log('[Syntagma] handleOpenCardCreator — hasVideoOverlay:', hasVideoOverlay, 'hasAudio:', !!sentenceAudioDataUrl, 'audioLen:', sentenceAudioDataUrl?.length, 'hasScreenshot:', !!screenshot);
       await sendMessage<{ ok: boolean }>({
         type: 'OPEN_CARD_CREATOR',
         payload: {

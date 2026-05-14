@@ -413,24 +413,40 @@ export function VideoSidebarPanel({ video, cues, lexemes, settings, onStatusChan
       }
     }
 
-    mountWordPopup({
-      lemma, surface, sentence: popupSentence, anchorRect: rect,
-      lexeme: localLexemesRef.current[lemma] ?? null,
-      settings: localSettings,
-      sentenceStartMs: popupStartMs,
-      sentenceEndMs: popupEndMs,
-      onClose: () => { dismissWordPopup(); },
-      onStatusChange: (l, status) => {
-        setLocalLexemes(prev => ({
-          ...prev,
-          [l]: {
-            ...(prev[l] ?? { key: l, lemma: l, surface: l, type: 'word', seenCount: 1, lastSeenAt: now, createdAt: now }),
-            status,
-          },
-        }));
-        onStatusChange(l, status);
-      },
-    }, { zIndex: 2147483647 });
+    const doOpen = (screenshotDataUrl?: string) => {
+      mountWordPopup({
+        lemma, surface, sentence: popupSentence, anchorRect: rect,
+        lexeme: localLexemesRef.current[lemma] ?? null,
+        settings: localSettings,
+        screenshotDataUrl,
+        sentenceStartMs: popupStartMs,
+        sentenceEndMs: popupEndMs,
+        onClose: () => { dismissWordPopup(); },
+        onStatusChange: (l, status) => {
+          setLocalLexemes(prev => ({
+            ...prev,
+            [l]: {
+              ...(prev[l] ?? { key: l, lemma: l, surface: l, type: 'word', seenCount: 1, lastSeenAt: now, createdAt: now }),
+              status,
+            },
+          }));
+          onStatusChange(l, status);
+        },
+      }, { zIndex: 2147483647 });
+    };
+
+    // Request a screenshot from VideoOverlay via event, then open popup
+    const onScreenshot = (e: Event) => {
+      window.removeEventListener('syntagma:screenshot-ready', onScreenshot);
+      clearTimeout(ssTimeout);
+      doOpen((e as CustomEvent<{ screenshotDataUrl?: string }>).detail?.screenshotDataUrl);
+    };
+    const ssTimeout = setTimeout(() => {
+      window.removeEventListener('syntagma:screenshot-ready', onScreenshot);
+      doOpen();
+    }, 1500);
+    window.addEventListener('syntagma:screenshot-ready', onScreenshot);
+    window.dispatchEvent(new CustomEvent('syntagma:request-screenshot'));
   }, [localSettings, video, onStatusChange]);
 
   const sentences = useMemo(() => buildSentences(cues), [cues]);

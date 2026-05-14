@@ -193,6 +193,7 @@ export function CardCreatorApp() {
   }, []);
 
   const loadCardIntoEditor = useCallback((card: FlashcardPayload, fallbackCollectionId: number | null) => {
+    console.log('[Syntagma] loadCardIntoEditor — audioUrl:', card.audioUrl, 'screenshotDataUrl:', card.screenshotDataUrl?.slice(0, 80), 'sentenceAudioDataUrl:', card.sentenceAudioDataUrl?.slice(0, 80));
     const word = card.surfaceForm || card.lemma || '';
     setEditorMode('edit');
     setEditingCard(card);
@@ -249,6 +250,7 @@ export function CardCreatorApp() {
           await chrome.storage.local.remove(draftKey);
           if (cancelled) return;
           const draft = draftResult[draftKey] as FlashcardPayload | undefined;
+          console.log('[Syntagma] Draft loaded:', draftKey, 'mode:', initialMode, 'has audio:', !!draft?.sentenceAudioDataUrl, 'has audioUrl:', !!draft?.audioUrl, 'has screenshot:', !!draft?.screenshotDataUrl);
           if (draft) {
             if (initialMode === 'edit') {
               loadCardIntoEditor(draft, currentSettings.activeCollectionId);

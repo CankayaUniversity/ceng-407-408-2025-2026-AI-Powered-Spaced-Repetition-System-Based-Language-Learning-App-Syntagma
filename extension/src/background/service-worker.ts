@@ -797,12 +797,20 @@ onMessage(async (msg, sender) => {
         const json = await res.json();
         const serverCard = withDeckName(mapBackendFlashcard(json.data ?? {}, card.deckName || settings.activeCollectionName || 'Syntagma'));
         const flashcardId = Number(serverCard.id);
+        console.log('[Syntagma] CREATE_FLASHCARD — flashcardId:', flashcardId, 'hasScreenshotData:', !!card.screenshotDataUrl, 'hasAudioData:', !!card.sentenceAudioDataUrl, 'audioDataLen:', card.sentenceAudioDataUrl?.length);
         const [screenshotUrl, audioUrl] = Number.isFinite(flashcardId)
           ? await Promise.all([
-              uploadScreenshotMedia(apiBase, settings, flashcardId, card).catch(() => undefined),
-              uploadAudioMedia(apiBase, settings, flashcardId, card).catch(() => undefined),
+              uploadScreenshotMedia(apiBase, settings, flashcardId, card).catch((err) => {
+                console.warn('[Syntagma] Screenshot upload failed:', err);
+                return undefined;
+              }),
+              uploadAudioMedia(apiBase, settings, flashcardId, card).catch((err) => {
+                console.warn('[Syntagma] Audio upload failed:', err);
+                return undefined;
+              }),
             ])
           : [undefined, undefined];
+        console.log('[Syntagma] CREATE_FLASHCARD — uploadedScreenshot:', !!screenshotUrl, 'uploadedAudio:', !!audioUrl);
         const savedCard: FlashcardPayload = {
           ...mergeFlashcardWithLocalFields(cardForRequest, serverCard),
           collectionId: selectedCollectionId,
@@ -1242,12 +1250,9 @@ onMessage(async (msg, sender) => {
         });
         params = new URLSearchParams({ mode: 'edit', draftKey });
       } else {
-        const { panel, word, sentence, sourceUrl, sourceTitle, trMeaning } = msg.payload;
-        // @ts-ignore
-        const screenshotDataUrl = msg.payload.screenshotDataUrl;
-        // @ts-ignore
-        const sentenceAudioDataUrl = msg.payload.sentenceAudioDataUrl;
-        
+        const { panel, word, sentence, sourceUrl, sourceTitle, trMeaning, screenshotDataUrl, sentenceAudioDataUrl } = msg.payload;
+        console.log('[Syntagma] OPEN_CARD_CREATOR create — hasScreenshot:', !!screenshotDataUrl, 'hasAudio:', !!sentenceAudioDataUrl);
+
         let draftKey: string | undefined = undefined;
         if (screenshotDataUrl || sentenceAudioDataUrl) {
           draftKey = `${CARD_CREATOR_DRAFT_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2)}`;
