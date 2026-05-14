@@ -30,6 +30,10 @@ export interface AiSentenceExplainData {
   learnerTip: string;
 }
 
+export interface AiExampleSentenceData {
+  exampleSentence: string;
+}
+
 export type AiResultKind = 'explain-word' | 'translate' | 'explain-sentence';
 
 export type AiResultData =
@@ -93,4 +97,12 @@ export function explainSentence(input: {
   context?: string;
 }): Promise<AiSentenceExplainData> {
   return postJson<AiSentenceExplainData>('/api/ai/explain-sentence', input);
+}
+
+export function generateExampleSentence(input: {
+  word: string;
+  sentence?: string;
+  level?: string;
+}): Promise<AiExampleSentenceData> {
+  return postJson<AiExampleSentenceData>('/api/ai/generate-example', input);
 }
