@@ -1,9 +1,11 @@
 package com.syntagma.backend.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.syntagma.backend.dto.request.AiExampleSentenceRequest;
 import com.syntagma.backend.dto.request.AiSentenceExplainRequest;
 import com.syntagma.backend.dto.request.AiTranslateRequest;
 import com.syntagma.backend.dto.request.AiWordExplainRequest;
+import com.syntagma.backend.dto.response.AiExampleSentenceResponse;
 import com.syntagma.backend.dto.response.AiSentenceExplainResponse;
 import com.syntagma.backend.dto.response.AiTranslateResponse;
 import com.syntagma.backend.dto.response.AiWordExplainResponse;
@@ -209,6 +211,62 @@ public class AiService {
                 + "examples must be English sentences using the same sense as in the given sentence. "
                 + "JSON schema: {\"meaning\":\"...\",\"partOfSpeech\":\"...\","
                 + "\"usageNote\":\"...\",\"commonMistake\":\"...\",\"examples\":[\"...\"]}";
+
+        List<Map<String, String>> messages = new ArrayList<>();
+        messages.add(Map.of("role", "system", "content", system));
+        messages.add(Map.of("role", "user", "content", user.toString()));
+        return messages;
+    }
+
+    public AiExampleSentenceResponse generateExampleSentence(AiExampleSentenceRequest request) {
+        if (!StringUtils.hasText(apiKey)) {
+            throw new IllegalStateException("AI API key is not configured");
+        }
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("model", model);
+        body.put("max_tokens", 300);
+        body.put("stream", false);
+        body.put("messages", buildExampleSentenceMessages(request));
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setBearerAuth(apiKey);
+        headers.add("X-Title", "Syntagma");
+
+        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
+        ResponseEntity<Map> response = aiRestTemplate.postForEntity(apiUrl, entity, Map.class);
+
+        if (!response.getStatusCode().is2xxSuccessful()) {
+            throw new IllegalArgumentException("AI request failed with status: " + response.getStatusCode());
+        }
+
+        String content = extractContent(response.getBody());
+        String json = extractJson(content);
+
+        try {
+            return objectMapper.readValue(json, AiExampleSentenceResponse.class);
+        } catch (Exception ex) {
+            log.warn("AI example-sentence response parsing failed. Raw content: {}", content);
+            throw new IllegalArgumentException("AI response parsing failed");
+        }
+    }
+
+    private List<Map<String, String>> buildExampleSentenceMessages(AiExampleSentenceRequest request) {
+        StringBuilder user = new StringBuilder();
+        user.append("Word: \"").append(request.word()).append("\"\n");
+        if (StringUtils.hasText(request.sentence())) {
+            user.append("Original sentence: \"").append(request.sentence()).append("\"\n");
+        }
+        if (StringUtils.hasText(request.level())) {
+            user.append("Learner level: ").append(request.level()).append("\n");
+        }
+
+        String system = "Generate exactly ONE short English example sentence (max 15 words) for a Turkish-speaking English learner. "
+                + "The sentence MUST use the given word in the same sense as the original sentence (if provided). "
+                + "Keep it simple, natural, and appropriate for the learner's level. "
+                + "Return JSON only (no markdown). "
+                + "JSON schema: {\"exampleSentence\":\"...\"}";
 
         List<Map<String, String>> messages = new ArrayList<>();
         messages.add(Map.of("role", "system", "content", system));

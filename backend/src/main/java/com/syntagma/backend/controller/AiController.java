@@ -1,8 +1,10 @@
 package com.syntagma.backend.controller;
 
+import com.syntagma.backend.dto.request.AiExampleSentenceRequest;
 import com.syntagma.backend.dto.request.AiSentenceExplainRequest;
 import com.syntagma.backend.dto.request.AiTranslateRequest;
 import com.syntagma.backend.dto.request.AiWordExplainRequest;
+import com.syntagma.backend.dto.response.AiExampleSentenceResponse;
 import com.syntagma.backend.dto.response.AiSentenceExplainResponse;
 import com.syntagma.backend.dto.response.AiTranslateResponse;
 import com.syntagma.backend.dto.response.AiWordExplainResponse;
@@ -41,6 +43,13 @@ public class AiController {
     public ResponseEntity<ApiResponse<AiSentenceExplainResponse>> explainSentence(
             @Valid @RequestBody AiSentenceExplainRequest request) {
         AiSentenceExplainResponse response = aiService.explainSentence(request);
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
+    @PostMapping("/generate-example")
+    public ResponseEntity<ApiResponse<AiExampleSentenceResponse>> generateExample(
+            @Valid @RequestBody AiExampleSentenceRequest request) {
+        AiExampleSentenceResponse response = aiService.generateExampleSentence(request);
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 }
