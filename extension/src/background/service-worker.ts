@@ -14,6 +14,7 @@ import {
   explainWord as backendExplainWord,
   translateSentence as backendTranslate,
   explainSentence as backendExplainSentence,
+  generateExampleSentence as backendGenerateExample,
 } from '../shared/backend-ai';
 import type { FlashcardPayload, LexemeEntry } from '../shared/types';
 import {
@@ -44,7 +45,7 @@ const CARD_CREATOR_DEFAULT_DIMENSIONS = {
   height: 760,
 };
 
-chrome.action.onClicked.addListener(() => {
+chrome.action.onClicked.addListener(async () => {
   const params = new URLSearchParams({
     mode: 'create',
     panel: 'home',
@@ -53,7 +54,7 @@ chrome.action.onClicked.addListener(() => {
     sourceUrl: '',
     sourceTitle: '',
   });
-  openCardCreatorWindow(params);
+  await openCardCreatorWindow(params);
 });
 
 interface CachedMediaUrls {
@@ -135,15 +136,65 @@ async function removeFlashcardFromLocalCache(settings: Awaited<ReturnType<typeof
   });
 }
 
-function openCardCreatorWindow(params: URLSearchParams): void {
-  chrome.windows.create({
+let cardCreatorWindowId: number | null = null;
+
+async function findExistingCardCreatorWindow(): Promise<number | null> {
+  try {
+    const allWindows = await chrome.windows.getAll({ windowTypes: ['popup'] });
+    for (const w of allWindows) {
+      if (!w.id) continue;
+      const tabs = await chrome.tabs.query({ windowId: w.id });
+      if (tabs.some(t => t.url?.includes('card-creator.html'))) return w.id;
+    }
+  } catch {}
+  return null;
+}
+
+async function openCardCreatorWindow(params: URLSearchParams): Promise<void> {
+  const targetUrl = chrome.runtime.getURL(`card-creator.html?${params.toString()}`);
+
+  // Try the cached window ID first
+  if (cardCreatorWindowId != null) {
+    try {
+      const existing = await chrome.windows.get(cardCreatorWindowId);
+      if (existing) {
+        await chrome.windows.update(cardCreatorWindowId, { focused: true });
+        const tabs = await chrome.tabs.query({ windowId: cardCreatorWindowId });
+        if (tabs.length > 0 && tabs[0].id) {
+          await chrome.tabs.update(tabs[0].id, { url: targetUrl });
+        }
+        return;
+      }
+    } catch {
+      cardCreatorWindowId = null;
+    }
+  }
+
+  // Scan for orphaned card-creator windows (SW restart loses the variable)
+  const orphan = await findExistingCardCreatorWindow();
+  if (orphan != null) {
+    cardCreatorWindowId = orphan;
+    await chrome.windows.update(orphan, { focused: true });
+    const tabs = await chrome.tabs.query({ windowId: orphan });
+    if (tabs.length > 0 && tabs[0].id) {
+      await chrome.tabs.update(tabs[0].id, { url: targetUrl });
+    }
+    return;
+  }
+
+  const win = await chrome.windows.create({
     url: chrome.runtime.getURL(`card-creator.html?${params.toString()}`),
     type: 'popup',
     width: CARD_CREATOR_DEFAULT_DIMENSIONS.width,
     height: CARD_CREATOR_DEFAULT_DIMENSIONS.height,
     focused: true,
   });
+  cardCreatorWindowId = win?.id ?? null;
 }
+
+chrome.windows.onRemoved.addListener((windowId) => {
+  if (windowId === cardCreatorWindowId) cardCreatorWindowId = null;
+});
 
 async function getResponseError(response: Response, fallback: string): Promise<string> {
   try {
@@ -692,6 +743,16 @@ onMessage(async (msg, sender) => {
       return { ok: true };
     }
 
+    case 'GENERATE_EXAMPLE_SENTENCE': {
+      const { word, sentence, level } = msg.payload;
+      try {
+        const data = await backendGenerateExample({ word, sentence, level });
+        return { ok: true, data };
+      } catch (error) {
+        return { ok: false, error: (error as Error).message };
+      }
+    }
+
     case 'FETCH_WORD_AUDIO': {
       const { word } = msg.payload;
       try {
@@ -747,12 +808,20 @@ onMessage(async (msg, sender) => {
         const json = await res.json();
         const serverCard = withDeckName(mapBackendFlashcard(json.data ?? {}, card.deckName || settings.activeCollectionName || 'Syntagma'));
         const flashcardId = Number(serverCard.id);
+        console.log('[Syntagma] CREATE_FLASHCARD — flashcardId:', flashcardId, 'hasScreenshotData:', !!card.screenshotDataUrl, 'hasAudioData:', !!card.sentenceAudioDataUrl, 'audioDataLen:', card.sentenceAudioDataUrl?.length);
         const [screenshotUrl, audioUrl] = Number.isFinite(flashcardId)
           ? await Promise.all([
-              uploadScreenshotMedia(apiBase, settings, flashcardId, card).catch(() => undefined),
-              uploadAudioMedia(apiBase, settings, flashcardId, card).catch(() => undefined),
+              uploadScreenshotMedia(apiBase, settings, flashcardId, card).catch((err) => {
+                console.warn('[Syntagma] Screenshot upload failed:', err);
+                return undefined;
+              }),
+              uploadAudioMedia(apiBase, settings, flashcardId, card).catch((err) => {
+                console.warn('[Syntagma] Audio upload failed:', err);
+                return undefined;
+              }),
             ])
           : [undefined, undefined];
+        console.log('[Syntagma] CREATE_FLASHCARD — uploadedScreenshot:', !!screenshotUrl, 'uploadedAudio:', !!audioUrl);
         const savedCard: FlashcardPayload = {
           ...mergeFlashcardWithLocalFields(cardForRequest, serverCard),
           collectionId: selectedCollectionId,
@@ -1192,7 +1261,26 @@ onMessage(async (msg, sender) => {
         });
         params = new URLSearchParams({ mode: 'edit', draftKey });
       } else {
-        const { panel, word, sentence, sourceUrl, sourceTitle } = msg.payload;
+        const { panel, word, sentence, sourceUrl, sourceTitle, trMeaning, screenshotDataUrl, sentenceAudioDataUrl } = msg.payload;
+        console.log('[Syntagma] OPEN_CARD_CREATOR create — hasScreenshot:', !!screenshotDataUrl, 'hasAudio:', !!sentenceAudioDataUrl);
+
+        let draftKey: string | undefined = undefined;
+        if (screenshotDataUrl || sentenceAudioDataUrl) {
+          draftKey = `${CARD_CREATOR_DRAFT_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2)}`;
+          await chrome.storage.local.set({
+            [draftKey]: {
+              lemma: word,
+              surfaceForm: word,
+              sentence,
+              sourceUrl,
+              sourceTitle,
+              trMeaning,
+              screenshotDataUrl,
+              sentenceAudioDataUrl,
+            }
+          });
+        }
+        
         params = new URLSearchParams({
           mode: 'create',
           panel: panel ?? 'dictionary',
@@ -1200,9 +1288,11 @@ onMessage(async (msg, sender) => {
           sentence,
           sourceUrl,
           sourceTitle,
+          ...(trMeaning ? { trMeaning } : {}),
+          ...(draftKey ? { draftKey } : {}),
         });
       }
-      openCardCreatorWindow(params);
+      await openCardCreatorWindow(params);
       return { ok: true };
     }
 

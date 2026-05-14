@@ -152,7 +152,21 @@ async function loadLibrary(): Promise<EbookMeta[]> {
   });
   await syncRefreshedToken(response, settings);
   const data = await readApiData<BackendEbook[]>(response, `Failed to fetch ebooks (${response.status})`);
-  return data.map(toMeta);
+  const books = data.map(toMeta);
+
+  // Hydrate progress percentage from local storage
+  try {
+    const progressKeys = books.map(b => `syntagma_progress_${b.id}`);
+    if (progressKeys.length > 0) {
+      const stored = await chrome.storage.local.get(progressKeys);
+      for (const book of books) {
+        const val = stored[`syntagma_progress_${book.id}`];
+        if (typeof val === 'number' && val > 0) book.progress = val;
+      }
+    }
+  } catch {}
+
+  return books;
 }
 
 async function importEbook(file: File, title: string): Promise<EbookMeta> {
@@ -1102,7 +1116,7 @@ function ReaderView({
         const buffer = await loadEpubBuffer(bookMeta.id);
         if (destroyed) return;
 
-        const analysisPromise = collectWholeBookAnalysisFromBuffer(buffer, lexemesRef.current)
+        const analysisPromise = collectWholeBookAnalysisFromBuffer(buffer.slice(0), lexemesRef.current)
           .then(({ tokens, blocks, scannedSections, failedSections }) => {
             if (destroyed) return { scannedSections, failedSections };
             setBookTokens(tokens);
@@ -1213,7 +1227,20 @@ function ReaderView({
           }
         });
 
-        await rendition.display();
+        // Restore saved position from local CFI before first display
+        const cfiKey = `syntagma_cfi_${bookMeta.id}`;
+        const stored = await chrome.storage.local.get(cfiKey);
+        const savedCfi = stored[cfiKey] as string | undefined;
+
+        if (savedCfi) {
+          try {
+            await rendition.display(savedCfi);
+          } catch {
+            await rendition.display();
+          }
+        } else {
+          await rendition.display();
+        }
         updateProgress(rendition);
 
         // Track location changes immediately so we do not miss user navigation while
@@ -1241,28 +1268,26 @@ function ReaderView({
           );
         });
 
-        // Generate locations as soon as possible for progress save/restore.
+        // Generate locations for progress percentage and backend sync.
         try {
           await book.locations.generate(1024);
           if (destroyed) return;
           locationsReadyRef.current = true;
 
-          if (bookMeta.lastPage > 0) {
+          // If no local CFI was found, try backend lastPage as fallback
+          if (!savedCfi && bookMeta.lastPage > 0) {
             try {
-              const savedCfi = book.locations.cfiFromLocation(bookMeta.lastPage);
-              if (typeof savedCfi === 'string' && savedCfi) {
-                await rendition.display(savedCfi);
+              const fallbackCfi = book.locations.cfiFromLocation(bookMeta.lastPage);
+              if (typeof fallbackCfi === 'string' && fallbackCfi) {
+                await rendition.display(fallbackCfi);
               }
-            } catch (error) {
-              console.warn('[Syntagma Reader] Failed to restore saved EPUB location:', error);
-            }
+            } catch {}
           }
 
           updateProgress(rendition);
           void savePosition(bookMeta.id);
-        } catch (error) {
+        } catch {
           locationsReadyRef.current = false;
-          console.warn('[Syntagma Reader] Failed to generate locations for this EPUB:', error);
         }
       } catch (err) {
         if (!destroyed) {
@@ -1295,15 +1320,27 @@ function ReaderView({
   }
 
   async function savePosition(bookId: string) {
-    if (!locationsReadyRef.current) return;
     const loc = renditionRef.current?.currentLocation() as any;
     const cfi = loc?.start?.cfi;
-    if (!cfi || !bookRef.current) return;
+    if (!cfi) return;
+
+    // Save CFI for position restore
+    const cfiKey = `syntagma_cfi_${bookId}`;
+    const toStore: Record<string, unknown> = { [cfiKey]: cfi };
+
+    // Only save progress percentage once locations are generated (otherwise it's 0)
+    const pct = loc?.start?.percentage;
+    if (locationsReadyRef.current && typeof pct === 'number' && pct > 0) {
+      toStore[`syntagma_progress_${bookId}`] = pct;
+    }
+    chrome.storage.local.set(toStore).catch(() => {});
+
+    // Also save location number to backend if locations are ready
+    if (!locationsReadyRef.current || !bookRef.current) return;
     let nextPage = -1;
     try {
       nextPage = Number((bookRef.current.locations as any).locationFromCfi(cfi));
-    } catch (error) {
-      console.warn('[Syntagma Reader] Skipping progress save due to invalid CFI mapping:', error);
+    } catch {
       return;
     }
     if (!Number.isFinite(nextPage) || nextPage < 0) return;
@@ -1352,6 +1389,29 @@ function ReaderView({
     return sentence || fullText;
   }
 
+  async function handleBackWithSave() {
+    const loc = renditionRef.current?.currentLocation() as any;
+    const cfi = loc?.start?.cfi;
+    if (cfi) {
+      const toStore: Record<string, unknown> = { [`syntagma_cfi_${bookMeta.id}`]: cfi };
+      // Use epubjs percentage if available, otherwise estimate from spine position
+      let pct = loc?.start?.percentage;
+      if ((typeof pct !== 'number' || pct <= 0) && bookRef.current) {
+        try {
+          const spine = (bookRef.current as any).spine;
+          const idx = loc?.start?.index ?? 0;
+          const total = spine?.spineItems?.length ?? spine?.length ?? 1;
+          if (total > 1) pct = idx / total;
+        } catch {}
+      }
+      if (typeof pct === 'number' && pct > 0) {
+        toStore[`syntagma_progress_${bookMeta.id}`] = pct;
+      }
+      await chrome.storage.local.set(toStore).catch(() => {});
+    }
+    onBack();
+  }
+
   function goNext() { renditionRef.current?.next(); }
   function goPrev() { renditionRef.current?.prev(); }
 
@@ -1397,7 +1457,7 @@ function ReaderView({
         borderBottom: `1px solid ${theme.border}`,
         flexShrink: 0,
       }}>
-        <button onClick={onBack} style={{
+        <button onClick={handleBackWithSave} style={{
           background: 'transparent', border: 'none', color: theme.text,
           cursor: 'pointer', fontSize: '18px', padding: '4px 8px',
         }}>
@@ -1682,9 +1742,12 @@ export function ReaderApp() {
     setActiveBookId(id);
   }, []);
 
-  const handleBack = useCallback(() => {
+  const handleBack = useCallback(async () => {
+    try {
+      const freshBooks = await loadLibrary();
+      setBooks(freshBooks);
+    } catch {}
     setActiveBookId(null);
-    loadLibrary().then(setBooks).catch(console.error);
   }, []);
 
   if (loading) {

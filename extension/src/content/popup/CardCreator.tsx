@@ -8,9 +8,9 @@ const C = {
   surface1: '#E2DACE',
   text: '#4A3B2C',
   subtext: '#877666',
-  blue: '#98C1D9',
-  red: '#D97762',
-  green: '#A8B693',
+  accent: '#55D5FF',
+  buttonPrimary: '#FF8A4C',
+  green: '#4AD89A',
   amber: '#E9C46A',
 };
 
@@ -66,12 +66,12 @@ export function CardCreator({ lemma, surface, sentence, lexeme, translations, on
       borderRadius: '6px',
       padding: '10px',
       marginTop: '8px',
-      border: `1px solid ${C.blue}`,
+      border: `1px solid ${C.accent}`,
     }}>
       <div style={{
         fontSize: '11px',
         fontWeight: 700,
-        color: C.blue,
+        color: C.accent,
         marginBottom: '8px',
         letterSpacing: '0.5px',
         textTransform: 'uppercase',
@@ -155,8 +155,8 @@ export function CardCreator({ lemma, surface, sentence, lexeme, translations, on
           disabled={saving || saved}
           style={{
             flex: 1,
-            background: saved ? C.green : C.blue,
-            color: C.base,
+            background: saved ? C.green : C.buttonPrimary,
+            color: '#FFFFFF',
             border: 'none',
             borderRadius: '4px',
             padding: '5px 10px',
@@ -185,6 +185,7 @@ export function CardCreator({ lemma, surface, sentence, lexeme, translations, on
           Cancel
         </button>
       </div>
+
     </div>
   );
 }
