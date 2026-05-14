@@ -363,25 +363,28 @@ function WordPopupInner({
     setCardSaved('saving');
     try {
       let sentenceAudioDataUrl: string | undefined;
-      try {
-        sentenceAudioDataUrl = await new Promise<string | undefined>((resolve) => {
-          const timeout = setTimeout(() => {
-            window.removeEventListener('syntagma:sentence-audio-ready', onReady);
-            resolve(undefined);
-          }, 35_000);
-          const onReady = (e: Event) => {
-            clearTimeout(timeout);
-            window.removeEventListener('syntagma:sentence-audio-ready', onReady);
-            resolve((e as CustomEvent).detail?.audioDataUrl);
-          };
-          window.addEventListener('syntagma:sentence-audio-ready', onReady);
-          window.dispatchEvent(new CustomEvent('syntagma:capture-sentence-audio', {
-            detail: (sentenceStartMs !== undefined && sentenceEndMs !== undefined)
-              ? { startMs: sentenceStartMs, endMs: sentenceEndMs }
-              : {},
-          }));
-        });
-      } catch { /* not in video context or capture unavailable */ }
+      const hasVideoOverlay = !!document.querySelector('[data-syntagma-video-overlay]');
+      if (hasVideoOverlay) {
+        try {
+          sentenceAudioDataUrl = await new Promise<string | undefined>((resolve) => {
+            const timeout = setTimeout(() => {
+              window.removeEventListener('syntagma:sentence-audio-ready', onReady);
+              resolve(undefined);
+            }, 35_000);
+            const onReady = (e: Event) => {
+              clearTimeout(timeout);
+              window.removeEventListener('syntagma:sentence-audio-ready', onReady);
+              resolve((e as CustomEvent).detail?.audioDataUrl);
+            };
+            window.addEventListener('syntagma:sentence-audio-ready', onReady);
+            window.dispatchEvent(new CustomEvent('syntagma:capture-sentence-audio', {
+              detail: (sentenceStartMs !== undefined && sentenceEndMs !== undefined)
+                ? { startMs: sentenceStartMs, endMs: sentenceEndMs }
+                : {},
+            }));
+          });
+        } catch { /* not in video context or capture unavailable */ }
+      }
 
       const card = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,

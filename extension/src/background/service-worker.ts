@@ -14,6 +14,7 @@ import {
   explainWord as backendExplainWord,
   translateSentence as backendTranslate,
   explainSentence as backendExplainSentence,
+  generateExampleSentence as backendGenerateExample,
 } from '../shared/backend-ai';
 import type { FlashcardPayload, LexemeEntry } from '../shared/types';
 import {
@@ -740,6 +741,16 @@ onMessage(async (msg, sender) => {
         }).catch(() => {});
       }
       return { ok: true };
+    }
+
+    case 'GENERATE_EXAMPLE_SENTENCE': {
+      const { word, sentence, level } = msg.payload;
+      try {
+        const data = await backendGenerateExample({ word, sentence, level });
+        return { ok: true, data };
+      } catch (error) {
+        return { ok: false, error: (error as Error).message };
+      }
     }
 
     case 'FETCH_WORD_AUDIO': {

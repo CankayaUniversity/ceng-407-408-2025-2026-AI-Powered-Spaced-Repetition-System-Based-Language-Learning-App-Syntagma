@@ -124,6 +124,7 @@ export function CardCreatorApp() {
 
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  const [generatingExample, setGeneratingExample] = useState(false);
 
   const searchRef = useRef<HTMLInputElement>(null);
   const screenshotInputRef = useRef<HTMLInputElement>(null);
@@ -480,6 +481,29 @@ export function CardCreatorApp() {
     updateWordStatus,
   ]);
 
+  const handleGenerateExample = useCallback(async () => {
+    if (!targetWord.trim() || generatingExample) return;
+    setGeneratingExample(true);
+    try {
+      const result = await sendMessage<{ ok: boolean; data?: { exampleSentence: string; turkishTranslation: string }; error?: string }>({
+        type: 'GENERATE_EXAMPLE_SENTENCE',
+        payload: {
+          word: targetWord.trim(),
+          sentence: sentence.trim() || undefined,
+          level: settings.learnerLevel,
+        },
+      });
+      if (!result.ok) throw new Error(result.error ?? 'Failed to generate example');
+      if (result.data?.exampleSentence) {
+        setExampleSentence(result.data.exampleSentence);
+      }
+    } catch (error) {
+      setSaveMsg({ text: (error as Error).message, ok: false });
+    } finally {
+      setGeneratingExample(false);
+    }
+  }, [targetWord, sentence, settings.learnerLevel, generatingExample]);
+
   const navButtonStyle = (active: boolean): React.CSSProperties => ({
     background: active ? C.accentSoft : 'transparent',
     color: active ? C.accent : C.muted,
@@ -524,6 +548,8 @@ export function CardCreatorApp() {
   }
 
   return (
+    <>
+    <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     <div style={{
       display: 'flex',
       height: '100vh',
@@ -1047,7 +1073,44 @@ export function CardCreatorApp() {
               </div>
 
               <div style={{ marginBottom: '10px' }}>
-                <span style={sectionLabelStyle}>Example Sentence</span>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                  <span style={{ ...sectionLabelStyle, marginBottom: 0 }}>Example Sentence</span>
+                  <button
+                    onClick={handleGenerateExample}
+                    disabled={generatingExample || !targetWord.trim()}
+                    style={{
+                      background: generatingExample ? C.input : C.accent,
+                      color: generatingExample ? C.muted : '#FFFFFF',
+                      border: 'none',
+                      borderRadius: '6px',
+                      padding: '4px 10px',
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      cursor: generatingExample || !targetWord.trim() ? 'not-allowed' : 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                    }}
+                  >
+                    {generatingExample ? (
+                      <>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ animation: 'spin 1s linear infinite' }}>
+                          <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                        </svg>
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                          <path d="M2 17l10 5 10-5" />
+                          <path d="M2 12l10 5 10-5" />
+                        </svg>
+                        Generate with AI
+                      </>
+                    )}
+                  </button>
+                </div>
                 <textarea
                   value={exampleSentence}
                   onChange={event => setExampleSentence(event.target.value)}
@@ -1200,5 +1263,6 @@ export function CardCreatorApp() {
         )}
       </main>
     </div>
+    </>
   );
 }

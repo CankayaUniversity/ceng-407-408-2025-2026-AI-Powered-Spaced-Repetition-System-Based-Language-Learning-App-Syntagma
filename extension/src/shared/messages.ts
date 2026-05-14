@@ -23,6 +23,7 @@ export type ExtensionMessage =
   | { type: 'EXPLAIN_WORD_WITH_AI'; payload: { word: string; sentence: string; context?: string; level: LearnerLevel; requestId: string } }
   | { type: 'EXPLAIN_SENTENCE_WITH_AI'; payload: { sentence: string; level: LearnerLevel; requestId: string } }
   | { type: 'TRANSLATE_SENTENCE_WITH_AI'; payload: { sentence: string; requestId: string } }
+  | { type: 'GENERATE_EXAMPLE_SENTENCE'; payload: { word: string; sentence?: string; level?: string } }
   | { type: 'FETCH_WORD_AUDIO'; payload: { word: string; accent: 'uk' | 'us' } }
   | { type: 'OPEN_EXTERNAL_DICTIONARY'; payload: { provider: 'tureng' | 'cambridge' | 'oxford' | 'merriam-webster'; word: string } }
   | { type: 'LOOKUP_DICTIONARY'; payload: { word: string } }
