@@ -225,8 +225,48 @@ async function handleQuickAddCard(lemma: string, sentence: string): Promise<void
 
 // ─── Advanced Card Creator ────────────────────────────────────────────────────
 
-function handleOpenAdvancedCreator(lemma?: string, sentence?: string) {
+async function handleOpenAdvancedCreator(lemma?: string, sentence?: string) {
   dismissWordPopup();
+
+  let sentenceAudioDataUrl: string | undefined;
+  let screenshotDataUrl: string | undefined;
+
+  try {
+    const hasVideoOverlay = !!document.querySelector('[data-syntagma-video-overlay]');
+    if (hasVideoOverlay) {
+      // 1. Capture Screenshot
+      // Dispatch an event that VideoOverlay will listen to and return the screenshot.
+      screenshotDataUrl = await new Promise<string | undefined>((resolve) => {
+        const timeout = setTimeout(() => {
+          window.removeEventListener('syntagma:screenshot-ready', onReady);
+          resolve(undefined);
+        }, 1500);
+        const onReady = (e: Event) => {
+          clearTimeout(timeout);
+          window.removeEventListener('syntagma:screenshot-ready', onReady);
+          resolve((e as CustomEvent).detail?.screenshotDataUrl);
+        };
+        window.addEventListener('syntagma:screenshot-ready', onReady);
+        window.dispatchEvent(new CustomEvent('syntagma:request-screenshot'));
+      });
+
+      // 2. Capture Audio
+      sentenceAudioDataUrl = await new Promise<string | undefined>((resolve) => {
+        const timeout = setTimeout(() => {
+          window.removeEventListener('syntagma:sentence-audio-ready', onReady);
+          resolve(undefined);
+        }, 2500);
+        const onReady = (e: Event) => {
+          clearTimeout(timeout);
+          window.removeEventListener('syntagma:sentence-audio-ready', onReady);
+          resolve((e as CustomEvent).detail?.audioDataUrl);
+        };
+        window.addEventListener('syntagma:sentence-audio-ready', onReady);
+        window.dispatchEvent(new CustomEvent('syntagma:capture-sentence-audio', { detail: {} }));
+      });
+    }
+  } catch { /* best effort */ }
+
   sendMessage({
     type: 'OPEN_CARD_CREATOR',
     payload: {
@@ -235,6 +275,8 @@ function handleOpenAdvancedCreator(lemma?: string, sentence?: string) {
       sentence: sentence ?? '',
       sourceUrl: window.location.href,
       sourceTitle: document.title,
+      screenshotDataUrl,
+      sentenceAudioDataUrl,
     },
   }).catch(console.error);
 }

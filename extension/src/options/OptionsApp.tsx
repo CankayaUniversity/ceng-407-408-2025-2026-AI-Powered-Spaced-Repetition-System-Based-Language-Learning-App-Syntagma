@@ -1423,6 +1423,7 @@ export function OptionsApp() {
   const [activeTab, setActiveTab] = useState<TabId>('general');
   const [loading, setLoading] = useState(true);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     sendMessage<UserSettings>({ type: 'GET_SETTINGS', payload: null })
@@ -1442,11 +1443,12 @@ export function OptionsApp() {
   const handleUpdate = useCallback(async (patch: Partial<UserSettings>) => {
     const updated = { ...settings, ...patch };
     setSettings(updated);
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     setSaveStatus('saving');
     try {
       await sendMessage({ type: 'SET_SETTINGS', payload: patch });
       setSaveStatus('saved');
-      setTimeout(() => setSaveStatus('idle'), 1500);
+      saveTimerRef.current = setTimeout(() => setSaveStatus('idle'), 1500);
     } catch (err) {
       console.error('[Syntagma options] save error', err);
       setSaveStatus('idle');
@@ -1550,8 +1552,13 @@ export function OptionsApp() {
             Open Workspace
           </button>
           {saveStatus !== 'idle' && (
-            <span style={{ fontSize: '12px', color: saveStatus === 'saved' ? C.green : C.subtext }}>
-              {saveStatus === 'saving' ? 'Saving…' : 'Saved'}
+            <span style={{
+              fontSize: '12px',
+              color: saveStatus === 'saved' ? C.green : C.subtext,
+              transition: 'opacity 0.3s',
+              opacity: saveStatus === 'saved' ? 1 : 1,
+            }}>
+              {saveStatus === 'saving' ? 'Saving…' : 'Saved ✓'}
             </span>
           )}
         </div>

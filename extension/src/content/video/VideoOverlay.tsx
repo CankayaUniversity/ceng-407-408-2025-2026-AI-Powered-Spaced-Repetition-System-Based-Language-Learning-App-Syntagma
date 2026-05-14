@@ -714,7 +714,29 @@ export function VideoOverlay({
       }
     };
     window.addEventListener('syntagma:capture-sentence-audio', handler);
-    return () => window.removeEventListener('syntagma:capture-sentence-audio', handler);
+    
+    // ── On-demand screenshot capture for shortcuts ─────────────────────────────
+    const screenshotHandler = async () => {
+      try {
+        const screenshotDataUrl = await captureVideoScreenshotWithFallback({
+          video,
+          overlayElement: overlayRootRef.current,
+          captureTabScreenshot: async () => {
+            const res = await sendMessage<{ dataUrl?: string }>({ type: 'CAPTURE_TAB_SCREENSHOT', payload: null });
+            return res?.dataUrl;
+          },
+        });
+        window.dispatchEvent(new CustomEvent('syntagma:screenshot-ready', { detail: { screenshotDataUrl } }));
+      } catch {
+        window.dispatchEvent(new CustomEvent('syntagma:screenshot-ready', { detail: { screenshotDataUrl: undefined } }));
+      }
+    };
+    window.addEventListener('syntagma:request-screenshot', screenshotHandler);
+
+    return () => {
+      window.removeEventListener('syntagma:capture-sentence-audio', handler);
+      window.removeEventListener('syntagma:request-screenshot', screenshotHandler);
+    };
   }, [currentTarget, video]);
 
   // ── Render ──────────────────────────────────────────────────────────────────

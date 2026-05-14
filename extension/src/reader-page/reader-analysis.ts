@@ -13,42 +13,6 @@ export interface WholeBookAnalysis {
   failedSections: number;
 }
 
-export interface AnalysisSection {
-  linear?: boolean | string;
-  document?: Document;
-  load: (request?: Function) => Promise<unknown>;
-  unload?: () => void;
-}
-
-export interface AnalysisBookLike {
-  ready?: Promise<unknown>;
-  request?: Function;
-  spine: {
-    each: (callback: (section: AnalysisSection) => void) => void;
-  };
-  destroy?: () => void;
-}
-
-export function isLinearSection(section: AnalysisSection): boolean {
-  if (section.linear === false) return false;
-  if (typeof section.linear === 'string' && section.linear.toLowerCase() === 'no') return false;
-  return true;
-}
-
-function toDocument(loaded: unknown, section: AnalysisSection): Document | null {
-  if (section.document && (section.document as Node).nodeType === Node.DOCUMENT_NODE) {
-    return section.document;
-  }
-  const loadedNode = loaded as Node | undefined;
-  if (loadedNode && loadedNode.nodeType === Node.DOCUMENT_NODE) {
-    return loaded as Document;
-  }
-  if (loadedNode?.ownerDocument && loadedNode.ownerDocument.nodeType === Node.DOCUMENT_NODE) {
-    return loadedNode.ownerDocument;
-  }
-  return null;
-}
-
 function tokenizeBlock(text: string, lexemes: Record<string, LexemeEntry>): Token[] {
   const rawTokens = tokenizeText(text);
   const blockTokens: Token[] = [];
@@ -69,7 +33,7 @@ export function extractTokenBlocksFromDocument(
   doc: Document,
   lexemes: Record<string, LexemeEntry>,
 ): Token[][] {
-  const root = doc.body ?? doc;
+  const root = doc.body ?? doc.documentElement ?? doc;
   const blocks: Token[][] = [];
   const elements = root.querySelectorAll(BLOCK_SELECTOR);
   for (const element of elements) {
@@ -81,67 +45,109 @@ export function extractTokenBlocksFromDocument(
       blocks.push(blockTokens);
     }
   }
+  if (blocks.length === 0) {
+    const fullText = root.textContent?.trim() ?? '';
+    if (fullText) {
+      const blockTokens = tokenizeBlock(fullText, lexemes);
+      if (blockTokens.length > 0) {
+        blocks.push(blockTokens);
+      }
+    }
+  }
   return blocks;
 }
 
-export async function collectWholeBookAnalysisFromBook(
-  analysisBook: AnalysisBookLike,
-  lexemes: Record<string, LexemeEntry>,
-): Promise<WholeBookAnalysis> {
-  if (analysisBook.ready) {
-    await analysisBook.ready;
-  }
+interface SpineItemLike {
+  href: string;
+  linear?: string | boolean;
+  idref?: string;
+}
 
-  const sections: AnalysisSection[] = [];
-  analysisBook.spine.each((section: AnalysisSection) => sections.push(section));
-
-  const allBlocks: Token[][] = [];
-  const allTokens: Token[] = [];
-  let scannedSections = 0;
-  let failedSections = 0;
-
-  try {
-    for (const section of sections) {
-      if (!isLinearSection(section)) continue;
-      scannedSections++;
-
-      try {
-        const loaded = await section.load(analysisBook.request);
-        const doc = toDocument(loaded, section);
-        if (!doc) continue;
-
-        const sectionBlocks = extractTokenBlocksFromDocument(doc, lexemes);
-        for (const block of sectionBlocks) {
-          allBlocks.push(block);
-          allTokens.push(...block);
-        }
-      } catch {
-        // Some EPUBs contain broken/missing spine resources. Skip bad sections
-        // so whole-book analysis can still succeed with the remaining content.
-        failedSections++;
-      } finally {
-        // section.unload is best-effort and should always run after each section attempt
-        section.unload?.();
-      }
-    }
-  } finally {
-    analysisBook.destroy?.();
-  }
-
-  return { tokens: allTokens, blocks: allBlocks, scannedSections, failedSections };
+interface PackagingLike {
+  spine: SpineItemLike[];
+  manifest: Record<string, { href: string }>;
 }
 
 export async function collectWholeBookAnalysisFromBuffer(
   buffer: ArrayBuffer,
   lexemes: Record<string, LexemeEntry>,
 ): Promise<WholeBookAnalysis> {
-  const analysisBook = ePub(buffer) as unknown as AnalysisBookLike & {
-    replacements?: () => Promise<unknown>;
-  };
-  // Whole-book text extraction does not need asset replacement; disabling this
-  // avoids noisy failures on malformed/missing css/image references.
-  if (typeof analysisBook.replacements === 'function') {
-    analysisBook.replacements = () => Promise.resolve();
+  const book = ePub(buffer) as any;
+  const allBlocks: Token[][] = [];
+  const allTokens: Token[] = [];
+  let scannedSections = 0;
+  let failedSections = 0;
+
+  try {
+    await book.ready;
+
+    const archive = book.archive;
+    const packaging: PackagingLike | undefined = book.packaging;
+
+    if (!archive || !packaging) {
+      console.warn('[Syntagma Analysis] Book archive or packaging not available');
+      return { tokens: [], blocks: [], scannedSections: 0, failedSections: 0 };
+    }
+
+    const spineItems: SpineItemLike[] = packaging.spine ?? [];
+    const manifest = packaging.manifest ?? {};
+    const parser = new DOMParser();
+
+    for (const item of spineItems) {
+      if (item.linear === false || (typeof item.linear === 'string' && item.linear.toLowerCase() === 'no')) {
+        continue;
+      }
+
+      scannedSections++;
+      const rawHref = manifest[item.idref ?? '']?.href ?? item.href;
+      if (!rawHref) {
+        failedSections++;
+        continue;
+      }
+
+      // book.resolve() converts the manifest-relative href into the full
+      // archive path that archive.getText() / archive.request() expects
+      // (e.g. "chapter1.xhtml" → "/OEBPS/chapter1.xhtml").
+      const resolvedUrl: string | undefined = book.resolve(rawHref);
+      if (!resolvedUrl) {
+        failedSections++;
+        continue;
+      }
+
+      try {
+        // archive.request() reads from the zip, auto-detects the file type
+        // from the extension, and returns a parsed Document for xhtml/html.
+        const result: Document | string = await archive.request(resolvedUrl);
+
+        let doc: Document;
+        if (result && typeof result === 'object' && 'querySelector' in result) {
+          doc = result as Document;
+        } else if (typeof result === 'string') {
+          const isXhtml = rawHref.endsWith('.xhtml') || rawHref.endsWith('.xml');
+          doc = parser.parseFromString(result, isXhtml ? 'application/xhtml+xml' : 'text/html');
+          if (doc.querySelector('parsererror')) {
+            doc = parser.parseFromString(result, 'text/html');
+          }
+        } else {
+          failedSections++;
+          continue;
+        }
+
+        const sectionBlocks = extractTokenBlocksFromDocument(doc, lexemes);
+        for (const block of sectionBlocks) {
+          allBlocks.push(block);
+          allTokens.push(...block);
+        }
+      } catch (err) {
+        console.warn('[Syntagma Analysis] Failed to process section:', rawHref, err);
+        failedSections++;
+      }
+    }
+  } catch (err) {
+    console.error('[Syntagma Analysis] Book initialization failed:', err);
+  } finally {
+    try { book.destroy(); } catch {}
   }
-  return collectWholeBookAnalysisFromBook(analysisBook, lexemes);
+
+  return { tokens: allTokens, blocks: allBlocks, scannedSections, failedSections };
 }

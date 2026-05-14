@@ -151,6 +151,7 @@ export async function initVideoMode(params: VideoModeParams): Promise<void> {
   // means our word spans will never receive clicks regardless of z-index.
   // Mounting on <body> as `position:fixed` sidesteps the whole stacking context.
   shadowHost = document.createElement('div');
+  shadowHost.setAttribute('data-syntagma-video-overlay', '');
   shadowHost.style.cssText = [
     'position:fixed',
     'top:0', 'left:0',
