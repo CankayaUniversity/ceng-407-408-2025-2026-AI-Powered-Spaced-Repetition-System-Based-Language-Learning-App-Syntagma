@@ -3,6 +3,7 @@ import { ActivityIndicator, StyleSheet, Text, View, Pressable } from 'react-nati
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
+import { useNetInfo } from '@react-native-community/netinfo';
 import { fetchReviewStats } from '../shared/api';
 import { getCache, saveCache } from '../shared/storage';
 import { flushQueues, getReviewDeltaToday } from '../shared/offline';
@@ -25,6 +26,39 @@ function getDayLabel(dateStr) {
   }
 }
 
+function buildEmptyStats() {
+  return {
+    totalReviews: 0,
+    streakCount: 0,
+    weeklyCount: 0,
+    monthlyCount: 0,
+    reviewsByDay: [],
+  };
+}
+
+function applyDeltaToStats(rawStats, delta) {
+  if (!rawStats || delta <= 0) {
+    return rawStats;
+  }
+
+  const today = todayStr();
+  const reviewsByDay = Array.isArray(rawStats.reviewsByDay) ? rawStats.reviewsByDay.slice() : [];
+  const index = reviewsByDay.findIndex((d) => d?.date === today);
+  if (index >= 0) {
+    reviewsByDay[index] = { ...reviewsByDay[index], count: (reviewsByDay[index].count ?? 0) + delta };
+  } else {
+    reviewsByDay.push({ date: today, count: delta });
+  }
+
+  return {
+    ...rawStats,
+    totalReviews: (rawStats.totalReviews ?? 0) + delta,
+    weeklyCount: (rawStats.weeklyCount ?? 0) + delta,
+    monthlyCount: (rawStats.monthlyCount ?? 0) + delta,
+    reviewsByDay,
+  };
+}
+
 export default function OverviewScreen() {
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
@@ -33,12 +67,26 @@ export default function OverviewScreen() {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const netInfo = useNetInfo();
+  const isOffline = netInfo.isConnected === false || netInfo.isInternetReachable === false;
 
   const loadStats = useCallback(async (period) => {
-    flushQueues().catch(() => {});
     try {
       setLoading(true);
       setError('');
+      if (!isOffline) {
+        flushQueues().catch(() => {});
+      }
+
+      if (isOffline) {
+        let rawStats = await getCache(cacheStatsKey(period)).catch(() => null);
+        if (!rawStats) {
+          rawStats = buildEmptyStats();
+        }
+        const delta = await getReviewDeltaToday().catch(() => 0);
+        setStats(applyDeltaToStats(rawStats, delta));
+        return;
+      }
       const rawStats = await fetchReviewStats(period.toLowerCase());
       saveCache(cacheStatsKey(period), rawStats).catch(() => {});
       setStats(rawStats);
@@ -46,19 +94,7 @@ export default function OverviewScreen() {
       let rawStats = await getCache(cacheStatsKey(period)).catch(() => null);
       if (rawStats) {
         const delta = await getReviewDeltaToday().catch(() => 0);
-        if (delta > 0) {
-          const today = todayStr();
-          rawStats = {
-            ...rawStats,
-            totalReviews: (rawStats.totalReviews ?? 0) + delta,
-            reviewsByDay: Array.isArray(rawStats.reviewsByDay)
-              ? rawStats.reviewsByDay.map((d) =>
-                  d.date === today ? { ...d, count: (d.count ?? 0) + delta } : d
-                )
-              : rawStats.reviewsByDay,
-          };
-        }
-        setStats(rawStats);
+        setStats(applyDeltaToStats(rawStats, delta));
         setError('');
       } else {
         setError(err?.message || 'Stats could not be loaded.');
@@ -67,7 +103,7 @@ export default function OverviewScreen() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isOffline]);
 
   useFocusEffect(
     useCallback(() => {

@@ -3,6 +3,7 @@ import { View, StyleSheet } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
+import NetInfo from '@react-native-community/netinfo';
 
 import HomePage from '../screens/HomePage';
 import FlashcardReviewScreen from '../screens/FlashcardReviewScreen';
@@ -10,7 +11,7 @@ import FlashcardLibraryScreen from '../screens/FlashcardLibraryScreen';
 import OverviewScreen from '../screens/OverviewScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import { useTheme } from '../shared/theme';
-import { flushQueues } from '../shared/offline';
+import { flushQueues, prefetchOfflineData } from '../shared/offline';
 
 const Tab = createBottomTabNavigator();
 const HomeStackNav = createNativeStackNavigator();
@@ -49,7 +50,38 @@ export default function MainTabs() {
   const styles = useMemo(() => createStyles(colors), [colors]);
 
   useEffect(() => {
-    flushQueues().catch(() => {});
+    let isMounted = true;
+    let wasOnline = null;
+
+    const isOnlineState = (state) =>
+      state.isConnected === true && state.isInternetReachable !== false;
+
+    const handleOnline = async () => {
+      await flushQueues().catch(() => {});
+      await prefetchOfflineData().catch(() => {});
+    };
+
+    NetInfo.fetch().then((state) => {
+      if (!isMounted) return;
+      const online = isOnlineState(state);
+      wasOnline = online;
+      if (online) {
+        handleOnline();
+      }
+    });
+
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      const online = isOnlineState(state);
+      if (online && wasOnline === false) {
+        handleOnline();
+      }
+      wasOnline = online;
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
   }, []);
 
   return (

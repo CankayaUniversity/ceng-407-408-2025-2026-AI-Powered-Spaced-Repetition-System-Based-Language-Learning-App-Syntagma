@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
+import { useNetInfo } from '@react-native-community/netinfo';
 import {
   fetchAllFlashcards,
   fetchCollectionById,
@@ -26,6 +27,9 @@ import { useTheme } from '../shared/theme';
 const CACHE_COLLECTIONS = 'syntagma.cache.collections';
 const cacheCollectionKey = (id) => `syntagma.cache.collection.${id}`;
 const CACHE_DAILY = 'syntagma.cache.daily';
+const CACHE_ALL_FLASHCARDS = 'syntagma.cache.flashcards.all.v1';
+const OFFLINE_EMPTY_TITLE = 'Offline moddasin';
+const OFFLINE_EMPTY_SUBTITLE = 'Internet gelince koleksiyonlar senkronize olacak.';
 
 export default function HomePage({ navigation }) {
   const { colors, isDark } = useTheme();
@@ -35,12 +39,29 @@ export default function HomePage({ navigation }) {
   const [error, setError] = useState('');
   const [startingId, setStartingId] = useState(null);
   const [badgeState, setBadgeState] = useState(null);
+  const [offlineEmpty, setOfflineEmpty] = useState(false);
+  const netInfo = useNetInfo();
+  const isOffline = netInfo.isConnected === false || netInfo.isInternetReachable === false;
 
   const loadCollections = useCallback(async () => {
-    flushQueues().catch(() => {});
+    if (!isOffline) {
+      flushQueues().catch(() => {});
+    }
     try {
       setLoading(true);
       setError('');
+      setOfflineEmpty(false);
+
+      if (isOffline) {
+        const cached = await getCache(CACHE_COLLECTIONS).catch(() => null);
+        if (cached) {
+          setCollections(cached);
+        } else {
+          setCollections([]);
+          setOfflineEmpty(true);
+        }
+        return;
+      }
       const data = await fetchCollections();
       const list = Array.isArray(data)
         ? data
@@ -63,7 +84,7 @@ export default function HomePage({ navigation }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isOffline]);
 
   useFocusEffect(
     useCallback(() => {
@@ -136,6 +157,45 @@ export default function HomePage({ navigation }) {
     return filtered;
   }, []);
 
+  const filterFlashcardsByCollection = useCallback((flashcards, collectionId) => {
+    return flashcards.filter((card) => {
+      const ids = Array.isArray(card?.collectionIds) ? card.collectionIds : [];
+      const allIds = ids.slice();
+      if (card?.collectionId != null) {
+        allIds.push(card.collectionId);
+      }
+      return allIds.some((id) => Number(id) === Number(collectionId));
+    });
+  }, []);
+
+  const mapFlashcardsToCards = useCallback((items) => {
+    return items.map((item) => ({
+      flashcardId: item.flashcardId ?? item.id,
+      word: item.lemma || item.word || 'Unknown',
+      phonetic: '',
+      sentence: item.exampleSentence || item.sourceSentence || '',
+      translation: item.translation || '',
+      sentenceTranslation: '',
+    }));
+  }, []);
+
+  const loadCachedCollectionCards = useCallback(async (collectionId) => {
+    const cachedCards = await getCache(cacheCollectionKey(collectionId)).catch(() => null);
+    if (Array.isArray(cachedCards) && cachedCards.length > 0) {
+      return cachedCards;
+    }
+
+    const cachedFlashcards = await getCache(CACHE_ALL_FLASHCARDS).catch(() => null);
+    if (Array.isArray(cachedFlashcards) && cachedFlashcards.length > 0) {
+      const filtered = filterFlashcardsByCollection(cachedFlashcards, collectionId);
+      if (filtered.length > 0) {
+        return mapFlashcardsToCards(filtered);
+      }
+    }
+
+    return null;
+  }, [filterFlashcardsByCollection, mapFlashcardsToCards]);
+
   const handleStart = useCallback(
     async (collection) => {
       if (!collection) {
@@ -149,6 +209,22 @@ export default function HomePage({ navigation }) {
 
       setStartingId(collectionId);
       setError('');
+
+      if (isOffline) {
+        const cachedCards = await loadCachedCollectionCards(collectionId);
+        if (Array.isArray(cachedCards) && cachedCards.length > 0) {
+          const filteredCards = await filterCardsForToday(cachedCards);
+          navigation.navigate('FlashcardReview', {
+            cards: filteredCards,
+            collectionId,
+            collectionName: collection.name || 'Collection',
+          });
+        } else {
+          setError(OFFLINE_EMPTY_SUBTITLE);
+        }
+        setStartingId(null);
+        return;
+      }
 
       try {
         const details = await fetchCollectionById(collectionId);
@@ -166,23 +242,10 @@ export default function HomePage({ navigation }) {
 
         if (!cards.length) {
           const allFlashcards = await fetchAllFlashcards();
-          const filtered = allFlashcards.filter((card) => {
-            const ids = Array.isArray(card?.collectionIds) ? card.collectionIds : [];
-            const allIds = ids.slice();
-            if (card?.collectionId != null) {
-              allIds.push(card.collectionId);
-            }
-            return allIds.some((id) => Number(id) === Number(collectionId));
-          });
+          saveCache(CACHE_ALL_FLASHCARDS, allFlashcards).catch(() => {});
+          const filtered = filterFlashcardsByCollection(allFlashcards, collectionId);
 
-          cards = filtered.map((item) => ({
-            flashcardId: item.flashcardId ?? item.id,
-            word: item.lemma || item.word || 'Unknown',
-            phonetic: '',
-            sentence: item.exampleSentence || item.sourceSentence || '',
-            translation: item.translation || '',
-            sentenceTranslation: '',
-          }));
+          cards = mapFlashcardsToCards(filtered);
         }
 
         saveCache(cacheCollectionKey(collectionId), cards).catch(() => {});
@@ -195,7 +258,7 @@ export default function HomePage({ navigation }) {
           collectionName: collection.name || details?.name || 'Collection',
         });
       } catch (err) {
-        const cachedCards = await getCache(cacheCollectionKey(collectionId)).catch(() => null);
+        const cachedCards = await loadCachedCollectionCards(collectionId);
         if (Array.isArray(cachedCards) && cachedCards.length > 0) {
           const filteredCards = await filterCardsForToday(cachedCards);
           navigation.navigate('FlashcardReview', {
@@ -210,7 +273,7 @@ export default function HomePage({ navigation }) {
         setStartingId(null);
       }
     },
-    [filterCardsForToday, navigation]
+    [filterCardsForToday, isOffline, loadCachedCollectionCards, mapFlashcardsToCards, navigation, filterFlashcardsByCollection]
   );
 
   const renderCollectionCard = ({ item }) => {
@@ -299,8 +362,12 @@ export default function HomePage({ navigation }) {
         ListEmptyComponent={
           !loading ? (
             <View style={styles.emptyState}>
-              <Text style={styles.emptyTitle}>Çalışacak kartınız kalmadı.</Text>
-              <Text style={styles.emptySubtitle}>Yeni kelimeler eklediğinizde burada görünecek.</Text>
+              <Text style={styles.emptyTitle}>
+                {offlineEmpty ? OFFLINE_EMPTY_TITLE : 'Çalışacak kartınız kalmadı.'}
+              </Text>
+              <Text style={styles.emptySubtitle}>
+                {offlineEmpty ? OFFLINE_EMPTY_SUBTITLE : 'Yeni kelimeler eklediğinizde burada görünecek.'}
+              </Text>
             </View>
           ) : null
         }

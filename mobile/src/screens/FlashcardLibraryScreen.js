@@ -12,12 +12,17 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
+import { useNetInfo } from '@react-native-community/netinfo';
 import { useTheme } from '../shared/theme';
 import { fetchAllFlashcards, fetchAllWordKnowledge, updateWordKnowledge } from '../shared/api';
 import { getCache, saveCache } from '../shared/storage';
 import { enqueueWordKnowledge } from '../shared/offline';
 
 const CACHE_LIBRARY = 'syntagma.cache.wordlibrary.v1';
+const CACHE_FLASHCARDS = 'syntagma.cache.flashcards.all.v1';
+const CACHE_WORD_KNOWLEDGE = 'syntagma.cache.wordknowledge.all.v1';
+const OFFLINE_EMPTY_TITLE = 'Offline moddasin';
+const OFFLINE_EMPTY_SUBTITLE = 'Internet gelince kelimeler senkronize olacak.';
 
 const STATUSES = ['ALL', 'KNOWN', 'LEARNING', 'UNKNOWN', 'IGNORED'];
 
@@ -98,11 +103,39 @@ export default function FlashcardLibraryScreen() {
   const [statusModalVisible, setStatusModalVisible] = useState(false);
   const [selectedWord, setSelectedWord] = useState(null);
   const [updatingLemmaKey, setUpdatingLemmaKey] = useState(null);
+  const [offlineEmpty, setOfflineEmpty] = useState(false);
+  const netInfo = useNetInfo();
+  const isOffline = netInfo.isConnected === false || netInfo.isInternetReachable === false;
 
   const loadWords = useCallback(async () => {
     try {
       setLoading(true);
       setError('');
+      setOfflineEmpty(false);
+
+      if (isOffline) {
+        const cached = await getCache(CACHE_LIBRARY).catch(() => null);
+        if (cached) {
+          setAllWords(Array.isArray(cached) ? cached : []);
+          return;
+        }
+
+        const cachedFlashcards = await getCache(CACHE_FLASHCARDS).catch(() => []);
+        const cachedKnowledge = await getCache(CACHE_WORD_KNOWLEDGE).catch(() => []);
+        if ((cachedFlashcards?.length ?? 0) > 0 || (cachedKnowledge?.length ?? 0) > 0) {
+          const merged = mergeWordSources(
+            Array.isArray(cachedFlashcards) ? cachedFlashcards : [],
+            Array.isArray(cachedKnowledge) ? cachedKnowledge : []
+          );
+          setAllWords(merged);
+          saveCache(CACHE_LIBRARY, merged).catch(() => {});
+          return;
+        }
+
+        setAllWords([]);
+        setOfflineEmpty(true);
+        return;
+      }
       const [flashcardsResult, knowledgeResult] = await Promise.allSettled([
         fetchAllFlashcards(),
         fetchAllWordKnowledge(),
@@ -110,6 +143,13 @@ export default function FlashcardLibraryScreen() {
 
       const flashcards = flashcardsResult.status === 'fulfilled' ? flashcardsResult.value : [];
       const knowledge = knowledgeResult.status === 'fulfilled' ? knowledgeResult.value : [];
+
+      if (flashcardsResult.status === 'fulfilled') {
+        saveCache(CACHE_FLASHCARDS, flashcards).catch(() => {});
+      }
+      if (knowledgeResult.status === 'fulfilled') {
+        saveCache(CACHE_WORD_KNOWLEDGE, knowledge).catch(() => {});
+      }
 
       if (flashcardsResult.status === 'rejected' && knowledgeResult.status === 'rejected') {
         throw flashcardsResult.reason || knowledgeResult.reason || new Error('Failed to load vocabulary.');
@@ -130,7 +170,7 @@ export default function FlashcardLibraryScreen() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isOffline]);
 
   useFocusEffect(
     useCallback(() => {
@@ -317,9 +357,13 @@ export default function FlashcardLibraryScreen() {
           ListEmptyComponent={
             <View style={styles.emptyWrap}>
               <Ionicons name="book-outline" size={48} color={colors.textMuted} />
-              <Text style={styles.emptyTitle}>No words yet</Text>
+              <Text style={styles.emptyTitle}>
+                {offlineEmpty ? OFFLINE_EMPTY_TITLE : 'No words yet'}
+              </Text>
               <Text style={styles.emptySubtitle}>
-                Start reviewing flashcards to build your vocabulary list.
+                {offlineEmpty
+                  ? OFFLINE_EMPTY_SUBTITLE
+                  : 'Start reviewing flashcards to build your vocabulary list.'}
               </Text>
             </View>
           }

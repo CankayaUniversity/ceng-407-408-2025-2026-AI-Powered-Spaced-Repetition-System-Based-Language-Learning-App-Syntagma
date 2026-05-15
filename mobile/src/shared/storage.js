@@ -211,6 +211,47 @@ export async function clearQueue(key) {
   await AsyncStorage.removeItem(key);
 }
 
+const REVIEW_DELTA_INDEX_KEY = 'syntagma.review.delta.index';
+
+async function getReviewDeltaIndex() {
+  const stored = await AsyncStorage.getItem(REVIEW_DELTA_INDEX_KEY);
+  if (!stored) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(stored);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function saveReviewDeltaIndex(dates) {
+  await AsyncStorage.setItem(REVIEW_DELTA_INDEX_KEY, JSON.stringify(dates));
+}
+
+export async function getReviewDeltaDates() {
+  return getReviewDeltaIndex();
+}
+
+export async function clearReviewDelta(dateStr) {
+  await AsyncStorage.removeItem(`syntagma.review.delta.${dateStr}`);
+  const dates = await getReviewDeltaIndex();
+  const next = dates.filter((d) => d !== dateStr);
+  if (next.length) {
+    await saveReviewDeltaIndex(next);
+  } else {
+    await AsyncStorage.removeItem(REVIEW_DELTA_INDEX_KEY);
+  }
+}
+
+export async function clearAllReviewDeltas() {
+  const dates = await getReviewDeltaIndex();
+  await Promise.all(dates.map((dateStr) => AsyncStorage.removeItem(`syntagma.review.delta.${dateStr}`)));
+  await AsyncStorage.removeItem(REVIEW_DELTA_INDEX_KEY);
+}
+
 export async function getReviewDelta(dateStr) {
   const stored = await AsyncStorage.getItem(`syntagma.review.delta.${dateStr}`);
   if (!stored) {
@@ -230,6 +271,11 @@ export async function incrementReviewDelta(dateStr) {
     `syntagma.review.delta.${dateStr}`,
     JSON.stringify({ count: current + 1 })
   );
+  const dates = await getReviewDeltaIndex();
+  if (!dates.includes(dateStr)) {
+    dates.push(dateStr);
+    await saveReviewDeltaIndex(dates);
+  }
 }
 
 export async function getReviewedIds(dateStr) {
