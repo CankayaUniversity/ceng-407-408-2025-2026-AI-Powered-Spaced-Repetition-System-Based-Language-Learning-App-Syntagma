@@ -7,6 +7,7 @@ import {
   resolveCardCollectionLabel,
   resolvePreferredCollectionId,
 } from '../shared/flashcards';
+import { useT, LocaleToggle, type UILocale } from '../shared/i18n';
 
 const C = {
   bg: '#F5F1E9',
@@ -90,6 +91,11 @@ export function CardCreatorApp() {
   const [collections, setCollections] = useState<CollectionItem[]>([]);
   const [flashcards, setFlashcards] = useState<FlashcardPayload[]>([]);
   const [wordEntries, setWordEntries] = useState<WordBrowserEntry[]>([]);
+  const _ = useT(settings);
+  const handleLocaleToggle = useCallback((next: UILocale) => {
+    setSettings(prev => ({ ...prev, uiLocale: next }));
+    sendMessage({ type: 'SET_SETTINGS', payload: { uiLocale: next } }).catch(() => { });
+  }, []);
 
   const [activePanel, setActivePanel] = useState<AppPanel>(initialPanel);
   const [dictionaryView, setDictionaryView] = useState<DictionaryView>('lookup');
@@ -433,7 +439,7 @@ export function CardCreatorApp() {
           setFlashcards(prev => prev.map(item => (item.id === result.card!.id ? result.card! : item)));
           loadCardIntoEditor(result.card, selectedCollectionId);
         }
-        setSaveMsg({ text: 'Flashcard updated.', ok: true });
+        setSaveMsg({ text: _('ws.flashcardUpdated'), ok: true });
       } else {
         const result = await sendMessage<{ ok: boolean; card?: FlashcardPayload; error?: string }>({
           type: 'CREATE_FLASHCARD',
@@ -444,9 +450,9 @@ export function CardCreatorApp() {
           setFlashcards(prev => [result.card!, ...prev]);
           loadCardIntoEditor(result.card, selectedCollectionId);
         }
-        setSaveMsg({ text: 'Flashcard created.', ok: true });
+        setSaveMsg({ text: _('ws.flashcardCreated'), ok: true });
       }
-      
+
       // Sync knowledge status
       try {
         await updateWordStatus(normalizedWord.toLowerCase(), normalizeWordStatus(knowledgeStatus));
@@ -549,170 +555,256 @@ export function CardCreatorApp() {
 
   return (
     <>
-    <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-    <div style={{
-      display: 'flex',
-      height: '100vh',
-      background: C.bg,
-      color: C.text,
-      fontFamily: 'system-ui, -apple-system, sans-serif',
-      overflow: 'hidden',
-    }}>
-      <aside style={{
-        width: '210px',
-        background: C.sidebar,
-        borderRight: `1px solid ${C.line}`,
-        padding: '12px',
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      <div style={{
         display: 'flex',
-        flexDirection: 'column',
-        gap: '8px',
+        height: '100vh',
+        background: C.bg,
+        color: C.text,
+        fontFamily: 'system-ui, -apple-system, sans-serif',
+        overflow: 'hidden',
       }}>
-        <div style={{ marginBottom: '8px' }}>
-          <div style={{ fontSize: '16px', fontWeight: 800, color: C.accent }}>Syntagma</div>
-          <div style={{ color: C.muted, fontSize: '11px' }}>Workspace</div>
-        </div>
-
-        <button style={navButtonStyle(activePanel === 'home')} onClick={() => setActivePanel('home')}>
-          Home
-        </button>
-        <button style={navButtonStyle(activePanel === 'flashcards')} onClick={() => setActivePanel('flashcards')}>
-          Flashcards
-        </button>
-        <button style={navButtonStyle(activePanel === 'dictionary')} onClick={() => setActivePanel('dictionary')}>
-          Dictionary + Card Edit
-        </button>
-        <button
-          style={navButtonStyle(false)}
-          onClick={() => sendMessage({ type: 'OPEN_READER', payload: null }).catch(() => { })}
-        >
-          Open eBook Reader
-        </button>
-
-        <div style={{ flex: 1 }} />
-        <button
-          style={navButtonStyle(false)}
-          onClick={() => sendMessage({ type: 'OPEN_OPTIONS_PAGE', payload: null }).catch(() => { })}
-        >
-          Settings
-        </button>
-        <button
-          style={{
-            ...navButtonStyle(false),
-            color: C.danger,
-            border: `1px solid ${C.danger}40`,
-          }}
-          onClick={async () => {
-            await sendMessage({ type: 'LOGOUT', payload: null });
-            window.close();
-          }}
-        >
-          Sign Out
-        </button>
-      </aside>
-
-      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-        <header style={{
-          height: '58px',
-          borderBottom: `1px solid ${C.line}`,
+        <aside style={{
+          width: '210px',
+          background: C.sidebar,
+          borderRight: `1px solid ${C.line}`,
+          padding: '12px',
           display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '0 16px',
-          background: C.panelAlt,
+          flexDirection: 'column',
+          gap: '8px',
         }}>
-          <div>
-            <div style={{ fontSize: '16px', fontWeight: 700 }}>
-              {activePanel === 'home' && 'Home'}
-              {activePanel === 'flashcards' && 'Flashcards'}
-              {activePanel === 'dictionary' && 'Dictionary + Card Edit'}
-            </div>
-            <div style={{ color: C.muted, fontSize: '11px' }}>
-              {settings.authEmail ?? 'Not logged in'}
+          <div style={{ marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <img
+              src={chrome.runtime.getURL('assets/mascot.jpg')}
+              alt="Syntagma"
+              style={{ width: '40px', height: '40px', borderRadius: '10px', objectFit: 'cover' }}
+            />
+            <div>
+              <div style={{ fontSize: '16px', fontWeight: 800, color: "#4A3B2C" }}>Syntagma</div>
+              <div style={{ color: C.muted, fontSize: '11px' }}>{_('ws.workspace')}</div>
             </div>
           </div>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            {editorMode === 'edit' && (
+
+          <button style={navButtonStyle(activePanel === 'home')} onClick={() => setActivePanel('home')}>
+            {_('ws.home')}
+          </button>
+          <button style={navButtonStyle(activePanel === 'flashcards')} onClick={() => setActivePanel('flashcards')}>
+            {_('ws.flashcards')}
+          </button>
+          <button style={navButtonStyle(activePanel === 'dictionary')} onClick={() => setActivePanel('dictionary')}>
+            {_('ws.dictCardEdit')}
+          </button>
+          <button
+            style={navButtonStyle(false)}
+            onClick={() => sendMessage({ type: 'OPEN_READER', payload: null }).catch(() => { })}
+          >
+            {_('ws.openReader')}
+          </button>
+          <button
+            style={navButtonStyle(false)}
+            onClick={() => sendMessage({ type: 'OPEN_VIDEO_PLAYER', payload: null }).catch(() => { })}
+          >
+            {_('ws.openVideoPlayer')}
+          </button>
+
+          <div style={{ flex: 1 }} />
+          <button
+            style={navButtonStyle(false)}
+            onClick={() => sendMessage({ type: 'OPEN_OPTIONS_PAGE', payload: null }).catch(() => { })}
+          >
+            {_('common.settings')}
+          </button>
+          <button
+            style={{
+              ...navButtonStyle(false),
+              color: C.danger,
+              border: `1px solid ${C.danger}40`,
+            }}
+            onClick={async () => {
+              await sendMessage({ type: 'LOGOUT', payload: null });
+              window.close();
+            }}
+          >
+            {_('common.signOut')}
+          </button>
+        </aside>
+
+        <main style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+          <header style={{
+            height: '58px',
+            borderBottom: `1px solid ${C.line}`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '0 16px',
+            background: C.panelAlt,
+          }}>
+            <div>
+              <div style={{ fontSize: '16px', fontWeight: 700 }}>
+                {activePanel === 'home' && _('ws.home')}
+                {activePanel === 'flashcards' && _('ws.flashcards')}
+                {activePanel === 'dictionary' && _('ws.dictCardEdit')}
+              </div>
+              <div style={{ color: C.muted, fontSize: '11px' }}>
+                {settings.authEmail ?? _('common.notLoggedIn')}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              {editorMode === 'edit' && (
+                <button
+                  style={{
+                    background: C.button,
+                    border: `1px solid ${C.line}`,
+                    color: C.text,
+                    borderRadius: '8px',
+                    padding: '8px 12px',
+                    fontSize: '12px',
+                    cursor: 'pointer',
+                  }}
+                  onClick={resetEditorToCreateMode}
+                >
+                  {_('ws.newCard')}
+                </button>
+              )}
+              <LocaleToggle settings={settings} onToggle={handleLocaleToggle} style={{ width: '28px', height: '28px', borderRadius: '6px', fontSize: '10px', borderWidth: '1.5px' }} />
               <button
                 style={{
-                  background: C.button,
+                  background: 'transparent',
                   border: `1px solid ${C.line}`,
-                  color: C.text,
+                  color: C.muted,
                   borderRadius: '8px',
                   padding: '8px 12px',
                   fontSize: '12px',
                   cursor: 'pointer',
                 }}
-                onClick={resetEditorToCreateMode}
+                onClick={() => window.close()}
               >
-                New Card
+                {_('common.close')}
               </button>
-            )}
-            <button
-              style={{
-                background: 'transparent',
-                border: `1px solid ${C.line}`,
-                color: C.muted,
-                borderRadius: '8px',
-                padding: '8px 12px',
-                fontSize: '12px',
-                cursor: 'pointer',
-              }}
-              onClick={() => window.close()}
-            >
-              Close
-            </button>
-          </div>
-        </header>
+            </div>
+          </header>
 
-        {activePanel === 'home' && (
-          <div style={{ flex: 1, padding: '20px', overflow: 'auto' }}>
-            <div style={{
-              background: C.panel,
-              border: `1px solid ${C.line}`,
-              borderRadius: '12px',
-              padding: '24px',
-              maxWidth: '860px',
-            }}>
-              <h1 style={{ margin: 0, fontSize: '28px', lineHeight: 1.2 }}>Welcome to your Syntagma workspace</h1>
-              <p style={{ marginTop: '12px', color: C.muted, maxWidth: '620px', lineHeight: 1.6 }}>
-                Look up words, browse your flashcards, edit cards (including image/audio), and jump into the reader from one place.
-              </p>
-              <div style={{ display: 'flex', gap: '10px', marginTop: '18px' }}>
-                <button style={{ ...navButtonStyle(false), width: 'auto' }} onClick={() => setActivePanel('dictionary')}>
-                  Go To Dictionary + Card Edit
-                </button>
-                <button style={{ ...navButtonStyle(false), width: 'auto' }} onClick={() => setActivePanel('flashcards')}>
-                  Open Flashcards
-                </button>
+          {activePanel === 'home' && (
+            <div style={{ flex: 1, padding: '20px', overflow: 'auto' }}>
+              <div style={{
+                background: C.panel,
+                border: `1px solid ${C.line}`,
+                borderRadius: '12px',
+                padding: '24px',
+                maxWidth: '860px',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '6px' }}>
+                  <img
+                    src={chrome.runtime.getURL('assets/mascot.jpg')}
+                    alt="Syntagma"
+                    style={{ width: '48px', height: '48px', borderRadius: '12px', objectFit: 'cover' }}
+                  />
+                  <h1 style={{ margin: 0, fontSize: '26px', lineHeight: 1.2 }}>{_('home.welcome')}</h1>
+                </div>
+                <p style={{ marginTop: '8px', color: C.muted, maxWidth: '620px', lineHeight: 1.6, marginBottom: '20px' }}>
+                  {_('home.subtitle')}
+                </p>
+                <div style={{ marginBottom: '12px' }} />
+              </div>
+
+              {/* How to Use Section */}
+              <div style={{ maxWidth: '860px', marginTop: '20px', display: 'grid', gap: '16px' }}>
+
+                {/* Web Page Learning */}
+                <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: '12px', padding: '20px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+                    <h2 style={{ margin: 0, fontSize: '17px', fontWeight: 700 }}>{_('home.webLearning')}</h2>
+                  </div>
+                  <ul style={{ margin: 0, paddingLeft: '20px', color: C.text, lineHeight: 1.8, fontSize: '13px' }}>
+                    <li>{_('home.webLearning.1')}</li>
+                    <li>{_('home.webLearning.2')}</li>
+                    <li>{_('home.webLearning.3.prefix')}<span style={{ color: C.danger, fontWeight: 600 }}>{_('home.webLearning.3.red')}</span>{_('home.webLearning.3.unknown')}<span style={{ color: C.warning, fontWeight: 600 }}>{_('home.webLearning.3.yellow')}</span>{_('home.webLearning.3.learning')}<span style={{ color: C.success, fontWeight: 600 }}>{_('home.webLearning.3.green')}</span>{_('home.webLearning.3.known')}</li>
+                    <li>{_('home.webLearning.4')}</li>
+                    <li>{_('home.webLearning.5')}</li>
+                  </ul>
+                </div>
+
+                {/* Video Player & YouTube */}
+                <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: '12px', padding: '20px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+                    <h2 style={{ margin: 0, fontSize: '17px', fontWeight: 700 }}>{_('home.videoPlayer')}</h2>
+                  </div>
+                  <ul style={{ margin: 0, paddingLeft: '20px', color: C.text, lineHeight: 1.8, fontSize: '13px' }}>
+                    <li>{_('home.videoPlayer.1')}</li>
+                    <li>{_('home.videoPlayer.2')}</li>
+                    <li>{_('home.videoPlayer.3')}</li>
+                    <li>{_('home.videoPlayer.4')}</li>
+                    <li>{_('home.videoPlayer.5')}</li>
+                    <li>{_('home.videoPlayer.6')}</li>
+                  </ul>
+                </div>
+
+                {/* eBook Reader */}
+                <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: '12px', padding: '20px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+                    <h2 style={{ margin: 0, fontSize: '17px', fontWeight: 700 }}>{_('home.ebookReader')}</h2>
+                  </div>
+                  <ul style={{ margin: 0, paddingLeft: '20px', color: C.text, lineHeight: 1.8, fontSize: '13px' }}>
+                    <li>{_('home.ebookReader.1')}</li>
+                    <li>{_('home.ebookReader.2')}</li>
+                    <li>{_('home.ebookReader.3')}</li>
+                    <li>{_('home.ebookReader.4')}</li>
+                    <li>{_('home.ebookReader.5')}</li>
+                  </ul>
+                </div>
+
+                {/* Workspace & Flashcards */}
+                <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: '12px', padding: '20px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+                    <h2 style={{ margin: 0, fontSize: '17px', fontWeight: 700 }}>{_('home.wsFlashcards')}</h2>
+                  </div>
+                  <ul style={{ margin: 0, paddingLeft: '20px', color: C.text, lineHeight: 1.8, fontSize: '13px' }}>
+                    <li>{_('home.wsFlashcards.1')}</li>
+                    <li>{_('home.wsFlashcards.2')}</li>
+                    <li>{_('home.wsFlashcards.3')}</li>
+                    <li>{_('home.wsFlashcards.4')}</li>
+                    <li>{_('home.wsFlashcards.5')}</li>
+                    <li>{_('home.wsFlashcards.6')}</li>
+                  </ul>
+                </div>
+
+                {/* Spaced Repetition & SRS */}
+                <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: '12px', padding: '20px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+                    <h2 style={{ margin: 0, fontSize: '17px', fontWeight: 700 }}>{_('home.srs')}</h2>
+                  </div>
+                  <ul style={{ margin: 0, paddingLeft: '20px', color: C.text, lineHeight: 1.8, fontSize: '13px' }}>
+                    <li>{_('home.srs.1')}</li>
+                    <li>{_('home.srs.2')}</li>
+                    <li>{_('home.srs.3')}</li>
+                    <li>{_('home.srs.4')}</li>
+                  </ul>
+                </div>
+
+                {/* Settings & Level */}
+                <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: '12px', padding: '20px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+                    <h2 style={{ margin: 0, fontSize: '17px', fontWeight: 700 }}>{_('home.settings')}</h2>
+                  </div>
+                  <ul style={{ margin: 0, paddingLeft: '20px', color: C.text, lineHeight: 1.8, fontSize: '13px' }}>
+                    <li>{_('home.settings.1')}</li>
+                    <li>{_('home.settings.2')}</li>
+                    <li>{_('home.settings.3')}</li>
+                    <li>{_('home.settings.4')}</li>
+                  </ul>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {activePanel === 'flashcards' && (
-          <div style={{ flex: 1, padding: '16px', overflow: 'auto' }}>
-            <div style={{ marginBottom: '10px', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-              <button
-                onClick={() => setFlashcardFilter(null)}
-                style={{
-                  background: flashcardFilter == null ? C.accentSoft : C.input,
-                  color: flashcardFilter == null ? C.accent : C.text,
-                  border: `1px solid ${C.line}`,
-                  borderRadius: '999px',
-                  padding: '5px 12px',
-                  fontSize: '12px',
-                  cursor: 'pointer',
-                }}
-              >
-                All
-              </button>
-              {collections.map(collection => (
+          {activePanel === 'flashcards' && (
+            <div style={{ flex: 1, padding: '16px', overflow: 'auto' }}>
+              <div style={{ marginBottom: '10px', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                 <button
-                  key={collection.collectionId}
-                  onClick={() => setFlashcardFilter(collection.collectionId)}
+                  onClick={() => setFlashcardFilter(null)}
                   style={{
-                    background: flashcardFilter === collection.collectionId ? C.accentSoft : C.input,
-                    color: flashcardFilter === collection.collectionId ? C.accent : C.text,
+                    background: flashcardFilter == null ? C.accentSoft : C.input,
+                    color: flashcardFilter == null ? C.accent : C.text,
                     border: `1px solid ${C.line}`,
                     borderRadius: '999px',
                     padding: '5px 12px',
@@ -720,549 +812,553 @@ export function CardCreatorApp() {
                     cursor: 'pointer',
                   }}
                 >
-                  {collection.name}
+                  {_('common.all')}
                 </button>
-              ))}
-            </div>
-
-            {listLoading ? (
-              <div style={{ color: C.muted, padding: '20px 0' }}>Loading flashcards...</div>
-            ) : filteredFlashcards.length === 0 ? (
-              <div style={{ color: C.muted, padding: '24px 0' }}>No flashcards found.</div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {filteredFlashcards.map(card => (
-                  <div
-                    key={card.id}
+                {collections.map(collection => (
+                  <button
+                    key={collection.collectionId}
+                    onClick={() => setFlashcardFilter(collection.collectionId)}
                     style={{
-                      background: C.panel,
+                      background: flashcardFilter === collection.collectionId ? C.accentSoft : C.input,
+                      color: flashcardFilter === collection.collectionId ? C.accent : C.text,
                       border: `1px solid ${C.line}`,
-                      borderRadius: '10px',
-                      padding: '10px',
-                      display: 'flex',
-                      gap: '10px',
+                      borderRadius: '999px',
+                      padding: '5px 12px',
+                      fontSize: '12px',
+                      cursor: 'pointer',
                     }}
                   >
-                    {(card.screenshotDataUrl || card.audioUrl) && (
-                      <div style={{ width: '92px', flexShrink: 0 }}>
-                        {card.screenshotDataUrl && (
-                          <img
-                            src={card.screenshotDataUrl}
-                            alt="card screenshot"
-                            style={{ width: '92px', height: '60px', objectFit: 'cover', borderRadius: '6px', border: `1px solid ${C.line}` }}
-                          />
-                        )}
-                        {card.audioUrl && (
-                          <audio controls style={{ width: '92px', marginTop: '6px', height: '22px' }}>
-                            <source src={card.audioUrl} />
-                          </audio>
-                        )}
-                      </div>
-                    )}
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 700, fontSize: '15px' }}>{card.surfaceForm || card.lemma}</div>
-                      <div style={{ color: C.accent, fontSize: '13px', marginTop: '2px' }}>{card.trMeaning}</div>
-                      <div style={{ color: C.muted, fontSize: '12px', marginTop: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {card.sentence}
-                      </div>
-                      <div style={{ color: C.muted, fontSize: '11px', marginTop: '4px' }}>
-                        {resolveCardCollectionLabel(card, collectionNameById)}
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => loadCardIntoEditor(card, settings.activeCollectionId)}
-                      style={{
-                        alignSelf: 'start',
-                        background: C.button,
-                        border: `1px solid ${C.line}`,
-                        color: C.text,
-                        borderRadius: '8px',
-                        fontSize: '12px',
-                        padding: '6px 10px',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      Edit
-                    </button>
-                  </div>
+                    {collection.name}
+                  </button>
                 ))}
               </div>
-            )}
-          </div>
-        )}
 
-        {activePanel === 'dictionary' && (
-          <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-            <section style={{
-              width: '45%',
-              minWidth: '330px',
-              borderRight: `1px solid ${C.line}`,
-              background: C.panelAlt,
-              padding: '16px',
-              overflow: 'auto',
-            }}>
-              <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
-                <button
-                  onClick={() => setDictionaryView('lookup')}
-                  style={{
-                    flex: 1,
-                    background: dictionaryView === 'lookup' ? C.accentSoft : C.input,
-                    color: dictionaryView === 'lookup' ? C.accent : C.text,
-                    border: `1px solid ${C.line}`,
-                    borderRadius: '8px',
-                    padding: '8px 10px',
-                    fontSize: '12px',
-                    cursor: 'pointer',
-                  }}
-                >
-                  Dictionary
-                </button>
-                <button
-                  onClick={() => setDictionaryView('word-browser')}
-                  style={{
-                    flex: 1,
-                    background: dictionaryView === 'word-browser' ? C.accentSoft : C.input,
-                    color: dictionaryView === 'word-browser' ? C.accent : C.text,
-                    border: `1px solid ${C.line}`,
-                    borderRadius: '8px',
-                    padding: '8px 10px',
-                    fontSize: '12px',
-                    cursor: 'pointer',
-                  }}
-                >
-                  Word Browser
-                </button>
-              </div>
-
-              {dictionaryView === 'lookup' ? (
-                <>
-                  <input
-                    ref={searchRef}
-                    value={search}
-                    onChange={event => { setSearch(event.target.value); setTargetWord(event.target.value); }}
-                    placeholder="Search keyword..."
-                    style={{ ...inputStyle, marginBottom: '10px' }}
-                  />
-
-                  {targetWord.trim() && (
-                    <div style={{ fontSize: '24px', fontWeight: 700, marginBottom: '8px' }}>{targetWord.trim()}</div>
-                  )}
-
-                  <div style={{ marginBottom: '14px' }}>
-                    <span style={sectionLabelStyle}>Translations</span>
-                    {dictionaryLoading ? (
-                      <div style={{ color: C.muted, fontSize: '12px' }}>Looking up dictionary...</div>
-                    ) : dictionaryResults.length ? (
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                        {dictionaryResults.map(result => (
-                          <button
-                            key={result}
-                            onClick={() => setTranslation(result)}
-                            style={{
-                              background: translation === result ? C.accentSoft : C.input,
-                              color: translation === result ? C.accent : C.text,
-                              border: `1px solid ${C.line}`,
-                              borderRadius: '999px',
-                              padding: '6px 10px',
-                              fontSize: '12px',
-                              cursor: 'pointer',
-                            }}
-                          >
-                            {result}
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <div style={{ color: C.muted, fontSize: '12px' }}>
-                        {search.trim() ? 'No translation found.' : 'Type a word to search.'}
-                      </div>
-                    )}
-                  </div>
-
-                  <div style={{ marginBottom: '14px' }}>
-                    <span style={sectionLabelStyle}>Sentence</span>
-                    <div style={{ background: C.input, border: `1px solid ${C.line}`, borderRadius: '8px', padding: '10px 12px', minHeight: '70px', color: C.text }}>
-                      {sentence || 'No sentence selected yet.'}
-                    </div>
-                  </div>
-
-                  <div>
-                    <span style={sectionLabelStyle}>Source</span>
-                    <div style={{ color: C.muted, fontSize: '12px' }}>{sourceTitle || sourceUrl || 'Unknown source'}</div>
-                  </div>
-                </>
+              {listLoading ? (
+                <div style={{ color: C.muted, padding: '20px 0' }}>Loading flashcards...</div>
+              ) : filteredFlashcards.length === 0 ? (
+                <div style={{ color: C.muted, padding: '24px 0' }}>No flashcards found.</div>
               ) : (
-                <>
-                  <input
-                    value={wordBrowserSearch}
-                    onChange={event => { setWordBrowserSearch(event.target.value); setWordBrowserPage(0); }}
-                    placeholder="Filter words..."
-                    style={{ ...inputStyle, marginBottom: '10px' }}
-                  />
-                  {(() => {
-                    const totalPages = Math.max(1, Math.ceil(filteredWordEntries.length / WORDS_PER_PAGE));
-                    const safePage = Math.min(wordBrowserPage, totalPages - 1);
-                    const startIdx = safePage * WORDS_PER_PAGE;
-                    const pageEntries = filteredWordEntries.slice(startIdx, startIdx + WORDS_PER_PAGE);
-                    return (
-                      <>
-                        <div style={{ color: C.muted, fontSize: '12px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span>{filteredWordEntries.length} tracked words</span>
-                          {totalPages > 1 && (
-                            <span>Page {safePage + 1} / {totalPages}</span>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {filteredFlashcards.map(card => (
+                    <div
+                      key={card.id}
+                      style={{
+                        background: C.panel,
+                        border: `1px solid ${C.line}`,
+                        borderRadius: '10px',
+                        padding: '10px',
+                        display: 'flex',
+                        gap: '10px',
+                      }}
+                    >
+                      {(card.screenshotDataUrl || card.audioUrl) && (
+                        <div style={{ width: '92px', flexShrink: 0 }}>
+                          {card.screenshotDataUrl && (
+                            <img
+                              src={card.screenshotDataUrl}
+                              alt="card screenshot"
+                              style={{ width: '92px', height: '60px', objectFit: 'cover', borderRadius: '6px', border: `1px solid ${C.line}` }}
+                            />
+                          )}
+                          {card.audioUrl && (
+                            <audio controls style={{ width: '92px', marginTop: '6px', height: '22px' }}>
+                              <source src={card.audioUrl} />
+                            </audio>
                           )}
                         </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '7px' }}>
-                          {pageEntries.map(entry => (
-                            <div
-                              key={entry.lemma}
-                              style={{
-                                background: C.input,
-                                border: `1px solid ${C.line}`,
-                                borderRadius: '8px',
-                                padding: '8px',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '8px',
-                              }}
-                            >
-                              <span style={{ fontWeight: 600, fontSize: '13px', flex: 1 }}>{entry.lemma}</span>
-                              <select
-                                value={entry.status}
-                                onChange={async event => {
-                                  const nextStatus = normalizeWordStatus(event.target.value);
-                                  setWordEntries(prev => prev.map(item => (
-                                    item.lemma === entry.lemma
-                                      ? { ...item, status: nextStatus, updatedAt: Date.now() }
-                                      : item
-                                  )));
-                                  try {
-                                    await updateWordStatus(entry.lemma, nextStatus);
-                                  } catch (error) {
-                                    setSaveMsg({ text: (error as Error).message, ok: false });
-                                    setWordEntries(prev => prev.map(item => (
-                                      item.lemma === entry.lemma ? entry : item
-                                    )));
-                                  }
-                                }}
-                                style={{
-                                  background: C.inputAlt,
-                                  color: statusColor(entry.status),
-                                  border: `1px solid ${C.line}`,
-                                  borderRadius: '6px',
-                                  fontSize: '12px',
-                                  padding: '4px 6px',
-                                }}
-                              >
-                                <option value="unknown">unknown</option>
-                                <option value="learning">learning</option>
-                                <option value="known">known</option>
-                                <option value="ignored">ignored</option>
-                              </select>
-                            </div>
-                          ))}
+                      )}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, fontSize: '15px' }}>{card.surfaceForm || card.lemma}</div>
+                        <div style={{ color: C.accent, fontSize: '13px', marginTop: '2px' }}>{card.trMeaning}</div>
+                        <div style={{ color: C.muted, fontSize: '12px', marginTop: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {card.sentence}
                         </div>
-                        {totalPages > 1 && (
-                          <div style={{ display: 'flex', justifyContent: 'center', gap: '6px', marginTop: '12px' }}>
-                            <button
-                              disabled={safePage === 0}
-                              onClick={() => setWordBrowserPage(0)}
-                              style={{
-                                background: C.button, border: `1px solid ${C.line}`, borderRadius: '6px',
-                                padding: '4px 10px', cursor: safePage === 0 ? 'default' : 'pointer',
-                                opacity: safePage === 0 ? 0.4 : 1, fontSize: '12px', color: C.text,
-                              }}
-                            >
-                              ««
-                            </button>
-                            <button
-                              disabled={safePage === 0}
-                              onClick={() => setWordBrowserPage(p => Math.max(0, p - 1))}
-                              style={{
-                                background: C.button, border: `1px solid ${C.line}`, borderRadius: '6px',
-                                padding: '4px 10px', cursor: safePage === 0 ? 'default' : 'pointer',
-                                opacity: safePage === 0 ? 0.4 : 1, fontSize: '12px', color: C.text,
-                              }}
-                            >
-                              ‹ Prev
-                            </button>
-                            <button
-                              disabled={safePage >= totalPages - 1}
-                              onClick={() => setWordBrowserPage(p => Math.min(totalPages - 1, p + 1))}
-                              style={{
-                                background: C.button, border: `1px solid ${C.line}`, borderRadius: '6px',
-                                padding: '4px 10px', cursor: safePage >= totalPages - 1 ? 'default' : 'pointer',
-                                opacity: safePage >= totalPages - 1 ? 0.4 : 1, fontSize: '12px', color: C.text,
-                              }}
-                            >
-                              Next ›
-                            </button>
-                            <button
-                              disabled={safePage >= totalPages - 1}
-                              onClick={() => setWordBrowserPage(totalPages - 1)}
-                              style={{
-                                background: C.button, border: `1px solid ${C.line}`, borderRadius: '6px',
-                                padding: '4px 10px', cursor: safePage >= totalPages - 1 ? 'default' : 'pointer',
-                                opacity: safePage >= totalPages - 1 ? 0.4 : 1, fontSize: '12px', color: C.text,
-                              }}
-                            >
-                              »»
-                            </button>
-                          </div>
-                        )}
-                      </>
-                    );
-                  })()}
-                </>
+                        <div style={{ color: C.muted, fontSize: '11px', marginTop: '4px' }}>
+                          {resolveCardCollectionLabel(card, collectionNameById)}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => loadCardIntoEditor(card, settings.activeCollectionId)}
+                        style={{
+                          alignSelf: 'start',
+                          background: C.button,
+                          border: `1px solid ${C.line}`,
+                          color: C.text,
+                          borderRadius: '8px',
+                          fontSize: '12px',
+                          padding: '6px 10px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Edit
+                      </button>
+                    </div>
+                  ))}
+                </div>
               )}
-            </section>
+            </div>
+          )}
 
-            <section style={{ flex: 1, padding: '16px', overflow: 'auto' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '10px' }}>
-                <div>
-                  <span style={sectionLabelStyle}>Deck</span>
-                  <select
-                    value={selectedCollectionId ?? ''}
-                    onChange={event => {
-                      const value = event.target.value;
-                      setSelectedCollectionId(value ? Number(value) : null);
-                    }}
-                    style={inputStyle}
-                  >
-                    <option value="">No deck (unsorted)</option>
-                    {collections.map(collection => (
-                      <option key={collection.collectionId} value={collection.collectionId}>
-                        {collection.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <span style={sectionLabelStyle}>Knowledge Status</span>
-                  <select
-                    value={knowledgeStatus}
-                    onChange={event => setKnowledgeStatus(event.target.value as KnowledgeStatusValue)}
-                    style={inputStyle}
-                  >
-                    {KNOWLEDGE_STATUSES.map(item => (
-                      <option key={item} value={item}>{item}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div style={{ marginBottom: '10px' }}>
-                <span style={sectionLabelStyle}>Target Word</span>
-                <input
-                  value={targetWord}
-                  onChange={event => setTargetWord(event.target.value)}
-                  placeholder="The word you want to learn"
-                  style={inputStyle}
-                />
-              </div>
-
-              <div style={{ marginBottom: '10px' }}>
-                <span style={sectionLabelStyle}>Source Sentence</span>
-                <textarea
-                  value={sentence}
-                  onChange={event => setSentence(event.target.value)}
-                  rows={3}
-                  style={{ ...inputStyle, resize: 'vertical' }}
-                  placeholder="Sentence the target word is in"
-                />
-              </div>
-
-              <div style={{ marginBottom: '10px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <span style={{ ...sectionLabelStyle, marginBottom: 0 }}>Example Sentence</span>
+          {activePanel === 'dictionary' && (
+            <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+              <section style={{
+                width: '45%',
+                minWidth: '330px',
+                borderRight: `1px solid ${C.line}`,
+                background: C.panelAlt,
+                padding: '16px',
+                overflow: 'auto',
+              }}>
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
                   <button
-                    onClick={handleGenerateExample}
-                    disabled={generatingExample || !targetWord.trim()}
+                    onClick={() => setDictionaryView('lookup')}
                     style={{
-                      background: generatingExample ? C.input : C.accent,
-                      color: generatingExample ? C.muted : '#FFFFFF',
-                      border: 'none',
-                      borderRadius: '6px',
-                      padding: '4px 10px',
-                      fontSize: '11px',
-                      fontWeight: 600,
-                      cursor: generatingExample || !targetWord.trim() ? 'not-allowed' : 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '4px',
+                      flex: 1,
+                      background: dictionaryView === 'lookup' ? C.accentSoft : C.input,
+                      color: dictionaryView === 'lookup' ? C.accent : C.text,
+                      border: `1px solid ${C.line}`,
+                      borderRadius: '8px',
+                      padding: '8px 10px',
+                      fontSize: '12px',
+                      cursor: 'pointer',
                     }}
                   >
-                    {generatingExample ? (
-                      <>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ animation: 'spin 1s linear infinite' }}>
-                          <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                        </svg>
-                        Generating...
-                      </>
-                    ) : (
-                      <>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M12 2L2 7l10 5 10-5-10-5z" />
-                          <path d="M2 17l10 5 10-5" />
-                          <path d="M2 12l10 5 10-5" />
-                        </svg>
-                        Generate with AI
-                      </>
-                    )}
+                    {_('ws.lookup')}
+                  </button>
+                  <button
+                    onClick={() => setDictionaryView('word-browser')}
+                    style={{
+                      flex: 1,
+                      background: dictionaryView === 'word-browser' ? C.accentSoft : C.input,
+                      color: dictionaryView === 'word-browser' ? C.accent : C.text,
+                      border: `1px solid ${C.line}`,
+                      borderRadius: '8px',
+                      padding: '8px 10px',
+                      fontSize: '12px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {_('ws.wordBrowser')}
                   </button>
                 </div>
-                <textarea
-                  value={exampleSentence}
-                  onChange={event => setExampleSentence(event.target.value)}
-                  rows={2}
-                  style={{ ...inputStyle, resize: 'vertical' }}
-                  placeholder="Optional example sentence"
-                />
-              </div>
 
-              <div style={{ marginBottom: '14px' }}>
-                <span style={sectionLabelStyle}>Translation</span>
-                <textarea
-                  value={translation}
-                  onChange={event => setTranslation(event.target.value)}
-                  rows={2}
-                  style={{ ...inputStyle, resize: 'vertical' }}
-                  placeholder="Meaning in Turkish"
-                />
-              </div>
-
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
-                gap: '10px',
-                marginBottom: '12px',
-              }}>
-                <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: '10px', padding: '10px' }}>
-                  <span style={sectionLabelStyle}>Image</span>
-                  {screenshotPreview ? (
-                    <img
-                      src={screenshotPreview}
-                      alt="Flashcard image"
-                      style={{ width: '100%', height: '110px', objectFit: 'cover', borderRadius: '6px', border: `1px solid ${C.line}` }}
+                {dictionaryView === 'lookup' ? (
+                  <>
+                    <input
+                      ref={searchRef}
+                      value={search}
+                      onChange={event => { setSearch(event.target.value); setTargetWord(event.target.value); }}
+                      placeholder="Search keyword..."
+                      style={{ ...inputStyle, marginBottom: '10px' }}
                     />
-                  ) : (
-                    <div style={{ background: C.input, border: `1px solid ${C.line}`, borderRadius: '6px', height: '110px', display: 'grid', placeItems: 'center', color: C.muted, fontSize: '12px' }}>
-                      No image
-                    </div>
-                  )}
-                  <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
-                    <button
-                      onClick={() => screenshotInputRef.current?.click()}
-                      style={{ flex: 1, background: C.button, color: C.text, border: `1px solid ${C.line}`, borderRadius: '6px', padding: '6px', fontSize: '12px', cursor: 'pointer' }}
-                    >
-                      Replace
-                    </button>
-                    <button
-                      onClick={() => { setScreenshotPreview(undefined); setMediaOps(prev => ({ ...prev, screenshot: 'remove' })); }}
-                      style={{ flex: 1, background: C.input, color: C.danger, border: `1px solid ${C.line}`, borderRadius: '6px', padding: '6px', fontSize: '12px', cursor: 'pointer' }}
-                    >
-                      Remove
-                    </button>
-                    <button
-                      onClick={resetScreenshotMedia}
-                      style={{ flex: 1, background: C.input, color: C.muted, border: `1px solid ${C.line}`, borderRadius: '6px', padding: '6px', fontSize: '12px', cursor: 'pointer' }}
-                    >
-                      Keep
-                    </button>
-                  </div>
-                  <input
-                    ref={screenshotInputRef}
-                    type="file"
-                    accept="image/*"
-                    style={{ display: 'none' }}
-                    onChange={handleScreenshotReplace}
-                  />
-                </div>
 
-                <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: '10px', padding: '10px' }}>
-                  <span style={sectionLabelStyle}>Audio</span>
-                  {audioPreview ? (
-                    <audio controls style={{ width: '100%', marginTop: '6px' }}>
-                      <source src={audioPreview} />
-                    </audio>
-                  ) : (
-                    <div style={{ background: C.input, border: `1px solid ${C.line}`, borderRadius: '6px', height: '110px', display: 'grid', placeItems: 'center', color: C.muted, fontSize: '12px' }}>
-                      No audio
+                    {targetWord.trim() && (
+                      <div style={{ fontSize: '24px', fontWeight: 700, marginBottom: '8px' }}>{targetWord.trim()}</div>
+                    )}
+
+                    <div style={{ marginBottom: '14px' }}>
+                      <span style={sectionLabelStyle}>{_('ws.definitions')}</span>
+                      {dictionaryLoading ? (
+                        <div style={{ color: C.muted, fontSize: '12px' }}>Looking up dictionary...</div>
+                      ) : dictionaryResults.length ? (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                          {dictionaryResults.map(result => (
+                            <button
+                              key={result}
+                              onClick={() => setTranslation(result)}
+                              style={{
+                                background: translation === result ? C.accentSoft : C.input,
+                                color: translation === result ? C.accent : C.text,
+                                border: `1px solid ${C.line}`,
+                                borderRadius: '999px',
+                                padding: '6px 10px',
+                                fontSize: '12px',
+                                cursor: 'pointer',
+                              }}
+                            >
+                              {result}
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <div style={{ color: C.muted, fontSize: '12px' }}>
+                          {search.trim() ? 'No translation found.' : 'Type a word to search.'}
+                        </div>
+                      )}
                     </div>
-                  )}
-                  <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
-                    <button
-                      onClick={() => audioInputRef.current?.click()}
-                      style={{ flex: 1, background: C.button, color: C.text, border: `1px solid ${C.line}`, borderRadius: '6px', padding: '6px', fontSize: '12px', cursor: 'pointer' }}
-                    >
-                      Replace
-                    </button>
-                    <button
-                      onClick={() => {
-                        setAudioPreview(undefined);
-                        setAudioReplacementDataUrl(undefined);
-                        setMediaOps(prev => ({ ...prev, audio: 'remove' }));
+
+                    <div style={{ marginBottom: '14px' }}>
+                      <span style={sectionLabelStyle}>{_('ws.sentence')}</span>
+                      <div style={{ background: C.input, border: `1px solid ${C.line}`, borderRadius: '8px', padding: '10px 12px', minHeight: '70px', color: C.text }}>
+                        {sentence || 'No sentence selected yet.'}
+                      </div>
+                    </div>
+
+                    <div>
+                      <span style={sectionLabelStyle}>{_('ws.source')}</span>
+                      <div style={{ color: C.muted, fontSize: '12px' }}>{sourceTitle || sourceUrl || 'Unknown source'}</div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <input
+                      value={wordBrowserSearch}
+                      onChange={event => { setWordBrowserSearch(event.target.value); setWordBrowserPage(0); }}
+                      placeholder="Filter words..."
+                      style={{ ...inputStyle, marginBottom: '10px' }}
+                    />
+                    {(() => {
+                      const totalPages = Math.max(1, Math.ceil(filteredWordEntries.length / WORDS_PER_PAGE));
+                      const safePage = Math.min(wordBrowserPage, totalPages - 1);
+                      const startIdx = safePage * WORDS_PER_PAGE;
+                      const pageEntries = filteredWordEntries.slice(startIdx, startIdx + WORDS_PER_PAGE);
+                      return (
+                        <>
+                          <div style={{ color: C.muted, fontSize: '12px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span>{filteredWordEntries.length} tracked words</span>
+                            {totalPages > 1 && (
+                              <span>Page {safePage + 1} / {totalPages}</span>
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '7px' }}>
+                            {pageEntries.map(entry => (
+                              <div
+                                key={entry.lemma}
+                                style={{
+                                  background: C.input,
+                                  border: `1px solid ${C.line}`,
+                                  borderRadius: '8px',
+                                  padding: '8px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '8px',
+                                }}
+                              >
+                                <span style={{ fontWeight: 600, fontSize: '13px', flex: 1 }}>{entry.lemma}</span>
+                                <select
+                                  value={entry.status}
+                                  onChange={async event => {
+                                    const nextStatus = normalizeWordStatus(event.target.value);
+                                    setWordEntries(prev => prev.map(item => (
+                                      item.lemma === entry.lemma
+                                        ? { ...item, status: nextStatus, updatedAt: Date.now() }
+                                        : item
+                                    )));
+                                    try {
+                                      await updateWordStatus(entry.lemma, nextStatus);
+                                    } catch (error) {
+                                      setSaveMsg({ text: (error as Error).message, ok: false });
+                                      setWordEntries(prev => prev.map(item => (
+                                        item.lemma === entry.lemma ? entry : item
+                                      )));
+                                    }
+                                  }}
+                                  style={{
+                                    background: C.inputAlt,
+                                    color: statusColor(entry.status),
+                                    border: `1px solid ${C.line}`,
+                                    borderRadius: '6px',
+                                    fontSize: '12px',
+                                    padding: '4px 6px',
+                                  }}
+                                >
+                                  <option value="unknown">unknown</option>
+                                  <option value="learning">learning</option>
+                                  <option value="known">known</option>
+                                  <option value="ignored">ignored</option>
+                                </select>
+                              </div>
+                            ))}
+                          </div>
+                          {totalPages > 1 && (
+                            <div style={{ display: 'flex', justifyContent: 'center', gap: '6px', marginTop: '12px' }}>
+                              <button
+                                disabled={safePage === 0}
+                                onClick={() => setWordBrowserPage(0)}
+                                style={{
+                                  background: C.button, border: `1px solid ${C.line}`, borderRadius: '6px',
+                                  padding: '4px 10px', cursor: safePage === 0 ? 'default' : 'pointer',
+                                  opacity: safePage === 0 ? 0.4 : 1, fontSize: '12px', color: C.text,
+                                }}
+                              >
+                                ««
+                              </button>
+                              <button
+                                disabled={safePage === 0}
+                                onClick={() => setWordBrowserPage(p => Math.max(0, p - 1))}
+                                style={{
+                                  background: C.button, border: `1px solid ${C.line}`, borderRadius: '6px',
+                                  padding: '4px 10px', cursor: safePage === 0 ? 'default' : 'pointer',
+                                  opacity: safePage === 0 ? 0.4 : 1, fontSize: '12px', color: C.text,
+                                }}
+                              >
+                                ‹ Prev
+                              </button>
+                              <button
+                                disabled={safePage >= totalPages - 1}
+                                onClick={() => setWordBrowserPage(p => Math.min(totalPages - 1, p + 1))}
+                                style={{
+                                  background: C.button, border: `1px solid ${C.line}`, borderRadius: '6px',
+                                  padding: '4px 10px', cursor: safePage >= totalPages - 1 ? 'default' : 'pointer',
+                                  opacity: safePage >= totalPages - 1 ? 0.4 : 1, fontSize: '12px', color: C.text,
+                                }}
+                              >
+                                Next ›
+                              </button>
+                              <button
+                                disabled={safePage >= totalPages - 1}
+                                onClick={() => setWordBrowserPage(totalPages - 1)}
+                                style={{
+                                  background: C.button, border: `1px solid ${C.line}`, borderRadius: '6px',
+                                  padding: '4px 10px', cursor: safePage >= totalPages - 1 ? 'default' : 'pointer',
+                                  opacity: safePage >= totalPages - 1 ? 0.4 : 1, fontSize: '12px', color: C.text,
+                                }}
+                              >
+                                »»
+                              </button>
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </>
+                )}
+              </section>
+
+              <section style={{ flex: 1, padding: '16px', overflow: 'auto' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '10px' }}>
+                  <div>
+                    <span style={sectionLabelStyle}>{_('ws.deck')}</span>
+                    <select
+                      value={selectedCollectionId ?? ''}
+                      onChange={event => {
+                        const value = event.target.value;
+                        setSelectedCollectionId(value ? Number(value) : null);
                       }}
-                      style={{ flex: 1, background: C.input, color: C.danger, border: `1px solid ${C.line}`, borderRadius: '6px', padding: '6px', fontSize: '12px', cursor: 'pointer' }}
+                      style={inputStyle}
                     >
-                      Remove
-                    </button>
-                    <button
-                      onClick={resetAudioMedia}
-                      style={{ flex: 1, background: C.input, color: C.muted, border: `1px solid ${C.line}`, borderRadius: '6px', padding: '6px', fontSize: '12px', cursor: 'pointer' }}
-                    >
-                      Keep
-                    </button>
+                      <option value="">{_('ws.noDeck')}</option>
+                      {collections.map(collection => (
+                        <option key={collection.collectionId} value={collection.collectionId}>
+                          {collection.name}
+                        </option>
+                      ))}
+                    </select>
                   </div>
+                  <div>
+                    <span style={sectionLabelStyle}>{_('ws.knowledgeStatus')}</span>
+                    <select
+                      value={knowledgeStatus}
+                      onChange={event => setKnowledgeStatus(event.target.value as KnowledgeStatusValue)}
+                      style={inputStyle}
+                    >
+                      {KNOWLEDGE_STATUSES.map(item => (
+                        <option key={item} value={item}>{item}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: '10px' }}>
+                  <span style={sectionLabelStyle}>{_('ws.targetWord')}</span>
                   <input
-                    ref={audioInputRef}
-                    type="file"
-                    accept="audio/*"
-                    style={{ display: 'none' }}
-                    onChange={handleAudioReplace}
+                    value={targetWord}
+                    onChange={event => setTargetWord(event.target.value)}
+                    placeholder={_('ws.targetWordPlaceholder')}
+                    style={inputStyle}
                   />
                 </div>
-              </div>
 
-              <div style={{ display: 'flex', gap: '10px' }}>
-                <button
-                  onClick={handleSave}
-                  disabled={saving || !targetWord.trim()}
-                  style={{
-                    flex: 1,
-                    background: saving ? C.input : C.buttonPrimary,
-                    color: saving ? C.muted : '#FFFFFF',
-                    border: 'none',
-                    borderRadius: '10px',
-                    padding: '12px',
-                    fontSize: '14px',
-                    fontWeight: 700,
-                    cursor: saving || !targetWord.trim() ? 'not-allowed' : 'pointer',
-                  }}
-                >
-                  {saving ? 'Saving...' : editorMode === 'edit' ? 'Save Changes' : 'Create Card'}
-                </button>
-              </div>
-
-              {saveMsg && (
-                <div style={{
-                  marginTop: '10px',
-                  background: saveMsg.ok ? `${C.success}33` : `${C.danger}33`,
-                  color: saveMsg.ok ? C.success : C.danger,
-                  border: `1px solid ${saveMsg.ok ? C.success : C.danger}`,
-                  borderRadius: '8px',
-                  padding: '8px 10px',
-                  fontSize: '12px',
-                  fontWeight: 600,
-                }}>
-                  {saveMsg.text}
+                <div style={{ marginBottom: '10px' }}>
+                  <span style={sectionLabelStyle}>{_('ws.sentence')}</span>
+                  <textarea
+                    value={sentence}
+                    onChange={event => setSentence(event.target.value)}
+                    rows={3}
+                    style={{ ...inputStyle, resize: 'vertical' }}
+                    placeholder="Sentence the target word is in"
+                  />
                 </div>
-              )}
-            </section>
-          </div>
-        )}
-      </main>
-    </div>
+
+                <div style={{ marginBottom: '10px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                    <span style={{ ...sectionLabelStyle, marginBottom: 0 }}>{_('ws.exampleSentence')}</span>
+                    <button
+                      onClick={handleGenerateExample}
+                      disabled={generatingExample || !targetWord.trim()}
+                      style={{
+                        background: generatingExample ? C.input : C.accent,
+                        color: generatingExample ? C.muted : '#FFFFFF',
+                        border: 'none',
+                        borderRadius: '6px',
+                        padding: '4px 10px',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        cursor: generatingExample || !targetWord.trim() ? 'not-allowed' : 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                      }}
+                    >
+                      {generatingExample ? (
+                        <>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ animation: 'spin 1s linear infinite' }}>
+                            <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                          </svg>
+                          Generating...
+                        </>
+                      ) : (
+                        <>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                            <path d="M2 17l10 5 10-5" />
+                            <path d="M2 12l10 5 10-5" />
+                          </svg>
+                          Generate with AI
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  <textarea
+                    value={exampleSentence}
+                    onChange={event => setExampleSentence(event.target.value)}
+                    rows={2}
+                    style={{ ...inputStyle, resize: 'vertical' }}
+                    placeholder="Optional example sentence"
+                  />
+                </div>
+
+                <div style={{ marginBottom: '14px' }}>
+                  <span style={sectionLabelStyle}>{_('ws.translation')}</span>
+                  <textarea
+                    value={translation}
+                    onChange={event => setTranslation(event.target.value)}
+                    rows={2}
+                    style={{ ...inputStyle, resize: 'vertical' }}
+                    placeholder={_('ws.translationPlaceholder')}
+                  />
+                </div>
+
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: '10px',
+                  marginBottom: '12px',
+                }}>
+                  <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: '10px', padding: '10px' }}>
+                    <span style={sectionLabelStyle}>{_('ws.screenshot')}</span>
+                    {screenshotPreview ? (
+                      <img
+                        src={screenshotPreview}
+                        alt="Flashcard image"
+                        style={{ width: '100%', height: '110px', objectFit: 'cover', borderRadius: '6px', border: `1px solid ${C.line}` }}
+                      />
+                    ) : (
+                      <div style={{ background: C.input, border: `1px solid ${C.line}`, borderRadius: '6px', height: '110px', display: 'grid', placeItems: 'center', color: C.muted, fontSize: '12px' }}>
+                        No image
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', gap: '6px', marginTop: '8px', justifyContent: 'center' }}>
+                      <button
+                        onClick={() => screenshotInputRef.current?.click()}
+                        style={{ flex: 1, background: C.button, color: C.text, border: `1px solid ${C.line}`, borderRadius: '6px', padding: '6px', fontSize: '12px', cursor: 'pointer' }}
+                      >
+                        {_('ws.replace')}
+                      </button>
+                      <button
+                        onClick={() => { setScreenshotPreview(undefined); setMediaOps(prev => ({ ...prev, screenshot: 'remove' })); }}
+                        style={{ flex: 1, background: C.input, color: C.danger, border: `1px solid ${C.line}`, borderRadius: '6px', padding: '6px', fontSize: '12px', cursor: 'pointer' }}
+                      >
+                        {_('ws.remove')}
+                      </button>
+                    </div>
+                    <input
+                      ref={screenshotInputRef}
+                      type="file"
+                      accept="image/*"
+                      style={{ display: 'none' }}
+                      onChange={handleScreenshotReplace}
+                    />
+                  </div>
+
+                  <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: '10px', padding: '10px' }}>
+                    <span style={sectionLabelStyle}>{_('ws.audio')}</span>
+                    {audioPreview ? (
+                      <audio controls style={{ width: '100%', marginTop: '6px' }}>
+                        <source src={audioPreview} />
+                      </audio>
+                    ) : (
+                      <div style={{ background: C.input, border: `1px solid ${C.line}`, borderRadius: '6px', height: '110px', display: 'grid', placeItems: 'center', color: C.muted, fontSize: '12px' }}>
+                        No audio
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', gap: '6px', marginTop: '8px', justifyContent: 'center' }}>
+                      <button
+                        onClick={() => audioInputRef.current?.click()}
+                        style={{ flex: 1, background: C.button, color: C.text, border: `1px solid ${C.line}`, borderRadius: '6px', padding: '6px', fontSize: '12px', cursor: 'pointer' }}
+                      >
+                        {_('ws.replace')}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setAudioPreview(undefined);
+                          setAudioReplacementDataUrl(undefined);
+                          setMediaOps(prev => ({ ...prev, audio: 'remove' }));
+                        }}
+                        style={{ flex: 1, background: C.input, color: C.danger, border: `1px solid ${C.line}`, borderRadius: '6px', padding: '6px', fontSize: '12px', cursor: 'pointer' }}
+                      >
+                        {_('ws.remove')}
+                      </button>
+                    </div>
+                    <input
+                      ref={audioInputRef}
+                      type="file"
+                      accept="audio/*"
+                      style={{ display: 'none' }}
+                      onChange={handleAudioReplace}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button
+                    onClick={handleSave}
+                    disabled={saving || !targetWord.trim()}
+                    style={{
+                      flex: 1,
+                      background: saving ? C.input : C.buttonPrimary,
+                      color: saving ? C.muted : '#FFFFFF',
+                      border: 'none',
+                      borderRadius: '10px',
+                      padding: '12px',
+                      fontSize: '14px',
+                      fontWeight: 700,
+                      cursor: saving || !targetWord.trim() ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    {saving ? _('common.saving') : editorMode === 'edit' ? _('ws.saveChanges') : _('ws.createCard')}
+                  </button>
+                </div>
+
+                {saveMsg && (
+                  <div style={{
+                    marginTop: '10px',
+                    background: saveMsg.ok ? `${C.success}33` : `${C.danger}33`,
+                    color: saveMsg.ok ? C.success : C.danger,
+                    border: `1px solid ${saveMsg.ok ? C.success : C.danger}`,
+                    borderRadius: '8px',
+                    padding: '8px 10px',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                  }}>
+                    {saveMsg.text}
+                  </div>
+                )}
+              </section>
+            </div>
+          )}
+        </main>
+      </div>
     </>
   );
 }

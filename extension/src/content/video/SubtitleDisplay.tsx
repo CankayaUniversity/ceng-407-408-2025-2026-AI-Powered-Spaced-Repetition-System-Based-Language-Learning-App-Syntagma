@@ -1,20 +1,6 @@
 import { useState, useMemo } from 'react';
 import type { SubtitleCue, LexemeEntry, UserSettings } from '../../shared/types';
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-interface TextToken {
-  text: string;
-  isWord: boolean;
-}
-
-function tokenize(text: string): TextToken[] {
-  // Split on word boundaries, keeping both word and non-word parts
-  return text
-    .split(/(\b[a-zA-Z']+\b)/)
-    .filter(p => p.length > 0)
-    .map(p => ({ text: p, isWord: /^[a-zA-Z']+$/.test(p) }));
-}
+import { tokenize } from './tokenizer';
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -55,16 +41,20 @@ export function SubtitleDisplay({
       : cue.text;
   }, [cue, settings.removeBracketedSubtitles]);
 
-  // Check if every content word is known → auto-reveal
+  const tokens = useMemo(() => displayText ? tokenize(displayText) : [], [displayText]);
+
   const allWordsKnown = useMemo(() => {
     if (!displayText || !revealByKnownStatus || language !== 'en') return false;
-    const words = displayText.match(/\b[a-zA-Z]+\b/g) ?? [];
-    if (!words.length) return false;
-    return words.every(w => {
-      const s = lexemes[w.toLowerCase()]?.status;
-      return s === 'known' || s === 'ignored';
-    });
-  }, [displayText, lexemes, revealByKnownStatus, language]);
+    let hasWord = false;
+    for (const tok of tokens) {
+      if (!tok.isWord) continue;
+      hasWord = true;
+      const lookups = tok.lemmas ?? [tok.text.toLowerCase().replace(/'/g, "'")];
+      const statuses = lookups.map(l => lexemes[l]?.status);
+      if (!statuses.includes('known') && !statuses.includes('ignored')) return false;
+    }
+    return hasWord;
+  }, [displayText, tokens, lexemes, revealByKnownStatus, language]);
 
   if (!cue || !displayText) return null;
 
@@ -73,8 +63,6 @@ export function SubtitleDisplay({
     (revealOnPause && isPaused) ||
     (revealOnHover && hovering) ||
     allWordsKnown;
-
-  const tokens = tokenize(displayText);
 
   return (
     <div
@@ -111,12 +99,16 @@ export function SubtitleDisplay({
           );
         }
 
-        const lemma = tok.text.toLowerCase().replace(/'/g, "'");
-        const status = lexemes[lemma]?.status ?? 'unknown';
+        const lookups = tok.lemmas ?? [tok.text.toLowerCase().replace(/'/g, "'")];
+        const statuses = lookups.map(l => lexemes[l]?.status);
+        const worst = statuses.includes('known') ? 'known'
+          : statuses.includes('learning') ? 'learning'
+          : statuses.includes('ignored') ? 'ignored' : 'unknown';
+        const clickLemma = lookups[0];
 
         const underline = settings.showLearningStatusColors
-          ? (status === 'unknown' ? '#D97762' :
-             status === 'learning' ? '#E8C06A' :
+          ? (worst === 'unknown' ? '#D97762' :
+             worst === 'learning' ? '#E8C06A' :
              'transparent')
           : 'transparent';
 
@@ -125,7 +117,7 @@ export function SubtitleDisplay({
             key={i}
             onClick={e => {
               e.stopPropagation();
-              onWordClick(lemma, tok.text, displayText, (e.currentTarget as HTMLElement).getBoundingClientRect());
+              onWordClick(clickLemma, tok.text, displayText, (e.currentTarget as HTMLElement).getBoundingClientRect());
             }}
             style={{
               color: '#FFFFFF',
@@ -139,7 +131,7 @@ export function SubtitleDisplay({
               pointerEvents: 'auto',
               borderBottom: `2px solid ${underline}`,
               paddingBottom: '1px',
-              opacity: status === 'ignored' ? 0.5 : 1,
+              opacity: statuses.includes('ignored') ? 0.5 : 1,
               transition: 'opacity 0.15s',
             }}
           >

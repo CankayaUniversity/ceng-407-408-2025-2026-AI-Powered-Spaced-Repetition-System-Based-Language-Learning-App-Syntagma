@@ -47,6 +47,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   authUserId: null,
   activeCollectionId: null,
   activeCollectionName: null,
+  uiLocale: 'en',
 };
 
 export function getAuthHeaders(settings: UserSettings): Record<string, string> {

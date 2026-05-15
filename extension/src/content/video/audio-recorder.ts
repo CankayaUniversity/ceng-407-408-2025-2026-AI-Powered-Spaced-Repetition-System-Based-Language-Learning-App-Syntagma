@@ -20,6 +20,9 @@ export class AudioRecorder {
   private readonly mimeType: string;
   private capturing = false;
   private video: HTMLVideoElement | null = null;
+  private initPromise: Promise<boolean> | null = null;
+  private retryInterval: ReturnType<typeof setInterval> | null = null;
+  private playingHandler: (() => void) | null = null;
 
   constructor(options: AudioRecorderOptions) {
     this.onAudioReady = options.onAudioReady;
@@ -30,11 +33,15 @@ export class AudioRecorder {
 
   /**
    * Initialize from a video element using captureStream().
-   * No permissions required — works immediately.
+   * Returns a Promise that resolves to true when audio tracks are attached,
+   * or false if attachment fails after retries.
    */
-  initFromVideo(video: HTMLVideoElement): void {
+  initFromVideo(video: HTMLVideoElement): Promise<boolean> {
     this.video = video;
+    this.cleanupRetry();
+
     const tryAttach = (): boolean => {
+      if (this.stream) return true;
       const fullStream = (video as any).captureStream?.() as MediaStream | undefined;
       if (!fullStream) return false;
       const audioTracks = fullStream.getAudioTracks();
@@ -43,19 +50,47 @@ export class AudioRecorder {
       console.log('[Syntagma] AudioRecorder initialized from video element');
       return true;
     };
-    if (tryAttach()) return;
 
-    // captureStream() may not expose audio tracks until playback has actually
-    // begun (YouTube uses MediaSource Extensions; tracks attach asynchronously).
-    // Retry on play and addtrack events for up to 30 s.
+    if (tryAttach()) {
+      this.initPromise = Promise.resolve(true);
+      return this.initPromise;
+    }
+
     console.warn('[Syntagma] No audio tracks yet — will retry when video plays');
-    let attempts = 0;
-    const interval = setInterval(() => {
-      attempts++;
-      if (this.stream || tryAttach() || attempts > 30) clearInterval(interval);
-    }, 1000);
-    const onPlay = () => { tryAttach(); };
-    video.addEventListener('playing', onPlay, { once: false });
+    this.initPromise = new Promise<boolean>((resolve) => {
+      let attempts = 0;
+      let settled = false;
+      const done = (result: boolean) => {
+        if (settled) return;
+        settled = true;
+        this.cleanupRetry();
+        resolve(result);
+      };
+
+      this.retryInterval = setInterval(() => {
+        attempts++;
+        if (tryAttach()) { done(true); return; }
+        if (attempts > 30) done(false);
+      }, 1000);
+
+      this.playingHandler = () => { if (tryAttach()) done(true); };
+      video.addEventListener('playing', this.playingHandler);
+    });
+    return this.initPromise;
+  }
+
+  private cleanupRetry(): void {
+    if (this.retryInterval) { clearInterval(this.retryInterval); this.retryInterval = null; }
+    if (this.playingHandler && this.video) {
+      this.video.removeEventListener('playing', this.playingHandler);
+      this.playingHandler = null;
+    }
+  }
+
+  /** Wait for an in-flight init to finish (resolves immediately if already ready). */
+  waitForReady(): Promise<boolean> {
+    if (this.stream) return Promise.resolve(true);
+    return this.initPromise ?? Promise.resolve(false);
   }
 
   /** Whether an on-demand capture is currently in progress. */
@@ -109,11 +144,17 @@ export class AudioRecorder {
    * Returns the recorded audio as a data URL.
    */
   async captureRange(video: HTMLVideoElement, startMs: number, endMs: number): Promise<string> {
-    // Re-initialize stream from video if not ready (lazy init)
     if (!this.stream) {
-      this.initFromVideo(video);
+      // If an init is already running (from VideoOverlay mount), wait for it
+      // briefly. If none exists, start one. Either way, cap at 5 s so the
+      // save-card / open-card-creator buttons don't appear to hang.
+      const pending = this.initPromise ?? this.initFromVideo(video);
+      const ok = await Promise.race([
+        pending,
+        new Promise<false>(r => setTimeout(() => r(false), 5000)),
+      ]);
+      if (!ok || !this.stream) throw new Error('Could not capture audio stream from video');
     }
-    if (!this.stream) throw new Error('Could not capture audio stream from video');
     if (this.capturing) throw new Error('Capture already in progress');
 
     const durationMs = endMs - startMs;
@@ -244,8 +285,10 @@ export class AudioRecorder {
 
   destroy(): void {
     this.flushCurrent();
+    this.cleanupRetry();
     this.stream = null;
     this.video = null;
+    this.initPromise = null;
     this.audioMap.clear();
     this.blobMap.clear();
   }

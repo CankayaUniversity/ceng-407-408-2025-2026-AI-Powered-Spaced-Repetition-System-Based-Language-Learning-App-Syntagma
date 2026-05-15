@@ -57,6 +57,7 @@ function buildSettings(): UserSettings {
     authUserId: '1',
     activeCollectionId: 5,
     activeCollectionName: 'Deck Five',
+    uiLocale: 'en',
   };
 }
 

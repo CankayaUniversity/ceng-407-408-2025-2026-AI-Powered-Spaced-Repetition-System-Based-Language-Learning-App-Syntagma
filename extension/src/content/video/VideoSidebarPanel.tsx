@@ -4,17 +4,7 @@ import { parseSubtitleFile } from './subtitle-parser';
 import { mountWordPopup, dismissWordPopup } from '../popup/WordPopup';
 import { buildSentences } from './sentence-grouping';
 import type { SentenceGroup } from './sentence-grouping';
-
-// ─── Text tokeniser (mirrors SubtitleDisplay) ─────────────────────────────────
-
-interface TextToken { text: string; isWord: boolean; }
-
-function tokenize(text: string): TextToken[] {
-  return text
-    .split(/(\b[a-zA-Z']+\b)/)
-    .filter(p => p.length > 0)
-    .map(p => ({ text: p, isWord: /^[a-zA-Z']+$/.test(p) }));
-}
+import { tokenize } from './tokenizer';
 
 // ─── Memoized sentence row ────────────────────────────────────────────────────
 
@@ -53,9 +43,20 @@ const CueRow = memo(function CueRow({ sentence, isActive, selected, lexemes, sho
   // Tokenize once per sentence text, not on every render.
   const tokens = useMemo(() => tokenize(sentence.text), [sentence.text]);
 
-  const words = useMemo(() => sentence.text.match(/\b[a-zA-Z]+\b/g) ?? [], [sentence.text]);
-  const hasUnknown = words.some(w => { const s = lexemes[w.toLowerCase()]?.status; return !s || s === 'unknown'; });
-  const hasLearning = !hasUnknown && words.some(w => lexemes[w.toLowerCase()]?.status === 'learning');
+  const tokenStatuses = useMemo(() => {
+    const out: Array<'known' | 'learning' | 'unknown'> = [];
+    for (const tok of tokens) {
+      if (!tok.isWord) continue;
+      const lookups = tok.lemmas ?? [tok.text.toLowerCase()];
+      const statuses = lookups.map(l => lexemes[l]?.status);
+      if (statuses.includes('known') || statuses.includes('ignored')) out.push('known');
+      else if (statuses.includes('learning')) out.push('learning');
+      else out.push('unknown');
+    }
+    return out;
+  }, [tokens, lexemes]);
+  const hasUnknown = tokenStatuses.includes('unknown');
+  const hasLearning = !hasUnknown && tokenStatuses.includes('learning');
 
   const leftBorder = isActive
     ? `3px solid rgba(233, 196, 106,1)`
@@ -143,19 +144,23 @@ const CueRow = memo(function CueRow({ sentence, isActive, selected, lexemes, sho
       }}>
         {tokens.map((tok, ti) => {
           if (!tok.isWord) return <span key={ti}>{tok.text}</span>;
-          const lemma = tok.text.toLowerCase();
-          const status = lexemes[lemma]?.status ?? 'unknown';
+          const lookups = tok.lemmas ?? [tok.text.toLowerCase()];
+          const statuses = lookups.map(l => lexemes[l]?.status);
+          const worst = statuses.includes('known') ? 'known'
+            : statuses.includes('learning') ? 'learning'
+            : statuses.includes('ignored') ? 'ignored' : 'unknown';
           const underlineColor = showColors
-            ? (status === 'unknown'  ? 'rgba(217,119,98,0.55)' :
-               status === 'learning' ? 'rgba(233, 196, 106,0.55)' :
+            ? (worst === 'unknown'  ? 'rgba(217,119,98,0.55)' :
+               worst === 'learning' ? 'rgba(233, 196, 106,0.55)' :
                'transparent')
             : 'transparent';
+          const clickLemma = lookups[0];
           return (
             <span
               key={ti}
               onClick={e => {
                 e.stopPropagation();
-                onWordClick(lemma, tok.text, sentence.text, (e.currentTarget as HTMLElement).getBoundingClientRect(), sentence.startMs, sentence.endMs);
+                onWordClick(clickLemma, tok.text, sentence.text, (e.currentTarget as HTMLElement).getBoundingClientRect(), sentence.startMs, sentence.endMs);
               }}
               style={{
                 cursor: 'pointer',

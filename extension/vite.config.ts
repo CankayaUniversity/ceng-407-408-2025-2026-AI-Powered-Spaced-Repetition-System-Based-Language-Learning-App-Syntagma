@@ -63,6 +63,7 @@ export default defineConfig(({ command }) => {
             "card-creator": resolve(__dirname, "card-creator.html"),
             auth: resolve(__dirname, "auth.html"),
             reader: resolve(__dirname, "reader.html"),
+            "video-player": resolve(__dirname, "video-player.html"),
             // Background service worker — MV3 service workers support ES modules
             "background/service-worker": resolve(
               __dirname,
