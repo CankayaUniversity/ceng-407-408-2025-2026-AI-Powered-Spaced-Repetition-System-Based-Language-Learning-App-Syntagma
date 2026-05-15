@@ -20,6 +20,7 @@ import {
   getBadgeState,
   getNotificationPreference,
   getReminderHour,
+  clearAuth,
   saveBadgeState,
   saveNotificationPreference,
   saveReminderHour,
@@ -245,7 +246,16 @@ export default function SettingsScreen({ navigation }) {
     return () => { isMounted = false; };
   }, []);
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
+    try {
+      await clearAuth();
+      await cancelAllReminders();
+      await saveNotificationPreference(false);
+      setIsNotificationsOn(false);
+    } catch (err) {
+      // Best-effort logout; navigation still proceeds.
+    }
+
     navigation.getParent()?.replace('Login');
   };
 
