@@ -10,6 +10,7 @@ import {
   StyleSheet,
   Switch,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -174,6 +175,8 @@ export default function SettingsScreen({ navigation }) {
   const [isNotificationsOn, setIsNotificationsOn] = useState(false);
   const [reminderHour, setReminderHour] = useState(20); // default 20:00 (8 PM)
   const [dailyCount, setDailyCount] = useState(DEFAULT_DAILY_COUNT);
+  const [customDailyCount, setCustomDailyCount] = useState(String(DEFAULT_DAILY_COUNT));
+  const [customDailyError, setCustomDailyError] = useState('');
   const [profileName, setProfileName] = useState('');
   const [profileEmail, setProfileEmail] = useState('');
   const [timePickerVisible, setTimePickerVisible] = useState(false);
@@ -185,6 +188,13 @@ export default function SettingsScreen({ navigation }) {
   useEffect(() => {
     setIsDarkMode(isDark);
   }, [isDark]);
+
+  useEffect(() => {
+    if (dailyPickerVisible) {
+      setCustomDailyCount(String(dailyCount));
+      setCustomDailyError('');
+    }
+  }, [dailyCount, dailyPickerVisible]);
 
   // Load saved preferences
   useEffect(() => {
@@ -353,8 +363,23 @@ export default function SettingsScreen({ navigation }) {
   const handleSelectDailyCount = useCallback(async (count) => {
     setDailyCount(count);
     setDailyPickerVisible(false);
+    setCustomDailyCount(String(count));
+    setCustomDailyError('');
     await saveLastStudyCount(count);
   }, []);
+
+  const handleSaveCustomDailyCount = useCallback(async () => {
+    const parsed = Number.parseInt(customDailyCount, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setCustomDailyError('Please enter a positive number.');
+      return;
+    }
+
+    setDailyCount(parsed);
+    setDailyPickerVisible(false);
+    setCustomDailyError('');
+    await saveLastStudyCount(parsed);
+  }, [customDailyCount]);
 
   const handleTestNotification = useCallback(async () => {
     const granted = await requestNotificationPermission();
@@ -620,6 +645,29 @@ export default function SettingsScreen({ navigation }) {
               })}
             </ScrollView>
 
+            <View style={styles.dailyCustomWrapper}>
+              <Text style={styles.dailyCustomLabel}>Other</Text>
+              <View style={styles.dailyCustomRow}>
+                <TextInput
+                  value={customDailyCount}
+                  onChangeText={(value) => {
+                    setCustomDailyCount(value.replace(/[^0-9]/g, ''));
+                    setCustomDailyError('');
+                  }}
+                  placeholder="Enter a number"
+                  placeholderTextColor={colors.textSecondary}
+                  keyboardType="numeric"
+                  style={styles.dailyCustomInput}
+                />
+                <Pressable style={styles.dailyCustomSave} onPress={handleSaveCustomDailyCount}>
+                  <Text style={styles.dailyCustomSaveText}>Save</Text>
+                </Pressable>
+              </View>
+              {customDailyError ? (
+                <Text style={styles.dailyCustomError}>{customDailyError}</Text>
+              ) : null}
+            </View>
+
             <Pressable
               style={styles.modalCancel}
               onPress={() => setDailyPickerVisible(false)}
@@ -847,6 +895,54 @@ const createStyles = (colors) => StyleSheet.create({
     color: colors.textSecondary,
     fontSize: 14,
     fontFamily: 'DMSans_400Regular',
+  },
+  dailyCustomWrapper: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  dailyCustomLabel: {
+    color: colors.textSecondary,
+    fontFamily: 'DMSans_500Medium',
+    fontSize: 12,
+    marginBottom: 6,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+  },
+  dailyCustomRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  dailyCustomInput: {
+    flex: 1,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.mutedSurface,
+    paddingHorizontal: 12,
+    paddingVertical: Platform.OS === 'ios' ? 10 : 8,
+    color: colors.textPrimary,
+    fontFamily: 'DMSans_500Medium',
+    fontSize: 14,
+  },
+  dailyCustomSave: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: colors.accent,
+  },
+  dailyCustomSaveText: {
+    color: colors.surface,
+    fontFamily: 'DMSans_600SemiBold',
+    fontSize: 13,
+  },
+  dailyCustomError: {
+    marginTop: 6,
+    color: colors.warning || '#D14343',
+    fontFamily: 'DMSans_500Medium',
+    fontSize: 12,
   },
   badgeProgressText: {
     color: colors.textSecondary,

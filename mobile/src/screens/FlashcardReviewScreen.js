@@ -46,6 +46,7 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
   const [currentIndex, setCurrentIndex] = useState(0);
   const [targetCount, setTargetCount] = useState(0);
   const [dailyCount, setDailyCount] = useState(10);
+  const [dailyCountLoaded, setDailyCountLoaded] = useState(false);
   const [carryoverCount, setCarryoverCount] = useState(0);
   const [sessionStarted, setSessionStarted] = useState(false);
   const [sessionCompleted, setSessionCompleted] = useState(false);
@@ -83,6 +84,8 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
       if (carryover?.remaining > 0 && carryover?.date && carryover.date !== todayKey) {
         setCarryoverCount(carryover.remaining);
       }
+
+      setDailyCountLoaded(true);
     };
 
     loadDefaults();
@@ -93,7 +96,7 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
   }, [todayKey]);
 
   useEffect(() => {
-    if (!rawCards.length || sessionStarted) {
+    if (!rawCards.length || sessionStarted || !dailyCountLoaded) {
       return;
     }
 
@@ -105,7 +108,7 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
     setSessionCards(nextCards);
     setCurrentIndex(initialIndex);
     setSessionStarted(true);
-  }, [carryoverCount, dailyCount, rawCards, requestedStartIndex, sessionStarted]);
+  }, [carryoverCount, dailyCount, dailyCountLoaded, rawCards, requestedStartIndex, sessionStarted]);
 
   useEffect(() => {
     if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
