@@ -587,6 +587,12 @@ export function CardCreatorApp() {
         >
           Open eBook Reader
         </button>
+        <button
+          style={navButtonStyle(false)}
+          onClick={() => sendMessage({ type: 'OPEN_VIDEO_PLAYER', payload: null }).catch(() => { })}
+        >
+          Open Video Player
+        </button>
 
         <div style={{ flex: 1 }} />
         <button
@@ -1150,7 +1156,7 @@ export function CardCreatorApp() {
                       No image
                     </div>
                   )}
-                  <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
+                  <div style={{ display: 'flex', gap: '6px', marginTop: '8px', justifyContent: 'center' }}>
                     <button
                       onClick={() => screenshotInputRef.current?.click()}
                       style={{ flex: 1, background: C.button, color: C.text, border: `1px solid ${C.line}`, borderRadius: '6px', padding: '6px', fontSize: '12px', cursor: 'pointer' }}
@@ -1162,12 +1168,6 @@ export function CardCreatorApp() {
                       style={{ flex: 1, background: C.input, color: C.danger, border: `1px solid ${C.line}`, borderRadius: '6px', padding: '6px', fontSize: '12px', cursor: 'pointer' }}
                     >
                       Remove
-                    </button>
-                    <button
-                      onClick={resetScreenshotMedia}
-                      style={{ flex: 1, background: C.input, color: C.muted, border: `1px solid ${C.line}`, borderRadius: '6px', padding: '6px', fontSize: '12px', cursor: 'pointer' }}
-                    >
-                      Keep
                     </button>
                   </div>
                   <input
@@ -1190,7 +1190,7 @@ export function CardCreatorApp() {
                       No audio
                     </div>
                   )}
-                  <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
+                  <div style={{ display: 'flex', gap: '6px', marginTop: '8px', justifyContent: 'center' }}>
                     <button
                       onClick={() => audioInputRef.current?.click()}
                       style={{ flex: 1, background: C.button, color: C.text, border: `1px solid ${C.line}`, borderRadius: '6px', padding: '6px', fontSize: '12px', cursor: 'pointer' }}
@@ -1206,12 +1206,6 @@ export function CardCreatorApp() {
                       style={{ flex: 1, background: C.input, color: C.danger, border: `1px solid ${C.line}`, borderRadius: '6px', padding: '6px', fontSize: '12px', cursor: 'pointer' }}
                     >
                       Remove
-                    </button>
-                    <button
-                      onClick={resetAudioMedia}
-                      style={{ flex: 1, background: C.input, color: C.muted, border: `1px solid ${C.line}`, borderRadius: '6px', padding: '6px', fontSize: '12px', cursor: 'pointer' }}
-                    >
-                      Keep
                     </button>
                   </div>
                   <input

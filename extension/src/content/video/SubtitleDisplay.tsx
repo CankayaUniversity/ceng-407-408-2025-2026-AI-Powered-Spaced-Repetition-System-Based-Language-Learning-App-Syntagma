@@ -6,14 +6,41 @@ import type { SubtitleCue, LexemeEntry, UserSettings } from '../../shared/types'
 interface TextToken {
   text: string;
   isWord: boolean;
+  lemmas?: string[];
 }
 
+const CONTRACTIONS: Record<string, string[]> = {
+  "i'm": ['i', 'be'], "i'll": ['i', 'will'], "i've": ['i', 'have'], "i'd": ['i', 'would'],
+  "it's": ['it', 'be'], "that's": ['that', 'be'], "what's": ['what', 'be'],
+  "there's": ['there', 'be'], "here's": ['here', 'be'], "who's": ['who', 'be'],
+  "he's": ['he', 'be'], "she's": ['she', 'be'], "let's": ['let', 'us'],
+  "won't": ['will', 'not'], "can't": ['can', 'not'], "don't": ['do', 'not'],
+  "doesn't": ['do', 'not'], "didn't": ['do', 'not'], "isn't": ['be', 'not'],
+  "aren't": ['be', 'not'], "wasn't": ['be', 'not'], "weren't": ['be', 'not'],
+  "hasn't": ['have', 'not'], "haven't": ['have', 'not'], "hadn't": ['have', 'not'],
+  "wouldn't": ['would', 'not'], "couldn't": ['could', 'not'], "shouldn't": ['should', 'not'],
+  "they're": ['they', 'be'], "we're": ['we', 'be'], "you're": ['you', 'be'],
+  "they've": ['they', 'have'], "we've": ['we', 'have'], "you've": ['you', 'have'],
+  "they'll": ['they', 'will'], "we'll": ['we', 'will'], "you'll": ['you', 'will'],
+  "they'd": ['they', 'would'], "we'd": ['we', 'would'], "you'd": ['you', 'would'],
+};
+
 function tokenize(text: string): TextToken[] {
-  // Split on word boundaries, keeping both word and non-word parts
-  return text
-    .split(/(\b[a-zA-Z']+\b)/)
-    .filter(p => p.length > 0)
-    .map(p => ({ text: p, isWord: /^[a-zA-Z']+$/.test(p) }));
+  const raw = text
+    .split(/(\b[a-zA-Z''']+\b)/)
+    .filter(p => p.length > 0);
+
+  const out: TextToken[] = [];
+  for (const p of raw) {
+    const normalized = p.replace(/['']/g, "'").toLowerCase();
+    const expansion = CONTRACTIONS[normalized];
+    if (expansion) {
+      out.push({ text: p, isWord: true, lemmas: expansion });
+    } else {
+      out.push({ text: p, isWord: /^[a-zA-Z''']+$/.test(p) });
+    }
+  }
+  return out;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -55,16 +82,23 @@ export function SubtitleDisplay({
       : cue.text;
   }, [cue, settings.removeBracketedSubtitles]);
 
+  const tokens = useMemo(() => displayText ? tokenize(displayText) : [], [displayText]);
+
   // Check if every content word is known → auto-reveal
   const allWordsKnown = useMemo(() => {
     if (!displayText || !revealByKnownStatus || language !== 'en') return false;
-    const words = displayText.match(/\b[a-zA-Z]+\b/g) ?? [];
-    if (!words.length) return false;
-    return words.every(w => {
-      const s = lexemes[w.toLowerCase()]?.status;
+    const allLemmas: string[] = [];
+    for (const tok of tokens) {
+      if (!tok.isWord) continue;
+      if (tok.lemmas) allLemmas.push(...tok.lemmas);
+      else allLemmas.push(tok.text.toLowerCase().replace(/'/g, "'"));
+    }
+    if (!allLemmas.length) return false;
+    return allLemmas.every(l => {
+      const s = lexemes[l]?.status;
       return s === 'known' || s === 'ignored';
     });
-  }, [displayText, lexemes, revealByKnownStatus, language]);
+  }, [displayText, tokens, lexemes, revealByKnownStatus, language]);
 
   if (!cue || !displayText) return null;
 
@@ -73,8 +107,6 @@ export function SubtitleDisplay({
     (revealOnPause && isPaused) ||
     (revealOnHover && hovering) ||
     allWordsKnown;
-
-  const tokens = tokenize(displayText);
 
   return (
     <div
@@ -111,12 +143,15 @@ export function SubtitleDisplay({
           );
         }
 
-        const lemma = tok.text.toLowerCase().replace(/'/g, "'");
-        const status = lexemes[lemma]?.status ?? 'unknown';
+        const lookups = tok.lemmas ?? [tok.text.toLowerCase().replace(/'/g, "'")];
+        const statuses = lookups.map(l => lexemes[l]?.status ?? 'unknown');
+        const worst = statuses.includes('unknown') ? 'unknown'
+          : statuses.includes('learning') ? 'learning' : 'known';
+        const clickLemma = lookups[0];
 
         const underline = settings.showLearningStatusColors
-          ? (status === 'unknown' ? '#D97762' :
-             status === 'learning' ? '#E8C06A' :
+          ? (worst === 'unknown' ? '#D97762' :
+             worst === 'learning' ? '#E8C06A' :
              'transparent')
           : 'transparent';
 
@@ -125,7 +160,7 @@ export function SubtitleDisplay({
             key={i}
             onClick={e => {
               e.stopPropagation();
-              onWordClick(lemma, tok.text, displayText, (e.currentTarget as HTMLElement).getBoundingClientRect());
+              onWordClick(clickLemma, tok.text, displayText, (e.currentTarget as HTMLElement).getBoundingClientRect());
             }}
             style={{
               color: '#FFFFFF',
@@ -139,7 +174,7 @@ export function SubtitleDisplay({
               pointerEvents: 'auto',
               borderBottom: `2px solid ${underline}`,
               paddingBottom: '1px',
-              opacity: status === 'ignored' ? 0.5 : 1,
+              opacity: statuses.includes('ignored') ? 0.5 : 1,
               transition: 'opacity 0.15s',
             }}
           >

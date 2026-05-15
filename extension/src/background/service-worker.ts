@@ -1209,7 +1209,26 @@ onMessage(async (msg, sender) => {
     }
 
     case 'OPEN_READER': {
-      chrome.tabs.create({ url: chrome.runtime.getURL('reader.html') });
+      const readerUrl = chrome.runtime.getURL('reader.html');
+      const normalWins = await chrome.windows.getAll({ windowTypes: ['normal'] });
+      if (normalWins.length > 0 && normalWins[0].id != null) {
+        chrome.tabs.create({ url: readerUrl, windowId: normalWins[0].id });
+        chrome.windows.update(normalWins[0].id, { focused: true });
+      } else {
+        chrome.windows.create({ url: readerUrl, type: 'normal' });
+      }
+      return { ok: true };
+    }
+
+    case 'OPEN_VIDEO_PLAYER': {
+      const vpUrl = chrome.runtime.getURL('video-player.html');
+      const normalWins2 = await chrome.windows.getAll({ windowTypes: ['normal'] });
+      if (normalWins2.length > 0 && normalWins2[0].id != null) {
+        chrome.tabs.create({ url: vpUrl, windowId: normalWins2[0].id });
+        chrome.windows.update(normalWins2[0].id, { focused: true });
+      } else {
+        chrome.windows.create({ url: vpUrl, type: 'normal' });
+      }
       return { ok: true };
     }
 

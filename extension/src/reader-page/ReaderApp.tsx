@@ -731,27 +731,59 @@ function ReaderWordPopup({
             <div style={{ fontSize: '12px', color: PC.blue, fontStyle: 'italic' }}>{lexeme.trMeaning}</div>
           )}
         </div>
-        <button
-          onClick={handleSaveCard}
-          title={!settings.authToken ? 'Log in to save cards' : cardSaved === 'done' ? 'Card saved!' : 'Add to flashcards'}
-          disabled={!settings.authToken || cardSaved === 'saving'}
-          style={{
-            width: '32px', height: '32px', borderRadius: '16px',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: cardSaved === 'done' ? PC.green : cardSaved === 'error' ? PC.red : PC.green,
-            color: PC.base, border: 'none',
-            cursor: cardSaved === 'idle' ? 'pointer' : 'default',
-            padding: 0, transition: 'background 0.2s', flexShrink: 0,
-          }}
-        >
-          {cardSaved === 'done' ? (
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
-          ) : cardSaved === 'error' ? (
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-          ) : (
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="12" y1="18" x2="12" y2="12" /><line x1="9" y1="15" x2="15" y2="15" /></svg>
-          )}
-        </button>
+        <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+          <button
+            onClick={handleSaveCard}
+            title={!settings.authToken ? 'Log in to save cards' : cardSaved === 'done' ? 'Card saved!' : 'Add to flashcards'}
+            disabled={!settings.authToken || cardSaved === 'saving'}
+            style={{
+              width: '32px', height: '32px', borderRadius: '16px',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: cardSaved === 'done' ? PC.green : cardSaved === 'error' ? PC.red : PC.green,
+              color: PC.base, border: 'none',
+              cursor: cardSaved === 'idle' ? 'pointer' : 'default',
+              padding: 0, transition: 'background 0.2s', flexShrink: 0,
+            }}
+          >
+            {cardSaved === 'done' ? (
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+            ) : cardSaved === 'error' ? (
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+            ) : (
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="12" y1="18" x2="12" y2="12" /><line x1="9" y1="15" x2="15" y2="15" /></svg>
+            )}
+          </button>
+          <button
+            onClick={() => {
+              sendMessage({
+                type: 'OPEN_CARD_CREATOR',
+                payload: {
+                  mode: 'create',
+                  panel: 'dictionary',
+                  word,
+                  sentence,
+                  sourceUrl: `syntagma-reader://${bookId}`,
+                  sourceTitle: bookTitle,
+                  trMeaning: lexeme?.trMeaning ?? (translations[0] ?? ''),
+                },
+              }).catch(() => {});
+            }}
+            title={!settings.authToken ? 'Log in to edit cards' : 'Open in card creator'}
+            disabled={!settings.authToken}
+            style={{
+              width: '32px', height: '32px', borderRadius: '16px',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: PC.blue, color: PC.base, border: 'none',
+              cursor: settings.authToken ? 'pointer' : 'default',
+              padding: 0, transition: 'background 0.2s', flexShrink: 0,
+            }}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+            </svg>
+          </button>
+        </div>
       </div>
 
       {/* Card save feedback */}

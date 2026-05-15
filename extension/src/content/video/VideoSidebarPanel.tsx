@@ -5,15 +5,42 @@ import { mountWordPopup, dismissWordPopup } from '../popup/WordPopup';
 import { buildSentences } from './sentence-grouping';
 import type { SentenceGroup } from './sentence-grouping';
 
-// ─── Text tokeniser (mirrors SubtitleDisplay) ─────────────────────────────────
+// ─── Text tokeniser (expands contractions for proper lemmatization) ──────────
 
-interface TextToken { text: string; isWord: boolean; }
+interface TextToken { text: string; isWord: boolean; lemmas?: string[]; }
+
+const CONTRACTIONS: Record<string, string[]> = {
+  "i'm": ['i', 'be'], "i'll": ['i', 'will'], "i've": ['i', 'have'], "i'd": ['i', 'would'],
+  "it's": ['it', 'be'], "that's": ['that', 'be'], "what's": ['what', 'be'],
+  "there's": ['there', 'be'], "here's": ['here', 'be'], "who's": ['who', 'be'],
+  "he's": ['he', 'be'], "she's": ['she', 'be'], "let's": ['let', 'us'],
+  "won't": ['will', 'not'], "can't": ['can', 'not'], "don't": ['do', 'not'],
+  "doesn't": ['do', 'not'], "didn't": ['do', 'not'], "isn't": ['be', 'not'],
+  "aren't": ['be', 'not'], "wasn't": ['be', 'not'], "weren't": ['be', 'not'],
+  "hasn't": ['have', 'not'], "haven't": ['have', 'not'], "hadn't": ['have', 'not'],
+  "wouldn't": ['would', 'not'], "couldn't": ['could', 'not'], "shouldn't": ['should', 'not'],
+  "they're": ['they', 'be'], "we're": ['we', 'be'], "you're": ['you', 'be'],
+  "they've": ['they', 'have'], "we've": ['we', 'have'], "you've": ['you', 'have'],
+  "they'll": ['they', 'will'], "we'll": ['we', 'will'], "you'll": ['you', 'will'],
+  "they'd": ['they', 'would'], "we'd": ['we', 'would'], "you'd": ['you', 'would'],
+};
 
 function tokenize(text: string): TextToken[] {
-  return text
-    .split(/(\b[a-zA-Z']+\b)/)
-    .filter(p => p.length > 0)
-    .map(p => ({ text: p, isWord: /^[a-zA-Z']+$/.test(p) }));
+  const raw = text
+    .split(/(\b[a-zA-Z''']+\b)/)
+    .filter(p => p.length > 0);
+
+  const out: TextToken[] = [];
+  for (const p of raw) {
+    const normalized = p.replace(/['']/g, "'").toLowerCase();
+    const expansion = CONTRACTIONS[normalized];
+    if (expansion) {
+      out.push({ text: p, isWord: true, lemmas: expansion });
+    } else {
+      out.push({ text: p, isWord: /^[a-zA-Z''']+$/.test(p) });
+    }
+  }
+  return out;
 }
 
 // ─── Memoized sentence row ────────────────────────────────────────────────────
@@ -53,9 +80,17 @@ const CueRow = memo(function CueRow({ sentence, isActive, selected, lexemes, sho
   // Tokenize once per sentence text, not on every render.
   const tokens = useMemo(() => tokenize(sentence.text), [sentence.text]);
 
-  const words = useMemo(() => sentence.text.match(/\b[a-zA-Z]+\b/g) ?? [], [sentence.text]);
-  const hasUnknown = words.some(w => { const s = lexemes[w.toLowerCase()]?.status; return !s || s === 'unknown'; });
-  const hasLearning = !hasUnknown && words.some(w => lexemes[w.toLowerCase()]?.status === 'learning');
+  const allLemmas = useMemo(() => {
+    const out: string[] = [];
+    for (const tok of tokens) {
+      if (!tok.isWord) continue;
+      if (tok.lemmas) out.push(...tok.lemmas);
+      else out.push(tok.text.toLowerCase());
+    }
+    return out;
+  }, [tokens]);
+  const hasUnknown = allLemmas.some(l => { const s = lexemes[l]?.status; return !s || s === 'unknown'; });
+  const hasLearning = !hasUnknown && allLemmas.some(l => lexemes[l]?.status === 'learning');
 
   const leftBorder = isActive
     ? `3px solid rgba(233, 196, 106,1)`
@@ -143,19 +178,22 @@ const CueRow = memo(function CueRow({ sentence, isActive, selected, lexemes, sho
       }}>
         {tokens.map((tok, ti) => {
           if (!tok.isWord) return <span key={ti}>{tok.text}</span>;
-          const lemma = tok.text.toLowerCase();
-          const status = lexemes[lemma]?.status ?? 'unknown';
+          const lookups = tok.lemmas ?? [tok.text.toLowerCase()];
+          const statuses = lookups.map(l => lexemes[l]?.status ?? 'unknown');
+          const worst = statuses.includes('unknown') ? 'unknown'
+            : statuses.includes('learning') ? 'learning' : 'known';
           const underlineColor = showColors
-            ? (status === 'unknown'  ? 'rgba(217,119,98,0.55)' :
-               status === 'learning' ? 'rgba(233, 196, 106,0.55)' :
+            ? (worst === 'unknown'  ? 'rgba(217,119,98,0.55)' :
+               worst === 'learning' ? 'rgba(233, 196, 106,0.55)' :
                'transparent')
             : 'transparent';
+          const clickLemma = lookups[0];
           return (
             <span
               key={ti}
               onClick={e => {
                 e.stopPropagation();
-                onWordClick(lemma, tok.text, sentence.text, (e.currentTarget as HTMLElement).getBoundingClientRect(), sentence.startMs, sentence.endMs);
+                onWordClick(clickLemma, tok.text, sentence.text, (e.currentTarget as HTMLElement).getBoundingClientRect(), sentence.startMs, sentence.endMs);
               }}
               style={{
                 cursor: 'pointer',

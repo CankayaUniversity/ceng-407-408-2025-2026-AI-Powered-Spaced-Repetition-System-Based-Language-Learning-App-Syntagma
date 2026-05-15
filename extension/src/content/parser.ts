@@ -13,6 +13,35 @@ const SKIP_TAGS = new Set([
 // Minimum word length to process
 const MIN_WORD_LENGTH = 2;
 
+const CONTRACTIONS: Record<string, string[]> = {
+  "i'm": ['i', 'be'], "i'll": ['i', 'will'], "i've": ['i', 'have'], "i'd": ['i', 'would'],
+  "it's": ['it', 'be'], "that's": ['that', 'be'], "what's": ['what', 'be'],
+  "there's": ['there', 'be'], "here's": ['here', 'be'], "who's": ['who', 'be'],
+  "he's": ['he', 'be'], "she's": ['she', 'be'], "let's": ['let', 'us'],
+  "won't": ['will', 'not'], "can't": ['can', 'not'], "don't": ['do', 'not'],
+  "doesn't": ['do', 'not'], "didn't": ['do', 'not'], "isn't": ['be', 'not'],
+  "aren't": ['be', 'not'], "wasn't": ['be', 'not'], "weren't": ['be', 'not'],
+  "hasn't": ['have', 'not'], "haven't": ['have', 'not'], "hadn't": ['have', 'not'],
+  "wouldn't": ['would', 'not'], "couldn't": ['could', 'not'], "shouldn't": ['should', 'not'],
+  "they're": ['they', 'be'], "we're": ['we', 'be'], "you're": ['you', 'be'],
+  "they've": ['they', 'have'], "we've": ['we', 'have'], "you've": ['you', 'have'],
+  "they'll": ['they', 'will'], "we'll": ['we', 'will'], "you'll": ['you', 'will'],
+  "they'd": ['they', 'would'], "we'd": ['we', 'would'], "you'd": ['you', 'would'],
+};
+
+function resolveContractionStatus(
+  surface: string,
+  lexemes: Record<string, { status: WordStatus }>,
+): WordStatus | null {
+  const normalized = surface.toLowerCase().replace(/['']/g, "'");
+  const parts = CONTRACTIONS[normalized];
+  if (!parts) return null;
+  const statuses = parts.map(l => lexemes[l]?.status ?? 'unknown');
+  if (statuses.includes('unknown')) return 'unknown';
+  if (statuses.includes('learning')) return 'learning';
+  return 'known';
+}
+
 // Only process tokens that look like English words (latin alphabet)
 const ENGLISH_WORD_RE = /^[a-zA-Z]{2,}(?:[''][a-zA-Z]+)?$/;
 
@@ -128,6 +157,7 @@ export async function parsePage(
       for (const raw of rawTokens) {
         const lemma = lemmatize(raw.surface);
         const freqEntry = lookupFrequency(lemma);
+        const contractionStatus = resolveContractionStatus(raw.surface, lexemes);
 
         const token: Token = {
           lemma,
@@ -135,7 +165,7 @@ export async function parsePage(
           frequencyRank: freqEntry?.rank,
           frequencyBand: freqEntry ? getFrequencyBand(freqEntry.rank) : undefined,
           zipfScore: freqEntry?.zipf,
-          status: (lexemes[lemma]?.status) ?? 'unknown',
+          status: contractionStatus ?? (lexemes[lemma]?.status) ?? 'unknown',
           node: textNode,
           startOffset: raw.startOffset,
           endOffset: raw.endOffset,
@@ -183,13 +213,14 @@ export function tokenizeSubtitleTexts(
     for (const raw of rawTokens) {
       const lemma = lemmatize(raw.surface);
       const freqEntry = lookupFrequency(lemma);
+      const contractionStatus = resolveContractionStatus(raw.surface, lexemes);
       allTokens.push({
         lemma,
         surface: raw.surface,
         frequencyRank: freqEntry?.rank,
         frequencyBand: freqEntry ? getFrequencyBand(freqEntry.rank) : undefined,
         zipfScore: freqEntry?.zipf,
-        status: (lexemes[lemma]?.status) ?? 'unknown',
+        status: contractionStatus ?? (lexemes[lemma]?.status) ?? 'unknown',
       });
     }
   }

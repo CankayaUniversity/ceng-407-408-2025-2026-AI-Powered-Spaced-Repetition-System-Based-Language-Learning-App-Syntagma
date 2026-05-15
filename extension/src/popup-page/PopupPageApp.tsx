@@ -185,6 +185,22 @@ export function PopupPageApp() {
             </button>
 
             <button
+              onClick={async () => {
+                await sendMessage({ type: 'OPEN_VIDEO_PLAYER', payload: null });
+                window.close();
+              }}
+              style={{
+                width: '100%', background: 'transparent',
+                color: C.subtext, border: `1px solid ${C.surface1}`,
+                borderRadius: '6px', padding: '6px',
+                cursor: 'pointer', fontSize: '11px',
+                transition: 'all 0.15s', marginBottom: '6px',
+              }}
+            >
+              Video Player
+            </button>
+
+            <button
               onClick={handleOpenSettings}
               style={{
                 width: '100%', background: 'transparent',
