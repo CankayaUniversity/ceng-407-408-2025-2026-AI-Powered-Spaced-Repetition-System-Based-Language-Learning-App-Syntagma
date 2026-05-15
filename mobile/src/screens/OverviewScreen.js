@@ -81,15 +81,37 @@ export default function OverviewScreen() {
   };
 
   const dailyCounts = useMemo(() => {
-    if (!stats?.reviewsByDay) {
-      return [];
+    if (activeTab !== 'WEEK') {
+      return (stats?.reviewsByDay ?? []).map((entry) => ({
+        date: entry.date,
+        label: getDayLabel(entry.date),
+        count: entry.count || 0,
+      }));
     }
-    return stats.reviewsByDay.map((entry) => ({
-      date: entry.date,
-      label: getDayLabel(entry.date),
-      count: entry.count || 0,
-    }));
-  }, [stats]);
+
+    // Always show Mon–Sun of the current week, filling 0 for missing days
+    const today = new Date();
+    const dow = today.getDay(); // 0=Sun, 1=Mon, …
+    const monday = new Date(today);
+    monday.setDate(today.getDate() - (dow === 0 ? 6 : dow - 1));
+    monday.setHours(0, 0, 0, 0);
+
+    const countMap = {};
+    (stats?.reviewsByDay ?? []).forEach((entry) => {
+      countMap[entry.date] = entry.count || 0;
+    });
+
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + i);
+      const dateStr = d.toISOString().slice(0, 10);
+      return {
+        date: dateStr,
+        label: WEEK_DAYS[i],
+        count: countMap[dateStr] || 0,
+      };
+    });
+  }, [stats, activeTab]);
 
   const maxCount = useMemo(() => {
     if (!dailyCounts.length) {

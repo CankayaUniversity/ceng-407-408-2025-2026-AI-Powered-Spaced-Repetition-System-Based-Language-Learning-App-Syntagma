@@ -100,6 +100,19 @@ export async function updateWordKnowledge(lemma, status) {
   });
 }
 
+export async function fetchWordKnowledgePage(page = 0, size = 100, status = null) {
+  const params = new URLSearchParams({
+    page: String(page),
+    size: String(size),
+  });
+
+  if (status && status !== 'ALL') {
+    params.set('status', status);
+  }
+
+  return apiRequest(`/api/word-knowledge?${params.toString()}`);
+}
+
 export async function fetchDueCards(limit = 20) {
   return apiRequest(`/api/srs/due?limit=${limit}`);
 }
@@ -120,6 +133,35 @@ export async function fetchAllFlashcards({ pageSize = 100, maxPages = 20 } = {})
 
   while (hasMore && page < maxPages) {
     const data = await fetchFlashcardsPage(page, pageSize);
+    const content = Array.isArray(data?.content)
+      ? data.content
+      : Array.isArray(data)
+        ? data
+        : [];
+
+    all.push(...content);
+
+    if (Array.isArray(data?.content)) {
+      const totalPages = Number.isFinite(data?.totalPages) ? data.totalPages : null;
+      const isLast = data?.last === true || (totalPages != null ? page >= totalPages - 1 : content.length < pageSize);
+      hasMore = !isLast;
+    } else {
+      hasMore = false;
+    }
+
+    page += 1;
+  }
+
+  return all;
+}
+
+export async function fetchAllWordKnowledge({ pageSize = 100, maxPages = 20, status = null } = {}) {
+  const all = [];
+  let page = 0;
+  let hasMore = true;
+
+  while (hasMore && page < maxPages) {
+    const data = await fetchWordKnowledgePage(page, pageSize, status);
     const content = Array.isArray(data?.content)
       ? data.content
       : Array.isArray(data)
