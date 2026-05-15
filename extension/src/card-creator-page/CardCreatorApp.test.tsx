@@ -57,6 +57,7 @@ function buildSettings(): UserSettings {
     authUserId: '1',
     activeCollectionId: 3,
     activeCollectionName: 'Deck 3',
+    uiLocale: 'en',
   };
 }
 
@@ -65,6 +66,9 @@ function setupChromeStorage(seed: Record<string, unknown> = {}) {
   const listeners = new Set<(changes: Record<string, chrome.storage.StorageChange>, areaName: string) => void>();
 
   (globalThis as unknown as { chrome: unknown }).chrome = {
+    runtime: {
+      getURL: vi.fn((path: string) => `chrome-extension://test-id/${path}`),
+    },
     storage: {
       local: {
         get: vi.fn(async (key?: string | string[] | null) => {

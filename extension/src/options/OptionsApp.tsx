@@ -3,6 +3,7 @@ import type { UserSettings, LexemeEntry, FlashcardPayload, WordStatus } from '..
 import { DEFAULT_SETTINGS, userScopedKey } from '../shared/storage';
 import { sendMessage } from '../shared/messages';
 import { cardMatchesCollection, resolveCardCollectionLabel } from '../shared/flashcards';
+import { useT, LocaleToggle, type UILocale } from '../shared/i18n';
 
 const C = {
   base: '#F5F1E9',
@@ -158,6 +159,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 // ─── Tab: General ────────────────────────────────────────────────────────────
 
 function ActiveDeckSelector({ settings, onUpdate }: { settings: UserSettings; onUpdate: (p: Partial<UserSettings>) => void }) {
+  const _ = useT(settings);
   const [collections, setCollections] = useState<CollectionItem[]>([]);
   const [newName, setNewName] = useState('');
   const [creating, setCreating] = useState(false);
@@ -203,7 +205,7 @@ function ActiveDeckSelector({ settings, onUpdate }: { settings: UserSettings; on
   };
 
   if (!settings.authToken) {
-    return <div style={{ fontSize: '12px', color: C.subtext, padding: '8px 0' }}>Log in to use decks.</div>;
+    return <div style={{ fontSize: '12px', color: C.subtext, padding: '8px 0' }}>{_('opt.loginForDecks')}</div>;
   }
 
   return (
@@ -223,7 +225,7 @@ function ActiveDeckSelector({ settings, onUpdate }: { settings: UserSettings; on
             outline: 'none',
           }}
         >
-          <option value="">No deck (unsorted)</option>
+          <option value="">{_('opt.noDeck')}</option>
           {collections.map(c => (
             <option key={c.collectionId} value={c.collectionId}>{c.name}</option>
           ))}
@@ -235,7 +237,7 @@ function ActiveDeckSelector({ settings, onUpdate }: { settings: UserSettings; on
           value={newName}
           onChange={e => setNewName(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && handleCreate()}
-          placeholder="Create new deck…"
+          placeholder={_('opt.createNewDeck')}
           style={{
             flex: 1,
             background: C.surface0,
@@ -261,7 +263,7 @@ function ActiveDeckSelector({ settings, onUpdate }: { settings: UserSettings; on
             opacity: creating || !newName.trim() ? 0.5 : 1,
           }}
         >
-          + Create
+          {_('opt.create')}
         </button>
       </div>
     </div>
@@ -269,47 +271,49 @@ function ActiveDeckSelector({ settings, onUpdate }: { settings: UserSettings; on
 }
 
 function GeneralTab({ settings, onUpdate }: { settings: UserSettings; onUpdate: (p: Partial<UserSettings>) => void }) {
+  const _ = useT(settings);
   return (
     <div>
-      <SectionTitle>Active Deck</SectionTitle>
-      <p style={{ fontSize: '12px', color: C.subtext, margin: '0 0 8px 0' }}>New flashcards will be saved to this deck.</p>
+      <SectionTitle>{_('opt.activeDeck')}</SectionTitle>
+      <p style={{ fontSize: '12px', color: C.subtext, margin: '0 0 8px 0' }}>{_('opt.activeDeckDesc')}</p>
       <ActiveDeckSelector settings={settings} onUpdate={onUpdate} />
 
-      <SectionTitle>Parsing</SectionTitle>
-      <Toggle value={settings.enabled} onChange={v => onUpdate({ enabled: v })} label="Enable Syntagma" description="Master on/off switch" />
-      <Toggle value={settings.autoParseOnLoad} onChange={v => onUpdate({ autoParseOnLoad: v })} label="Auto-parse pages on load" />
-      <Toggle value={settings.hideRareWords} onChange={v => onUpdate({ hideRareWords: v })} label="Hide very rare words" description="Skip words ranked > 20,000" />
+      <SectionTitle>{_('opt.parsing')}</SectionTitle>
+      <Toggle value={settings.enabled} onChange={v => onUpdate({ enabled: v })} label={_('opt.enableSyntagma')} description={_('opt.masterSwitch')} />
+      <Toggle value={settings.autoParseOnLoad} onChange={v => onUpdate({ autoParseOnLoad: v })} label={_('opt.autoParsePages')} />
+      <Toggle value={settings.hideRareWords} onChange={v => onUpdate({ hideRareWords: v })} label={_('opt.hideRareWords')} description={_('opt.hideRareDesc')} />
 
-      <SectionTitle>Display</SectionTitle>
-      <Toggle value={settings.showComprehensionHeader} onChange={v => onUpdate({ showComprehensionHeader: v })} label="Show comprehension header bar" />
-      <Toggle value={settings.showLearningStatusColors} onChange={v => onUpdate({ showLearningStatusColors: v })} label="Show status colors" description="Red = unknown, Amber = learning" />
-      <Toggle value={settings.showInlineTranslations} onChange={v => onUpdate({ showInlineTranslations: v })} label="Show inline Turkish translations" />
+      <SectionTitle>{_('opt.display')}</SectionTitle>
+      <Toggle value={settings.showComprehensionHeader} onChange={v => onUpdate({ showComprehensionHeader: v })} label={_('opt.showHeader')} />
+      <Toggle value={settings.showLearningStatusColors} onChange={v => onUpdate({ showLearningStatusColors: v })} label={_('opt.showStatusColors')} description={_('opt.statusColorDesc')} />
+      <Toggle value={settings.showInlineTranslations} onChange={v => onUpdate({ showInlineTranslations: v })} label={_('opt.showInlineTr')} />
 
       <Select
-        label="Your English level"
+        label={_('opt.yourLevel')}
         value={settings.learnerLevel}
         onChange={v => onUpdate({ learnerLevel: v as UserSettings['learnerLevel'] })}
         options={[
-          { value: 'beginner', label: 'Beginner (A1 · ~1,235 words)' },
-          { value: 'elementary', label: 'Elementary (A2 · ~2,531 words)' },
-          { value: 'intermediate', label: 'Intermediate (B1 · ~4,535 words)' },
-          { value: 'upper-intermediate', label: 'Upper Intermediate (B2 · ~6,983 words)' },
-          { value: 'advanced', label: 'Advanced (C2 · ~9,190 words)' },
+          { value: 'beginner', label: _('level.beginner') },
+          { value: 'elementary', label: _('level.elementary') },
+          { value: 'intermediate', label: _('level.intermediate') },
+          { value: 'upper-intermediate', label: _('level.upperIntermediate') },
+          { value: 'pre-advanced', label: _('level.preAdvanced') },
+          { value: 'advanced', label: _('level.advanced') },
         ]}
       />
 
-      <SectionTitle>Reader</SectionTitle>
-      <Toggle value={settings.readerEnableInlineTranslations} onChange={v => onUpdate({ readerEnableInlineTranslations: v })} label="Inline translations in reader" />
-      <Toggle value={settings.readerShowLearningStatusColors} onChange={v => onUpdate({ readerShowLearningStatusColors: v })} label="Status colors in reader" />
-      <Toggle value={settings.readerAutoParseChapterOnOpen} onChange={v => onUpdate({ readerAutoParseChapterOnOpen: v })} label="Auto-parse chapters on open" />
+      <SectionTitle>{_('opt.reader')}</SectionTitle>
+      <Toggle value={settings.readerEnableInlineTranslations} onChange={v => onUpdate({ readerEnableInlineTranslations: v })} label={_('opt.readerInlineTr')} />
+      <Toggle value={settings.readerShowLearningStatusColors} onChange={v => onUpdate({ readerShowLearningStatusColors: v })} label={_('opt.readerStatusColors')} />
+      <Toggle value={settings.readerAutoParseChapterOnOpen} onChange={v => onUpdate({ readerAutoParseChapterOnOpen: v })} label={_('opt.readerAutoParse')} />
       <Select
-        label="Reader theme"
+        label={_('opt.readerTheme')}
         value={settings.readerTheme}
         onChange={v => onUpdate({ readerTheme: v as UserSettings['readerTheme'] })}
         options={[
-          { value: 'light', label: 'Light' },
-          { value: 'sepia', label: 'Sepia' },
-          { value: 'dark', label: 'Dark' },
+          { value: 'light', label: _('opt.light') },
+          { value: 'sepia', label: _('opt.sepia') },
+          { value: 'dark', label: _('opt.dark') },
         ]}
       />
     </div>
@@ -351,6 +355,7 @@ function toWordStatus(raw: unknown): WordStatus {
 }
 
 function WordBrowserTab({ settings }: { settings: UserSettings }) {
+  const _ = useT(settings);
   const [words, setWords] = useState<WordKnowledgeEntry[]>([]);
   const [filter, setFilter] = useState<StatusFilter>('all');
   const [search, setSearch] = useState('');
@@ -498,34 +503,34 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
 
   const upsertWord = useCallback(async (lemma: string, status: WordStatus) => {
     const normalized = normalizeLemma(lemma);
-    if (!normalized) return { ok: false, error: 'Please enter a word.' };
+    if (!normalized) return { ok: false, error: _('opt.enterWord') };
     return sendMessage<{ ok: boolean; error?: string }>({
       type: 'UPSERT_WORD_KNOWLEDGE',
       payload: { lemma: normalized, status },
     });
-  }, []);
+  }, [_]);
 
   const removeWord = useCallback(async (lemma: string) => {
     const normalized = normalizeLemma(lemma);
-    if (!normalized) return { ok: false, error: 'Invalid word.' };
+    if (!normalized) return { ok: false, error: _('opt.enterWord') };
     return sendMessage<{ ok: boolean; error?: string }>({
       type: 'DELETE_WORD_KNOWLEDGE',
       payload: { lemma: normalized },
     });
-  }, []);
+  }, [_]);
 
   const handleCreate = useCallback(async () => {
     setActionError(null);
     const normalized = normalizeLemma(newLemma);
     if (!normalized) {
-      setActionError('Please enter a word.');
+      setActionError(_('opt.enterWord'));
       return;
     }
     setSavingLemma(`create:${normalized}`);
     try {
       const result = await upsertWord(normalized, newStatus);
       if (!result.ok) {
-        setActionError(result.error ?? 'Could not create word.');
+        setActionError(result.error ?? _('opt.couldNotCreate'));
         return;
       }
       setNewLemma('');
@@ -535,7 +540,7 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
     } finally {
       setSavingLemma(null);
     }
-  }, [newLemma, newStatus, upsertWord, fetchWords]);
+  }, [newLemma, newStatus, upsertWord, fetchWords, _]);
 
   const handleStatusChange = useCallback(async (lemma: string, nextStatus: EditableWordStatus) => {
     setActionError(null);
@@ -543,7 +548,7 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
     try {
       const result = await upsertWord(lemma, nextStatus);
       if (!result.ok) {
-        setActionError(result.error ?? 'Could not update word.');
+        setActionError(result.error ?? _('opt.couldNotUpdate'));
         return;
       }
       await fetchWords(0, false);
@@ -556,12 +561,12 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
 
   const handleDelete = useCallback(async (lemma: string) => {
     setActionError(null);
-    if (!window.confirm(`Remove "${lemma}" from known words?`)) return;
+    if (!window.confirm(_('opt.removeConfirm').replace('$1', lemma))) return;
     setDeletingLemma(lemma);
     try {
       const result = await removeWord(lemma);
       if (!result.ok) {
-        setActionError(result.error ?? 'Could not delete word.');
+        setActionError(result.error ?? _('opt.couldNotDelete'));
         return;
       }
       await fetchWords(0, false);
@@ -572,7 +577,7 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
     }
   }, [removeWord, fetchWords]);
 
-  if (loading) return <div style={{ color: C.subtext, padding: '20px', textAlign: 'center' }}>Loading words...</div>;
+  if (loading) return <div style={{ color: C.subtext, padding: '20px', textAlign: 'center' }}>{_('opt.loadingWords')}</div>;
 
   return (
     <div>
@@ -596,7 +601,7 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
           value={newLemma}
           onChange={e => setNewLemma(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && handleCreate()}
-          placeholder="Add word..."
+          placeholder={_('opt.addWord')}
           style={{
             flex: 1,
             minWidth: '120px',
@@ -642,7 +647,7 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
             opacity: !newLemma.trim() || savingLemma?.startsWith('create:') || deletingLemma !== null ? 0.6 : 1,
           }}
         >
-          {savingLemma?.startsWith('create:') ? 'Saving...' : '+ Add'}
+          {savingLemma?.startsWith('create:') ? _('common.saving') : _('opt.add')}
         </button>
       </div>
 
@@ -651,7 +656,7 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
           type="text"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          placeholder="Search words..."
+          placeholder={_('opt.searchWords')}
           style={{
             flex: 1,
             minWidth: '120px',
@@ -677,11 +682,11 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
             outline: 'none',
           }}
         >
-          <option value="all">All</option>
-          <option value="unknown">Unknown</option>
-          <option value="learning">Learning</option>
-          <option value="known">Known</option>
-          <option value="ignored">Ignored</option>
+          <option value="all">{_('common.all')}</option>
+          <option value="unknown">{_('opt.unknown')}</option>
+          <option value="learning">{_('opt.learning')}</option>
+          <option value="known">{_('opt.known')}</option>
+          <option value="ignored">{_('opt.ignored')}</option>
         </select>
         <select
           value={sortBy}
@@ -696,19 +701,19 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
             outline: 'none',
           }}
         >
-          <option value="lemma">Sort: A-Z</option>
-          <option value="status">Sort: Status</option>
-          <option value="updatedAt">Sort: Last updated</option>
+          <option value="lemma">{_('opt.sortAZ')}</option>
+          <option value="status">{_('opt.sortStatus')}</option>
+          <option value="updatedAt">{_('opt.sortUpdated')}</option>
         </select>
         <button onClick={() => fetchWords()} style={{ background: C.surface0, border: `1px solid ${C.surface1}`, borderRadius: '4px', padding: '4px 8px', color: C.text, cursor: 'pointer', fontSize: '12px' }}>
-          Refresh
+          {_('common.refresh')}
         </button>
       </div>
 
       <div style={{ fontSize: '12px', color: C.subtext, marginBottom: '8px' }}>
-        {displayedTotal} words · {displayedKnown} known · {displayedLearning} learning
+        {displayedTotal} {_('opt.words')} · {displayedKnown} {_('opt.known')} · {displayedLearning} {_('opt.learning')}
         <span style={{ color: source === 'server' ? C.green : C.amber, marginLeft: '6px' }}>
-          {source === 'server' ? 'Live' : 'Local'}
+          {source === 'server' ? _('opt.live') : _('opt.local')}
         </span>
       </div>
 
@@ -719,10 +724,10 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
           color: C.subtext,
           fontSize: '13px',
         }}>
-          No words tracked yet.
+          {_('opt.noWordsYet')}
           <br />
           <span style={{ fontSize: '12px' }}>
-            Click on words while reading to mark them as known/learning.
+            {_('opt.clickToMark')}
           </span>
         </div>
       ) : (
@@ -730,7 +735,7 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
             <thead>
               <tr style={{ borderBottom: `2px solid ${C.surface1}` }}>
-                {['Word', 'Status', 'Last Updated', 'Actions'].map(h => (
+                {[_('opt.word'), _('opt.status'), _('opt.lastUpdated'), _('opt.actions')].map(h => (
                   <th key={h} style={{ textAlign: 'left', padding: '6px 8px', color: C.subtext, fontWeight: 600 }}>{h}</th>
                 ))}
               </tr>
@@ -790,7 +795,7 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
                         opacity: savingLemma === entry.lemma || deletingLemma === entry.lemma ? 0.6 : 1,
                       }}
                     >
-                      {deletingLemma === entry.lemma ? 'Removing...' : 'Delete'}
+                      {deletingLemma === entry.lemma ? _('opt.removing') : _('common.delete')}
                     </button>
                   </td>
                 </tr>
@@ -812,7 +817,7 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
                   fontSize: '12px',
                 }}
               >
-                {loadingMore ? 'Loading...' : 'Show more'}
+                {loadingMore ? _('common.loading') : _('opt.showMore')}
               </button>
             </div>
           )}
@@ -827,9 +832,9 @@ function WordBrowserTab({ settings }: { settings: UserSettings }) {
         fontSize: '12px',
         color: C.subtext,
       }}>
-        Server: <span style={{ color: C.text }}>{apiBase}</span>
+        {_('opt.server')} <span style={{ color: C.text }}>{apiBase}</span>
         <br />
-        Account: <span style={{ color: C.text }}>{settings.authEmail ?? 'Not logged in'}</span>
+        {_('opt.account')}: <span style={{ color: C.text }}>{settings.authEmail ?? _('common.notLoggedIn')}</span>
       </div>
     </div>
   );
@@ -896,7 +901,7 @@ function AudioPlayButton({ url }: { url: string }) {
       }}
     >
       {error ? (
-        <>✁EError</>
+        <>Error</>
       ) : playing ? (
         <>
           <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor">
@@ -920,6 +925,7 @@ function AudioPlayButton({ url }: { url: string }) {
 // ─── Tab: Flashcards ─────────────────────────────────────────────────────────
 
 function FlashcardsTab({ settings, onUpdate }: { settings: UserSettings; onUpdate: (patch: Partial<UserSettings>) => void }) {
+  const _ = useT(settings);
   const [cards, setCards] = useState<FlashcardPayload[]>([]);
   const [collections, setCollections] = useState<CollectionItem[]>([]);
   const [viewFilter, setViewFilter] = useState<number | null>(null);
@@ -1059,7 +1065,7 @@ function FlashcardsTab({ settings, onUpdate }: { settings: UserSettings; onUpdat
     } catch {}
   };
 
-  if (loading) return <div style={{ color: C.subtext, padding: '20px', textAlign: 'center' }}>Loading flashcards from server…</div>;
+  if (loading) return <div style={{ color: C.subtext, padding: '20px', textAlign: 'center' }}>{_('opt.loadingFlashcards')}</div>;
 
   return (
     <div>
@@ -1077,9 +1083,9 @@ function FlashcardsTab({ settings, onUpdate }: { settings: UserSettings; onUpdat
           justifyContent: 'space-between',
           alignItems: 'center',
         }}>
-          <span>⚠ Could not fetch from server ({error}). Showing local cards.</span>
+          <span>⚠ {_('opt.couldNotFetch')} ({error}). {_('opt.showingLocal')}</span>
           <button onClick={fetchCards} style={{ background: C.red, color: C.base, border: 'none', borderRadius: '4px', padding: '4px 8px', cursor: 'pointer', fontSize: '11px' }}>
-            Retry
+            {_('common.retry')}
           </button>
         </div>
       )}
@@ -1088,8 +1094,8 @@ function FlashcardsTab({ settings, onUpdate }: { settings: UserSettings; onUpdat
       {settings.authToken && (
         <div style={{ marginBottom: '12px' }}>
           <div style={{ fontSize: '12px', color: C.subtext, marginBottom: '6px' }}>
-            Saving to: <strong style={{ color: C.text }}>{settings.activeCollectionName || 'No deck (unsorted)'}</strong>
-            <span style={{ marginLeft: '6px', color: C.surface2 }}> Echange in General tab</span>
+            {_('opt.savingTo')} <strong style={{ color: C.text }}>{settings.activeCollectionName || _('opt.noDeck')}</strong>
+            <span style={{ marginLeft: '6px', color: C.surface2 }}> {_('opt.changeInGeneral')}</span>
           </div>
           <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '8px' }}>
             <button
@@ -1103,9 +1109,7 @@ function FlashcardsTab({ settings, onUpdate }: { settings: UserSettings; onUpdat
                 fontSize: '12px',
                 cursor: 'pointer',
               }}
-            >
-              All
-            </button>
+            >{_('common.all')}</button>
             {collections.map(coll => (
               <div key={coll.collectionId} style={{ display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
                 <button
@@ -1134,9 +1138,7 @@ function FlashcardsTab({ settings, onUpdate }: { settings: UserSettings; onUpdat
                     fontSize: '10px',
                     cursor: 'pointer',
                   }}
-                >
-                  ÁE
-                </button>
+                >×</button>
               </div>
             ))}
           </div>
@@ -1146,7 +1148,7 @@ function FlashcardsTab({ settings, onUpdate }: { settings: UserSettings; onUpdat
               value={newCollName}
               onChange={e => setNewCollName(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleCreateCollection()}
-              placeholder="New collection name…"
+              placeholder={_('opt.newCollectionName')}
               style={{
                 flex: 1,
                 background: C.surface0,
@@ -1172,7 +1174,7 @@ function FlashcardsTab({ settings, onUpdate }: { settings: UserSettings; onUpdat
                 opacity: creatingColl || !newCollName.trim() ? 0.5 : 1,
               }}
             >
-              + Create
+              {_('opt.create')}
             </button>
           </div>
         </div>
@@ -1181,17 +1183,17 @@ function FlashcardsTab({ settings, onUpdate }: { settings: UserSettings; onUpdat
       {/* Toolbar */}
       <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', alignItems: 'center' }}>
         <span style={{ fontSize: '13px', color: C.subtext, flex: 1 }}>
-          {filteredCards.length} cards · {selected.size} selected
-          {!error && <span style={{ color: C.green, marginLeft: '6px' }}>◁ELive</span>}
+          {filteredCards.length} {_('opt.cards')} · {selected.size} {_('opt.selected')}
+          {!error && <span style={{ color: C.green, marginLeft: '6px' }}>{_('opt.live')}</span>}
         </span>
         <button onClick={() => fetchCards()} style={{ background: C.surface0, border: `1px solid ${C.surface1}`, borderRadius: '4px', padding: '4px 8px', color: C.text, cursor: 'pointer', fontSize: '12px' }}>
-          ↻ Refresh
+          ↻ {_('common.refresh')}
         </button>
         <button onClick={selectAll} style={{ background: C.surface0, border: `1px solid ${C.surface1}`, borderRadius: '4px', padding: '4px 8px', color: C.text, cursor: 'pointer', fontSize: '12px' }}>
-          All
+          {_('common.all')}
         </button>
         <button onClick={clearAll} style={{ background: C.surface0, border: `1px solid ${C.surface1}`, borderRadius: '4px', padding: '4px 8px', color: C.text, cursor: 'pointer', fontSize: '12px' }}>
-          None
+          {_('opt.none')}
         </button>
       </div>
 
@@ -1202,10 +1204,10 @@ function FlashcardsTab({ settings, onUpdate }: { settings: UserSettings; onUpdat
           color: C.subtext,
           fontSize: '13px',
         }}>
-          {viewFilter !== null ? 'No cards in this collection.' : 'No flashcards yet.'}
+          {viewFilter !== null ? _('opt.noCardsInColl') : _('opt.noFlashcards')}
           <br />
           <span style={{ fontSize: '12px' }}>
-            Click the card icon on a word popup to create one.
+            {_('opt.clickCardIcon')}
           </span>
         </div>
       ) : (
@@ -1280,7 +1282,7 @@ function FlashcardsTab({ settings, onUpdate }: { settings: UserSettings; onUpdat
                   flexShrink: 0,
                 }}
               >
-                Edit
+                {_('opt.edit')}
               </button>
               <button
                 onClick={e => { e.stopPropagation(); handleDeleteCard(card.id); }}
@@ -1294,7 +1296,7 @@ function FlashcardsTab({ settings, onUpdate }: { settings: UserSettings; onUpdat
                   flexShrink: 0,
                 }}
               >
-                ÁE
+                ×
               </button>
             </div>
           ))}
@@ -1310,9 +1312,9 @@ function FlashcardsTab({ settings, onUpdate }: { settings: UserSettings; onUpdat
         fontSize: '12px',
         color: C.subtext,
       }}>
-        Server: <span style={{ color: C.text }}>{apiBase}</span>
+        {_('opt.server')} <span style={{ color: C.text }}>{apiBase}</span>
         <br />
-        Account: <span style={{ color: C.text }}>{settings.authEmail ?? 'Not logged in'}</span>
+        {_('opt.account')}: <span style={{ color: C.text }}>{settings.authEmail ?? _('common.notLoggedIn')}</span>
       </div>
     </div>
   );
@@ -1344,69 +1346,70 @@ function SliderRow({ label, value, min, max, step, unit, onChange }: {
 }
 
 function VideoTab({ settings, onUpdate }: { settings: UserSettings; onUpdate: (p: Partial<UserSettings>) => void }) {
+  const _ = useT(settings);
   return (
     <div>
-      <SectionTitle>Subtitles</SectionTitle>
-      <SliderRow label="Target subtitle size" value={settings.targetSubtitleSize} min={50} max={300} step={10} unit="%" onChange={v => onUpdate({ targetSubtitleSize: v })} />
-      <SliderRow label="Secondary subtitle size" value={settings.secondarySubtitleSize} min={50} max={300} step={10} unit="%" onChange={v => onUpdate({ secondarySubtitleSize: v })} />
-      <SliderRow label="Target timing offset" value={settings.targetSubtitleOffsetMs} min={-5000} max={5000} step={50} unit="ms" onChange={v => onUpdate({ targetSubtitleOffsetMs: v })} />
-      <SliderRow label="Secondary timing offset" value={settings.secondarySubtitleOffsetMs} min={-5000} max={5000} step={50} unit="ms" onChange={v => onUpdate({ secondarySubtitleOffsetMs: v })} />
+      <SectionTitle>{_('vid.subtitles')}</SectionTitle>
+      <SliderRow label={_('vid.targetSize')} value={settings.targetSubtitleSize} min={50} max={300} step={10} unit="%" onChange={v => onUpdate({ targetSubtitleSize: v })} />
+      <SliderRow label={_('vid.secondarySize')} value={settings.secondarySubtitleSize} min={50} max={300} step={10} unit="%" onChange={v => onUpdate({ secondarySubtitleSize: v })} />
+      <SliderRow label={_('vid.targetOffset')} value={settings.targetSubtitleOffsetMs} min={-5000} max={5000} step={50} unit="ms" onChange={v => onUpdate({ targetSubtitleOffsetMs: v })} />
+      <SliderRow label={_('vid.secondaryOffset')} value={settings.secondarySubtitleOffsetMs} min={-5000} max={5000} step={50} unit="ms" onChange={v => onUpdate({ secondarySubtitleOffsetMs: v })} />
       <Select
-        label="Obscure target subtitle"
+        label={_('vid.obscureTarget')}
         value={settings.targetSubtitleObscure}
         onChange={v => onUpdate({ targetSubtitleObscure: v as UserSettings['targetSubtitleObscure'] })}
         options={[
-          { value: 'off', label: 'Off' },
-          { value: 'blur', label: 'Blur until revealed' },
-          { value: 'hide', label: 'Hide until revealed' },
+          { value: 'off', label: _('vid.obscureOff') },
+          { value: 'blur', label: _('vid.obscureBlur') },
+          { value: 'hide', label: _('vid.obscureHide') },
         ]}
       />
       {settings.targetSubtitleObscure !== 'off' && <>
-        <Toggle value={settings.revealOnPause} onChange={v => onUpdate({ revealOnPause: v })} label="Reveal on pause" />
-        <Toggle value={settings.revealOnHover} onChange={v => onUpdate({ revealOnHover: v })} label="Reveal on hover" />
-        <Toggle value={settings.revealByKnownStatus} onChange={v => onUpdate({ revealByKnownStatus: v })} label="Reveal if all words known" />
+        <Toggle value={settings.revealOnPause} onChange={v => onUpdate({ revealOnPause: v })} label={_('vid.revealOnPause')} />
+        <Toggle value={settings.revealOnHover} onChange={v => onUpdate({ revealOnHover: v })} label={_('vid.revealOnHover')} />
+        <Toggle value={settings.revealByKnownStatus} onChange={v => onUpdate({ revealByKnownStatus: v })} label={_('vid.revealByKnown')} />
       </>}
-      <Toggle value={settings.removeBracketedSubtitles} onChange={v => onUpdate({ removeBracketedSubtitles: v })} label="Strip [bracketed] subtitles" description="Remove sound effects like [music]" />
+      <Toggle value={settings.removeBracketedSubtitles} onChange={v => onUpdate({ removeBracketedSubtitles: v })} label={_('vid.stripBracketed')} description={_('vid.stripBracketedDesc')} />
 
-      <SectionTitle>Auto-Pause</SectionTitle>
+      <SectionTitle>{_('vid.autoPause')}</SectionTitle>
       <Select
-        label="Auto-pause mode"
+        label={_('vid.autoPauseMode')}
         value={settings.autoPauseMode}
         onChange={v => onUpdate({ autoPauseMode: v as UserSettings['autoPauseMode'] })}
         options={[
-          { value: 'off', label: 'Off' },
-          { value: 'before', label: 'Before subtitle' },
-          { value: 'after', label: 'After subtitle' },
-          { value: 'before-and-after', label: 'Before & after' },
-          { value: 'rewind-and-pause', label: 'Rewind & pause' },
+          { value: 'off', label: _('vid.apOff') },
+          { value: 'before', label: _('vid.apBefore') },
+          { value: 'after', label: _('vid.apAfter') },
+          { value: 'before-and-after', label: _('vid.apBeforeAfter') },
+          { value: 'rewind-and-pause', label: _('vid.apRewind') },
         ]}
       />
       {(settings.autoPauseMode === 'after' || settings.autoPauseMode === 'before-and-after') && (
-        <SliderRow label="End tolerance" value={settings.autoPauseDelayToleranceMs} min={0} max={2000} step={50} unit="ms" onChange={v => onUpdate({ autoPauseDelayToleranceMs: v })} />
+        <SliderRow label={_('vid.endTolerance')} value={settings.autoPauseDelayToleranceMs} min={0} max={2000} step={50} unit="ms" onChange={v => onUpdate({ autoPauseDelayToleranceMs: v })} />
       )}
 
-      <SectionTitle>Scene Skipping</SectionTitle>
+      <SectionTitle>{_('vid.sceneSkipping')}</SectionTitle>
       <Select
-        label="Silent gaps"
+        label={_('vid.silentGaps')}
         value={settings.sceneSkipMode}
         onChange={v => onUpdate({ sceneSkipMode: v as UserSettings['sceneSkipMode'] })}
         options={[
-          { value: 'off', label: 'Off' },
-          { value: '2x', label: '2ÁEspeed' },
-          { value: '4x', label: '4ÁEspeed' },
-          { value: '6x', label: '6ÁEspeed' },
-          { value: '8x', label: '8ÁEspeed' },
-          { value: 'jump', label: 'Jump to next subtitle' },
+          { value: 'off', label: _('vid.skipOff') },
+          { value: '2x', label: '2× speed' },
+          { value: '4x', label: '4× speed' },
+          { value: '6x', label: '6× speed' },
+          { value: '8x', label: '8× speed' },
+          { value: 'jump', label: _('vid.skipJump') },
         ]}
       />
 
-      <SectionTitle>Word Interaction</SectionTitle>
-      <Toggle value={settings.pauseOnWordInteraction} onChange={v => onUpdate({ pauseOnWordInteraction: v })} label="Pause on word click" />
-      <Toggle value={settings.resumeAfterInteraction} onChange={v => onUpdate({ resumeAfterInteraction: v })} label="Resume after closing popup" />
+      <SectionTitle>{_('vid.wordInteraction')}</SectionTitle>
+      <Toggle value={settings.pauseOnWordInteraction} onChange={v => onUpdate({ pauseOnWordInteraction: v })} label={_('vid.pauseOnClick')} />
+      <Toggle value={settings.resumeAfterInteraction} onChange={v => onUpdate({ resumeAfterInteraction: v })} label={_('vid.resumeAfterPopup')} />
       {settings.resumeAfterInteraction && (
-        <SliderRow label="Resume delay" value={settings.resumeDelayMs} min={0} max={3000} step={100} unit="ms" onChange={v => onUpdate({ resumeDelayMs: v })} />
+        <SliderRow label={_('vid.resumeDelay')} value={settings.resumeDelayMs} min={0} max={3000} step={100} unit="ms" onChange={v => onUpdate({ resumeDelayMs: v })} />
       )}
-      <SliderRow label="Click delay" value={settings.interactionDelayMs} min={0} max={3000} step={100} unit="ms" onChange={v => onUpdate({ interactionDelayMs: v })} />
+      <SliderRow label={_('vid.clickDelay')} value={settings.interactionDelayMs} min={0} max={3000} step={100} unit="ms" onChange={v => onUpdate({ interactionDelayMs: v })} />
     </div>
   );
 }
@@ -1424,6 +1427,11 @@ export function OptionsApp() {
   const [loading, setLoading] = useState(true);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const _ = useT(settings);
+  const handleLocaleToggle = useCallback((next: UILocale) => {
+    setSettings(prev => ({ ...prev, uiLocale: next }));
+    sendMessage({ type: 'SET_SETTINGS', payload: { uiLocale: next } }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     sendMessage<UserSettings>({ type: 'GET_SETTINGS', payload: null })
@@ -1499,7 +1507,7 @@ export function OptionsApp() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginRight: '16px' }}>
             <span style={{ color: C.blue, fontWeight: 800, fontSize: '18px' }}>Syn</span>
             <span style={{ color: C.mauve, fontWeight: 800, fontSize: '18px' }}>tagma</span>
-            <span style={{ color: C.subtext, fontSize: '12px', marginLeft: '4px' }}>Settings</span>
+            <span style={{ color: C.subtext, fontSize: '12px', marginLeft: '4px' }}>{_('common.settings')}</span>
           </div>
 
           {/* Tabs */}
@@ -1520,7 +1528,7 @@ export function OptionsApp() {
                 transition: 'all 0.15s',
               }}
             >
-              {tab.label}
+              {tab.id === 'general' ? _('opt.general') : (settings.uiLocale === 'tr' ? 'Video' : 'Video')}
             </button>
           ))}
 
@@ -1549,8 +1557,9 @@ export function OptionsApp() {
               cursor: 'pointer',
             }}
           >
-            Open Workspace
+            {_('opt.openWorkspace')}
           </button>
+          <LocaleToggle settings={settings} onToggle={handleLocaleToggle} />
           {saveStatus !== 'idle' && (
             <span style={{
               fontSize: '12px',
@@ -1558,7 +1567,7 @@ export function OptionsApp() {
               transition: 'opacity 0.3s',
               opacity: saveStatus === 'saved' ? 1 : 1,
             }}>
-              {saveStatus === 'saving' ? 'Saving…' : 'Saved ✓'}
+              {saveStatus === 'saving' ? _('opt.saving') : _('opt.saved')}
             </span>
           )}
         </div>

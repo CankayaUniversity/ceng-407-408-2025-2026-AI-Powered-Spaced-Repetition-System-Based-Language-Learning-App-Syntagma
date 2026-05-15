@@ -6,9 +6,10 @@ import { sendMessage } from '../shared/messages';
 import { parseSubtitleFile } from '../content/video/subtitle-parser';
 import { buildSentences } from '../content/video/sentence-grouping';
 import type { SentenceGroup } from '../content/video/sentence-grouping';
-import { lemmatize } from '../shared/lemmatizer';
 import { lookupFrequency } from '../shared/frequency';
 import { initFrequencyTable } from '../shared/frequency';
+import { tokenize } from '../content/video/tokenizer';
+import { useT, LocaleToggle, type UILocale } from '../shared/i18n';
 
 // ─── Theme (warm, matches extension) ─────────────────────────────────────────
 
@@ -25,44 +26,6 @@ const C = {
   red:      '#D97762',
   overlay:  'rgba(245, 241, 233, 0.97)',
 };
-
-// ─── Text tokeniser (expands contractions for proper lemmatization) ──────────
-
-interface TextToken { text: string; isWord: boolean; lemmas?: string[]; }
-
-const CONTRACTIONS: Record<string, string[]> = {
-  "i'm": ['i', 'be'], "i'll": ['i', 'will'], "i've": ['i', 'have'], "i'd": ['i', 'would'],
-  "it's": ['it', 'be'], "that's": ['that', 'be'], "what's": ['what', 'be'],
-  "there's": ['there', 'be'], "here's": ['here', 'be'], "who's": ['who', 'be'],
-  "he's": ['he', 'be'], "she's": ['she', 'be'], "let's": ['let', 'us'],
-  "won't": ['will', 'not'], "can't": ['can', 'not'], "don't": ['do', 'not'],
-  "doesn't": ['do', 'not'], "didn't": ['do', 'not'], "isn't": ['be', 'not'],
-  "aren't": ['be', 'not'], "wasn't": ['be', 'not'], "weren't": ['be', 'not'],
-  "hasn't": ['have', 'not'], "haven't": ['have', 'not'], "hadn't": ['have', 'not'],
-  "wouldn't": ['would', 'not'], "couldn't": ['could', 'not'], "shouldn't": ['should', 'not'],
-  "they're": ['they', 'be'], "we're": ['we', 'be'], "you're": ['you', 'be'],
-  "they've": ['they', 'have'], "we've": ['we', 'have'], "you've": ['you', 'have'],
-  "they'll": ['they', 'will'], "we'll": ['we', 'will'], "you'll": ['you', 'will'],
-  "they'd": ['they', 'would'], "we'd": ['we', 'would'], "you'd": ['you', 'would'],
-};
-
-function tokenize(text: string): TextToken[] {
-  const raw = text
-    .split(/(\b[a-zA-Z''']+\b)/)
-    .filter(p => p.length > 0);
-
-  const out: TextToken[] = [];
-  for (const p of raw) {
-    const normalized = p.replace(/['']/g, "'").toLowerCase();
-    const expansion = CONTRACTIONS[normalized];
-    if (expansion) {
-      out.push({ text: p, isWord: true, lemmas: expansion });
-    } else {
-      out.push({ text: p, isWord: /^[a-zA-Z''']+$/.test(p) });
-    }
-  }
-  return out;
-}
 
 function encodeWav(buffer: AudioBuffer): Blob {
   const numCh = buffer.numberOfChannels;
@@ -280,17 +243,20 @@ const CueRow = memo(function CueRow({ sentence, isActive, selected, lexemes, sho
     if (isActive) rowRef.current?.scrollIntoView({ block: 'nearest', behavior: 'auto' });
   }, [isActive]);
 
-  const allLemmas = useMemo(() => {
-    const out: string[] = [];
+  const tokenStatuses = useMemo(() => {
+    const out: Array<'known' | 'learning' | 'unknown'> = [];
     for (const tok of tokens) {
       if (!tok.isWord) continue;
-      if (tok.lemmas) out.push(...tok.lemmas);
-      else out.push(lemmatize(tok.text));
+      const lookups = tok.lemmas ?? [tok.text.toLowerCase()];
+      const statuses = lookups.map(l => lexemes[l]?.status);
+      if (statuses.includes('known') || statuses.includes('ignored')) out.push('known');
+      else if (statuses.includes('learning')) out.push('learning');
+      else out.push('unknown');
     }
     return out;
-  }, [tokens]);
-  const hasUnknown = allLemmas.some(l => { const s = lexemes[l]?.status; return !s || s === 'unknown'; });
-  const hasLearning = !hasUnknown && allLemmas.some(l => lexemes[l]?.status === 'learning');
+  }, [tokens, lexemes]);
+  const hasUnknown = tokenStatuses.includes('unknown');
+  const hasLearning = !hasUnknown && tokenStatuses.includes('learning');
 
   const leftBorder = isActive
     ? `3px solid rgba(233,196,106,1)`
@@ -380,10 +346,11 @@ const CueRow = memo(function CueRow({ sentence, isActive, selected, lexemes, sho
       }}>
         {tokens.map((tok, ti) => {
           if (!tok.isWord) return <span key={ti}>{tok.text}</span>;
-          const lookups = tok.lemmas ?? [lemmatize(tok.text)];
-          const statuses = lookups.map(l => lexemes[l]?.status ?? 'unknown');
-          const worst = statuses.includes('unknown') ? 'unknown'
-            : statuses.includes('learning') ? 'learning' : 'known';
+          const lookups = tok.lemmas ?? [tok.text.toLowerCase()];
+          const statuses = lookups.map(l => lexemes[l]?.status);
+          const worst = statuses.includes('known') ? 'known'
+            : statuses.includes('learning') ? 'learning'
+            : statuses.includes('ignored') ? 'ignored' : 'unknown';
           const underlineColor = showColors
             ? (worst === 'unknown'  ? 'rgba(217,119,98,0.55)' :
                worst === 'learning' ? 'rgba(233,196,106,0.55)' :
@@ -423,6 +390,8 @@ interface WordPopupState {
   endMs: number;
   anchorRect: DOMRect;
 }
+
+
 
 function VideoWordPopup({
   popup, lexemes, settings, videoName, videoRef, audioRef, audioSrc,
@@ -491,7 +460,7 @@ function VideoWordPopup({
     }).then(res => setTranslations(res?.translations ?? [])).catch(() => {});
   }, [word]);
 
-  // Smart positioning: below word, flip above if needed
+  // Position popup on the right side, just left of the 300px sidebar, near the top
   useEffect(() => {
     const popup = popupRef.current;
     if (!popup) return;
@@ -499,17 +468,12 @@ function VideoWordPopup({
     const vW = window.innerWidth;
     const pH = popup.offsetHeight || 300;
     const pW = popup.offsetWidth || 340;
+    const sidebarWidth = 300;
 
-    let top = anchorRect.bottom + 6;
-    let left = anchorRect.left;
+    const left = vW - sidebarWidth - pW - 4;
+    const top = 50;
 
-    if (top + pH + 20 > vH) top = anchorRect.top - pH - 6;
-    if (top < 6) top = 6;
-    if (top + pH > vH - 6) top = vH - pH - 6;
-    if (left + pW > vW - 12) left = vW - pW - 12;
-    if (left < 12) left = 12;
-
-    setPosition({ top, left });
+    setPosition({ top: Math.min(top, vH - pH - 6), left: Math.max(12, left) });
   }, [anchorRect]);
 
   // Drag-and-drop
@@ -601,14 +565,15 @@ function VideoWordPopup({
         tags: ['syntagma', 'video-player'],
         sentenceAudioDataUrl,
       };
-      const result = await sendMessage<{ ok: boolean; error?: string }>({
-        type: 'CREATE_FLASHCARD',
-        payload: card,
-      });
+      const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000));
+      const result = await Promise.race([
+        sendMessage<{ ok: boolean; error?: string }>({ type: 'CREATE_FLASHCARD', payload: card }),
+        timeout,
+      ]);
       if (!result.ok) throw new Error(result.error || 'Server error');
       setCardSaved('done');
       handleStatusChange('learning');
-      setTimeout(() => setCardSaved('idle'), 2000);
+      setTimeout(() => setCardSaved('idle'), 2500);
     } catch {
       setCardSaved('error');
       setTimeout(() => setCardSaved('idle'), 3000);
@@ -709,22 +674,34 @@ function VideoWordPopup({
           <button
             onClick={handleSaveCard}
             title={!settings.authToken ? 'Log in to save cards' : cardSaved === 'done' ? 'Card saved!' : 'Quick add to flashcards'}
-            disabled={!settings.authToken || cardSaved === 'saving'}
+            disabled={!settings.authToken || cardSaved !== 'idle'}
             style={{
-              width: '32px', height: '32px', borderRadius: '16px',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              background: cardSaved === 'done' ? C.green : cardSaved === 'error' ? C.red : C.green,
+              height: '28px', borderRadius: '14px',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px',
+              background: cardSaved === 'done' ? C.green : cardSaved === 'error' ? C.red : cardSaved === 'saving' ? C.amber : C.green,
               color: C.base, border: 'none',
               cursor: cardSaved === 'idle' ? 'pointer' : 'default',
-              padding: 0, transition: 'background 0.2s', flexShrink: 0,
+              padding: '0 10px', transition: 'background 0.2s', flexShrink: 0,
+              fontSize: '11px', fontWeight: 700,
             }}
           >
             {cardSaved === 'done' ? (
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+              <>
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                Saved!
+              </>
             ) : cardSaved === 'error' ? (
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+              <>
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                Error
+              </>
+            ) : cardSaved === 'saving' ? (
+              <>Saving...</>
             ) : (
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="12" y1="18" x2="12" y2="12" /><line x1="9" y1="15" x2="15" y2="15" /></svg>
+              <>
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="12" y1="18" x2="12" y2="12" /><line x1="9" y1="15" x2="15" y2="15" /></svg>
+                Save
+              </>
             )}
           </button>
           <button
@@ -809,6 +786,12 @@ function VideoWordPopup({
 
 export function VideoPlayerApp() {
   const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
+  const _ = useT(settings);
+  const handleLocaleToggle = useCallback((next: UILocale) => {
+    setSettings(prev => ({ ...prev, uiLocale: next }));
+    sendMessage({ type: 'SET_SETTINGS', payload: { uiLocale: next } }).catch(() => {});
+  }, []);
+
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
   const [audioSrc, setAudioSrc] = useState<string | null>(null);
   const [videoName, setVideoName] = useState('');
@@ -1189,8 +1172,9 @@ export function VideoPlayerApp() {
     const words = overlayTokensProcessed.filter(t => t.isWord);
     if (words.length === 0) return true;
     return words.every(tok => {
-      const lookups = tok.lemmas ?? [lemmatize(tok.text)];
-      return lookups.every(l => { const s = lexemes[l]?.status; return s === 'known' || s === 'ignored'; });
+      const lookups = tok.lemmas ?? [tok.text.toLowerCase()];
+      const statuses = lookups.map(l => lexemes[l]?.status);
+      return statuses.includes('known') || statuses.includes('ignored');
     });
   }, [overlayTokensProcessed, lexemes, settings.revealByKnownStatus, settings.targetSubtitleObscure]);
 
@@ -1212,17 +1196,18 @@ export function VideoPlayerApp() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '1px' }}>
             <span style={{ color: C.blue, fontWeight: 800, fontSize: '16px' }}>Syn</span>
             <span style={{ color: C.amber, fontWeight: 800, fontSize: '16px' }}>tagma</span>
-            <span style={{ color: C.subtext, fontSize: '13px', marginLeft: '6px' }}>Video Player</span>
+            <span style={{ color: C.subtext, fontSize: '13px', marginLeft: '6px' }}>{_('video.videoPlayer')}</span>
           </div>
-          <div style={{ display: 'flex', gap: '8px' }}>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <LocaleToggle settings={settings} onToggle={handleLocaleToggle} />
             <button onClick={() => videoFileRef.current?.click()} style={{
               background: C.blue, color: '#fff', border: 'none', borderRadius: '6px',
               padding: '6px 14px', fontSize: '12px', fontWeight: 600, cursor: 'pointer',
-            }}>Import Video</button>
+            }}>{_('video.loadVideo')}</button>
             <button onClick={() => audioFileRef.current?.click()} style={{
               background: C.surface1, color: C.text, border: `1px solid ${C.surface2}`,
               borderRadius: '6px', padding: '6px 14px', fontSize: '12px', fontWeight: 600, cursor: 'pointer',
-            }}>{audioSrc ? 'Replace Audio' : 'Import Audio'}</button>
+            }}>{audioSrc ? _('common.refresh') : _('video.loadVideo')}</button>
             <button
               onClick={() => subtitleFileRef.current?.click()}
               disabled={!hasMedia}
@@ -1232,7 +1217,7 @@ export function VideoPlayerApp() {
                 borderRadius: '6px', padding: '6px 14px', fontSize: '12px', fontWeight: 600,
                 cursor: hasMedia ? 'pointer' : 'not-allowed',
               }}
-            >Import Subtitle</button>
+            >{_('video.loadSubtitles')}</button>
           </div>
         </div>
 
@@ -1248,14 +1233,14 @@ export function VideoPlayerApp() {
                 <line x1="7" y1="2" x2="7" y2="22" /><line x1="17" y1="2" x2="17" y2="22" />
                 <line x1="2" y1="12" x2="22" y2="12" />
               </svg>
-              <div style={{ fontSize: '14px' }}>No video loaded</div>
+              <div style={{ fontSize: '14px' }}>{_('video.noSubtitles')}</div>
               <div style={{ fontSize: '12px', maxWidth: '300px', textAlign: 'center', lineHeight: 1.5 }}>
-                Click "Import Video" to load a video file, then "Import Subtitle" to add subtitles.
+                {_('video.loadVideo')} → {_('video.loadSubtitles')}
               </div>
             </div>
           )}
 
-          {loading && <div style={{ color: C.subtext, fontSize: '14px' }}>Loading video...</div>}
+          {loading && <div style={{ color: C.subtext, fontSize: '14px' }}>{_('common.loading')}</div>}
 
           {videoSrc && (
             <video ref={videoRef} src={videoSrc} muted={!!audioSrc}
@@ -1318,10 +1303,11 @@ export function VideoPlayerApp() {
               >
                 {overlayTokensProcessed.map((tok, i) => {
                   if (!tok.isWord) return <span key={i} style={{ color: '#fff', textShadow: '0 1px 4px rgba(0,0,0,0.9)', fontWeight: 600 }}>{tok.text}</span>;
-                  const lookups = tok.lemmas ?? [lemmatize(tok.text)];
-                  const statuses = lookups.map(l => lexemes[l]?.status ?? 'unknown');
-                  const worst = statuses.includes('unknown') ? 'unknown'
-                    : statuses.includes('learning') ? 'learning' : 'known';
+                  const lookups = tok.lemmas ?? [tok.text.toLowerCase()];
+                  const statuses = lookups.map(l => lexemes[l]?.status);
+                  const worst = statuses.includes('known') ? 'known'
+                    : statuses.includes('learning') ? 'learning'
+                    : statuses.includes('ignored') ? 'ignored' : 'unknown';
                   const underline = settings.showLearningStatusColors
                     ? (worst === 'unknown' ? C.red : worst === 'learning' ? C.amber : 'transparent')
                     : 'transparent';
@@ -1364,7 +1350,7 @@ export function VideoPlayerApp() {
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px',
                 fontSize: '12px', color: '#E8E0D0',
               }}>
-                <span>Position</span>
+                <span>{_('vid.obscureTarget') === 'vid.obscureTarget' ? 'Position' : 'Position'}</span>
                 <div style={{ display: 'flex', gap: '4px' }}>
                   {(['bottom', 'top'] as const).map(pos => (
                     <button key={pos} onClick={() => setSubPosition(pos)} style={{
@@ -1438,9 +1424,9 @@ export function VideoPlayerApp() {
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.subtext} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/><line x1="3" y1="18" x2="18" y2="18"/>
             </svg>
-            <span style={{ fontSize: '11px', fontWeight: 700, color: C.subtext, letterSpacing: '0.6px' }}>TRANSCRIPT</span>
+            <span style={{ fontSize: '11px', fontWeight: 700, color: C.subtext, letterSpacing: '0.6px' }}>{_('video.transcript').toUpperCase()}</span>
             {sentences.length > 0 && (
-              <span style={{ fontSize: '10px', color: C.subtext, opacity: 0.65 }}>· {sentences.length} sentences</span>
+              <span style={{ fontSize: '10px', color: C.subtext, opacity: 0.65 }}>· {sentences.length}</span>
             )}
             {selectedKeys.size > 0 && (
               <button
@@ -1470,7 +1456,7 @@ export function VideoPlayerApp() {
             padding: '4px 12px', fontSize: '10px', color: C.subtext, opacity: 0.55,
             borderBottom: `1px solid rgba(226,218,206,0.4)`, flexShrink: 0,
           }}>
-            Click any line to seek · <span style={{ color: C.red }}>red</span> = unknown · <span style={{ color: C.amber }}>amber</span> = learning
+            {_('home.webLearning.3.prefix')}<span style={{ color: C.red }}>{_('home.webLearning.3.red')}</span>{_('home.webLearning.3.unknown')}<span style={{ color: C.amber }}>{_('home.webLearning.3.yellow')}</span>{_('home.webLearning.3.learning')}
           </div>
         )}
 
@@ -1483,11 +1469,11 @@ export function VideoPlayerApp() {
               gap: '12px', padding: '24px 20px', textAlign: 'center',
             }}>
               <div style={{ fontSize: '12px', color: C.subtext, lineHeight: 1.6 }}>
-                <strong style={{ color: C.text }}>No subtitles yet.</strong><br/>
+                <strong style={{ color: C.text }}>{_('video.noSubtitles')}</strong><br/>
                 <span style={{ fontSize: '11px' }}>
                   {hasMedia
-                    ? 'Click "Import Subtitle" to load an SRT or VTT file.'
-                    : 'Load a video or audio first, then import subtitles.'}
+                    ? _('video.loadSubtitles')
+                    : _('video.loadVideo')}
                 </span>
               </div>
             </div>

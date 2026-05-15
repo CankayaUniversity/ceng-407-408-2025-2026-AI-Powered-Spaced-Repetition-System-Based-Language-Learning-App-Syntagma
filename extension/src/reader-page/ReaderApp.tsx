@@ -9,6 +9,7 @@ import { lemmatize } from '../shared/lemmatizer';
 import { usePageAnalysis } from '../content/hooks/usePageAnalysis';
 import { MiniDonut, StatsPopup, StatsUIColors } from '../content/components/StatsUI';
 import { collectWholeBookAnalysisFromBuffer } from './reader-analysis';
+import { useT, LocaleToggle, type UILocale } from '../shared/i18n';
 
 // ─── Colors (matching extension theme) ──────────────────────────────────────
 
@@ -888,13 +889,20 @@ function LibraryView({
   onImport,
   onDelete,
   theme,
+  importStatus,
+  settings,
+  onLocaleToggle,
 }: {
   books: EbookMeta[];
   onOpen: (id: string) => void;
   onImport: () => void;
   onDelete: (id: string) => void;
   theme: Theme;
+  importStatus: { state: 'idle' | 'importing' | 'error'; message?: string };
+  settings: UserSettings;
+  onLocaleToggle: (locale: UILocale) => void;
 }) {
+  const _ = useT(settings);
   return (
     <div style={{ padding: '32px', maxWidth: '960px', margin: '0 auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px' }}>
@@ -903,23 +911,38 @@ function LibraryView({
             <span style={{ color: C.blue, fontWeight: 800, fontSize: '22px' }}>Syn</span>
             <span style={{ color: C.amber, fontWeight: 800, fontSize: '22px' }}>tagma</span>
           </div>
-          <span style={{ color: theme.text, fontSize: '14px', opacity: 0.6 }}>Reader</span>
+          <span style={{ color: theme.text, fontSize: '14px', opacity: 0.6 }}>{_('reader.reader')}</span>
         </div>
-        <button
-          onClick={onImport}
-          style={{
-            background: C.blue,
-            color: '#fff',
-            border: 'none',
-            borderRadius: '8px',
-            padding: '10px 20px',
-            fontSize: '14px',
-            fontWeight: 600,
-            cursor: 'pointer',
-          }}
-        >
-          + Import EPUB
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <LocaleToggle settings={settings} onToggle={onLocaleToggle} />
+          {importStatus.state === 'importing' && (
+            <span style={{ color: theme.text, fontSize: '13px', opacity: 0.7 }}>
+              {importStatus.message || _('reader.importing')}
+            </span>
+          )}
+          {importStatus.state === 'error' && (
+            <span style={{ color: C.red, fontSize: '13px' }}>
+              {importStatus.message || _('reader.importFailed')}
+            </span>
+          )}
+          <button
+            onClick={onImport}
+            disabled={importStatus.state === 'importing'}
+            style={{
+              background: importStatus.state === 'importing' ? C.subtext : C.blue,
+              color: '#fff',
+              border: 'none',
+              borderRadius: '8px',
+              padding: '10px 20px',
+              fontSize: '14px',
+              fontWeight: 600,
+              cursor: importStatus.state === 'importing' ? 'not-allowed' : 'pointer',
+              opacity: importStatus.state === 'importing' ? 0.7 : 1,
+            }}
+          >
+            {importStatus.state === 'importing' ? _('reader.importing') : _('reader.importEpub')}
+          </button>
+        </div>
       </div>
 
       {books.length === 0 ? (
@@ -930,7 +953,7 @@ function LibraryView({
           opacity: 0.5,
           fontSize: '15px',
         }}>
-          No books yet. Import an EPUB to start reading.
+          {_('reader.noBooks')}
         </div>
       ) : (
         <div style={{
@@ -1700,7 +1723,13 @@ export function ReaderApp() {
   const [books, setBooks] = useState<EbookMeta[]>([]);
   const [activeBookId, setActiveBookId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [importStatus, setImportStatus] = useState<{ state: 'idle' | 'importing' | 'error'; message?: string }>({ state: 'idle' });
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleLocaleToggle = useCallback((next: UILocale) => {
+    setSettings(prev => ({ ...prev, uiLocale: next }));
+    sendMessage({ type: 'SET_SETTINGS', payload: { uiLocale: next } }).catch(() => {});
+  }, []);
 
   const theme = THEMES[settings.readerTheme] ?? THEMES.light;
 
@@ -1723,6 +1752,8 @@ export function ReaderApp() {
   const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    setImportStatus({ state: 'importing', message: 'Reading epub...' });
 
     let title = file.name.replace(/\.epub$/i, '');
     let author = '';
@@ -1750,10 +1781,14 @@ export function ReaderApp() {
         }
       } catch {}
 
+      setImportStatus({ state: 'importing', message: `Uploading "${title}"...` });
       const created = await importEbook(file, title);
       setBooks(prev => [{ ...created, author, coverUrl }, ...prev.filter(b => b.id !== created.id)]);
+      setImportStatus({ state: 'idle' });
     } catch (err) {
       console.error('[Syntagma Reader] Ebook import failed:', err);
+      setImportStatus({ state: 'error', message: (err as Error).message || 'Import failed' });
+      setTimeout(() => setImportStatus({ state: 'idle' }), 5000);
     } finally {
       epub?.destroy();
       e.target.value = '';
@@ -1820,6 +1855,9 @@ export function ReaderApp() {
           onImport={handleImport}
           onDelete={handleDelete}
           theme={theme}
+          importStatus={importStatus}
+          settings={settings}
+          onLocaleToggle={handleLocaleToggle}
         />
       )}
     </div>

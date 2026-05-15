@@ -4,44 +4,7 @@ import { parseSubtitleFile } from './subtitle-parser';
 import { mountWordPopup, dismissWordPopup } from '../popup/WordPopup';
 import { buildSentences } from './sentence-grouping';
 import type { SentenceGroup } from './sentence-grouping';
-
-// ─── Text tokeniser (expands contractions for proper lemmatization) ──────────
-
-interface TextToken { text: string; isWord: boolean; lemmas?: string[]; }
-
-const CONTRACTIONS: Record<string, string[]> = {
-  "i'm": ['i', 'be'], "i'll": ['i', 'will'], "i've": ['i', 'have'], "i'd": ['i', 'would'],
-  "it's": ['it', 'be'], "that's": ['that', 'be'], "what's": ['what', 'be'],
-  "there's": ['there', 'be'], "here's": ['here', 'be'], "who's": ['who', 'be'],
-  "he's": ['he', 'be'], "she's": ['she', 'be'], "let's": ['let', 'us'],
-  "won't": ['will', 'not'], "can't": ['can', 'not'], "don't": ['do', 'not'],
-  "doesn't": ['do', 'not'], "didn't": ['do', 'not'], "isn't": ['be', 'not'],
-  "aren't": ['be', 'not'], "wasn't": ['be', 'not'], "weren't": ['be', 'not'],
-  "hasn't": ['have', 'not'], "haven't": ['have', 'not'], "hadn't": ['have', 'not'],
-  "wouldn't": ['would', 'not'], "couldn't": ['could', 'not'], "shouldn't": ['should', 'not'],
-  "they're": ['they', 'be'], "we're": ['we', 'be'], "you're": ['you', 'be'],
-  "they've": ['they', 'have'], "we've": ['we', 'have'], "you've": ['you', 'have'],
-  "they'll": ['they', 'will'], "we'll": ['we', 'will'], "you'll": ['you', 'will'],
-  "they'd": ['they', 'would'], "we'd": ['we', 'would'], "you'd": ['you', 'would'],
-};
-
-function tokenize(text: string): TextToken[] {
-  const raw = text
-    .split(/(\b[a-zA-Z''']+\b)/)
-    .filter(p => p.length > 0);
-
-  const out: TextToken[] = [];
-  for (const p of raw) {
-    const normalized = p.replace(/['']/g, "'").toLowerCase();
-    const expansion = CONTRACTIONS[normalized];
-    if (expansion) {
-      out.push({ text: p, isWord: true, lemmas: expansion });
-    } else {
-      out.push({ text: p, isWord: /^[a-zA-Z''']+$/.test(p) });
-    }
-  }
-  return out;
-}
+import { tokenize } from './tokenizer';
 
 // ─── Memoized sentence row ────────────────────────────────────────────────────
 
@@ -80,17 +43,20 @@ const CueRow = memo(function CueRow({ sentence, isActive, selected, lexemes, sho
   // Tokenize once per sentence text, not on every render.
   const tokens = useMemo(() => tokenize(sentence.text), [sentence.text]);
 
-  const allLemmas = useMemo(() => {
-    const out: string[] = [];
+  const tokenStatuses = useMemo(() => {
+    const out: Array<'known' | 'learning' | 'unknown'> = [];
     for (const tok of tokens) {
       if (!tok.isWord) continue;
-      if (tok.lemmas) out.push(...tok.lemmas);
-      else out.push(tok.text.toLowerCase());
+      const lookups = tok.lemmas ?? [tok.text.toLowerCase()];
+      const statuses = lookups.map(l => lexemes[l]?.status);
+      if (statuses.includes('known') || statuses.includes('ignored')) out.push('known');
+      else if (statuses.includes('learning')) out.push('learning');
+      else out.push('unknown');
     }
     return out;
-  }, [tokens]);
-  const hasUnknown = allLemmas.some(l => { const s = lexemes[l]?.status; return !s || s === 'unknown'; });
-  const hasLearning = !hasUnknown && allLemmas.some(l => lexemes[l]?.status === 'learning');
+  }, [tokens, lexemes]);
+  const hasUnknown = tokenStatuses.includes('unknown');
+  const hasLearning = !hasUnknown && tokenStatuses.includes('learning');
 
   const leftBorder = isActive
     ? `3px solid rgba(233, 196, 106,1)`
@@ -179,9 +145,10 @@ const CueRow = memo(function CueRow({ sentence, isActive, selected, lexemes, sho
         {tokens.map((tok, ti) => {
           if (!tok.isWord) return <span key={ti}>{tok.text}</span>;
           const lookups = tok.lemmas ?? [tok.text.toLowerCase()];
-          const statuses = lookups.map(l => lexemes[l]?.status ?? 'unknown');
-          const worst = statuses.includes('unknown') ? 'unknown'
-            : statuses.includes('learning') ? 'learning' : 'known';
+          const statuses = lookups.map(l => lexemes[l]?.status);
+          const worst = statuses.includes('known') ? 'known'
+            : statuses.includes('learning') ? 'learning'
+            : statuses.includes('ignored') ? 'ignored' : 'unknown';
           const underlineColor = showColors
             ? (worst === 'unknown'  ? 'rgba(217,119,98,0.55)' :
                worst === 'learning' ? 'rgba(233, 196, 106,0.55)' :

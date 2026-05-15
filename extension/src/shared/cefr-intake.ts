@@ -9,6 +9,7 @@ const LEVEL_TO_CEFR: Record<LearnerLevel, CEFRLevel> = {
   'elementary': 'A2',
   'intermediate': 'B1',
   'upper-intermediate': 'B2',
+  'pre-advanced': 'C1',
   'advanced': 'C2',
 };
 

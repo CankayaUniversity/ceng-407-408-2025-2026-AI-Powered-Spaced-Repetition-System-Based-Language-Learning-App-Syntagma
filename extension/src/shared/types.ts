@@ -3,7 +3,7 @@
 export type WordStatus = 'unknown' | 'learning' | 'known' | 'ignored';
 export type FrequencyBand = 'very-common' | 'common' | 'medium' | 'rare';
 export type CEFRLevel = 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2';
-export type LearnerLevel = 'beginner' | 'elementary' | 'intermediate' | 'upper-intermediate' | 'advanced';
+export type LearnerLevel = 'beginner' | 'elementary' | 'intermediate' | 'upper-intermediate' | 'pre-advanced' | 'advanced';
 
 export interface LexemeEntry {
   key: string;
@@ -104,6 +104,7 @@ export interface UserSettings {
   authUserId: string | null;
   activeCollectionId: number | null;
   activeCollectionName: string | null;
+  uiLocale: 'en' | 'tr';
 }
 
 export interface SubtitleCue {

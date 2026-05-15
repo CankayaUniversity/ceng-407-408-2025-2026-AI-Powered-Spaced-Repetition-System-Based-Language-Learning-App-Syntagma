@@ -1,6 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { sendMessage } from '../shared/messages';
-import type { LearnerLevel } from '../shared/types';
+import type { LearnerLevel, UserSettings } from '../shared/types';
+import { DEFAULT_SETTINGS } from '../shared/storage';
+import { t, LocaleToggle, type UILocale } from '../shared/i18n';
 
 const C = {
   base:     '#F5F1E9',
@@ -17,12 +19,13 @@ const C = {
 
 type View = 'login' | 'register';
 
-const LEVELS: Array<{ value: LearnerLevel; label: string }> = [
-  { value: 'beginner',           label: 'A1 · Beginner (~1,235 words)' },
-  { value: 'elementary',         label: 'A2 · Elementary (~2,531 words)' },
-  { value: 'intermediate',       label: 'B1 · Intermediate (~4,535 words)' },
-  { value: 'upper-intermediate', label: 'B2 · Upper Intermediate (~6,983 words)' },
-  { value: 'advanced',           label: 'C2 · Advanced (~9,190 words)' },
+const LEVEL_KEYS: Array<{ value: LearnerLevel; key: string }> = [
+  { value: 'beginner',           key: 'level.beginner' },
+  { value: 'elementary',         key: 'level.elementary' },
+  { value: 'intermediate',       key: 'level.intermediate' },
+  { value: 'upper-intermediate', key: 'level.upperIntermediate' },
+  { value: 'pre-advanced',       key: 'level.preAdvanced' },
+  { value: 'advanced',           key: 'level.advanced' },
 ];
 
 interface AuthAppProps {
@@ -38,11 +41,25 @@ export function AuthApp({ inline }: AuthAppProps = {}) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [locale, setLocale] = useState<UILocale>('en');
+
+  useEffect(() => {
+    sendMessage<UserSettings>({ type: 'GET_SETTINGS', payload: null })
+      .then(s => setLocale(s.uiLocale ?? 'en'))
+      .catch(() => {});
+  }, []);
+
+  const _ = (key: string) => t(key, locale);
+
+  const handleLocaleToggle = (next: UILocale) => {
+    setLocale(next);
+    sendMessage({ type: 'SET_SETTINGS', payload: { uiLocale: next } }).catch(() => {});
+  };
 
   const passwordStrengthError = (pwd: string): string | null => {
-    if (pwd.length < 8) return 'Password must be at least 8 characters';
-    if (!/[0-9]/.test(pwd)) return 'Password must contain at least one number';
-    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(pwd)) return 'Password must contain at least one special character';
+    if (pwd.length < 8) return _('auth.pwdLength');
+    if (!/[0-9]/.test(pwd)) return _('auth.pwdNumber');
+    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(pwd)) return _('auth.pwdSpecial');
     return null;
   };
 
@@ -52,11 +69,11 @@ export function AuthApp({ inline }: AuthAppProps = {}) {
     if (view === 'register') {
       const pwdError = passwordStrengthError(password);
       if (pwdError) { setError(pwdError); return; }
-      if (password !== confirmPassword) { setError('Passwords do not match'); return; }
+      if (password !== confirmPassword) { setError(_('auth.pwdMismatch')); return; }
     }
     setLoading(true);
     try {
-      const payload = view === 'login' 
+      const payload = view === 'login'
         ? { email, password }
         : { email, password, learnerLevel };
 
@@ -68,7 +85,7 @@ export function AuthApp({ inline }: AuthAppProps = {}) {
         setSuccess(true);
         if (!inline) setTimeout(() => window.close(), 800);
       } else {
-        setError(result.error ?? 'Something went wrong');
+        setError(result.error ?? _('auth.somethingWrong'));
       }
     } catch (err) {
       setError((err as Error).message);
@@ -110,15 +127,17 @@ export function AuthApp({ inline }: AuthAppProps = {}) {
           fontFamily: 'system-ui, -apple-system, sans-serif',
         }}>
           <div style={{ textAlign: 'center', color: C.green, fontSize: '16px', fontWeight: 600 }}>
-            ✓ {view === 'login' ? 'Signed in' : 'Account created'}!
+            ✓ {view === 'login' ? _('auth.signedIn') : _('auth.accountCreated')}!
             <div style={{ fontSize: '13px', color: C.subtext, marginTop: '6px', fontWeight: 400 }}>
-              Closing…
+              {_('auth.closing')}
             </div>
           </div>
         </div>
       </>
     );
   }
+
+  const fakeSettings = { ...DEFAULT_SETTINGS, uiLocale: locale };
 
   return (
     <>
@@ -131,7 +150,11 @@ export function AuthApp({ inline }: AuthAppProps = {}) {
         alignItems: 'center',
         justifyContent: 'center',
         padding: '24px',
+        position: 'relative',
       }}>
+        <div style={{ position: 'absolute', top: '16px', right: '16px' }}>
+          <LocaleToggle settings={fakeSettings} onToggle={handleLocaleToggle} />
+        </div>
         <div style={{ width: '100%', maxWidth: '340px' }}>
           {/* Logo */}
           <div style={{ textAlign: 'center', marginBottom: '28px' }}>
@@ -165,7 +188,7 @@ export function AuthApp({ inline }: AuthAppProps = {}) {
                   boxShadow: view === v ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
                 }}
               >
-                {v === 'login' ? 'Sign In' : 'Register'}
+                {v === 'login' ? _('auth.signIn') : _('auth.register')}
               </button>
             ))}
           </div>
@@ -176,7 +199,7 @@ export function AuthApp({ inline }: AuthAppProps = {}) {
               type="email"
               value={email}
               onChange={e => setEmail(e.target.value)}
-              placeholder="Email"
+              placeholder={_('auth.email')}
               required
               autoFocus
               style={inputStyle}
@@ -185,7 +208,7 @@ export function AuthApp({ inline }: AuthAppProps = {}) {
               type="password"
               value={password}
               onChange={e => setPassword(e.target.value)}
-              placeholder="Password"
+              placeholder={_('auth.password')}
               required
               style={inputStyle}
             />
@@ -196,31 +219,31 @@ export function AuthApp({ inline }: AuthAppProps = {}) {
                   type="password"
                   value={confirmPassword}
                   onChange={e => setConfirmPassword(e.target.value)}
-                  placeholder="Confirm Password"
+                  placeholder={_('auth.confirmPassword')}
                   required
                   style={{
                     ...inputStyle,
                     borderColor: confirmPassword && confirmPassword !== password ? C.red : C.surface1,
                   }}
                 />
-                
+
                 <div style={{ marginTop: '4px' }}>
                   <label style={{ fontSize: '12px', fontWeight: 600, color: C.subtext, marginBottom: '6px', display: 'block' }}>
-                    What is your current English level?
+                    {_('auth.levelQuestion')}
                   </label>
                   <select
                     value={learnerLevel}
                     onChange={e => setLearnerLevel(e.target.value as LearnerLevel)}
                     style={inputStyle}
                   >
-                    {LEVELS.map(lvl => (
+                    {LEVEL_KEYS.map(lvl => (
                       <option key={lvl.value} value={lvl.value}>
-                        {lvl.label}
+                        {_(lvl.key)}
                       </option>
                     ))}
                   </select>
                   <div style={{ fontSize: '11px', color: C.subtext, marginTop: '4px', fontStyle: 'italic' }}>
-                    This helps us identify which words you already know.
+                    {_('auth.levelHelp')}
                   </div>
                 </div>
               </>
@@ -256,19 +279,19 @@ export function AuthApp({ inline }: AuthAppProps = {}) {
               }}
             >
               {loading
-                ? 'Please wait…'
-                : view === 'login' ? 'Sign In' : 'Create Account'}
+                ? _('common.pleaseWait')
+                : view === 'login' ? _('auth.signIn') : _('auth.createAccount')}
             </button>
           </form>
 
           <div style={{ textAlign: 'center', marginTop: '20px', fontSize: '12px', color: C.subtext }}>
             {view === 'login'
-              ? <>Don't have an account?{' '}
+              ? <>{_('auth.noAccount')}{' '}
                   <span onClick={() => { setView('register'); setError(null); }}
-                    style={{ color: C.blue, cursor: 'pointer', fontWeight: 600 }}>Register</span></>
-              : <>Already have an account?{' '}
+                    style={{ color: C.blue, cursor: 'pointer', fontWeight: 600 }}>{_('auth.register')}</span></>
+              : <>{_('auth.haveAccount')}{' '}
                   <span onClick={() => { setView('login'); setError(null); setConfirmPassword(''); }}
-                    style={{ color: C.blue, cursor: 'pointer', fontWeight: 600 }}>Sign In</span></>
+                    style={{ color: C.blue, cursor: 'pointer', fontWeight: 600 }}>{_('auth.signIn')}</span></>
             }
           </div>
         </div>

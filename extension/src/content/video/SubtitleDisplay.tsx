@@ -1,47 +1,6 @@
 import { useState, useMemo } from 'react';
 import type { SubtitleCue, LexemeEntry, UserSettings } from '../../shared/types';
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-interface TextToken {
-  text: string;
-  isWord: boolean;
-  lemmas?: string[];
-}
-
-const CONTRACTIONS: Record<string, string[]> = {
-  "i'm": ['i', 'be'], "i'll": ['i', 'will'], "i've": ['i', 'have'], "i'd": ['i', 'would'],
-  "it's": ['it', 'be'], "that's": ['that', 'be'], "what's": ['what', 'be'],
-  "there's": ['there', 'be'], "here's": ['here', 'be'], "who's": ['who', 'be'],
-  "he's": ['he', 'be'], "she's": ['she', 'be'], "let's": ['let', 'us'],
-  "won't": ['will', 'not'], "can't": ['can', 'not'], "don't": ['do', 'not'],
-  "doesn't": ['do', 'not'], "didn't": ['do', 'not'], "isn't": ['be', 'not'],
-  "aren't": ['be', 'not'], "wasn't": ['be', 'not'], "weren't": ['be', 'not'],
-  "hasn't": ['have', 'not'], "haven't": ['have', 'not'], "hadn't": ['have', 'not'],
-  "wouldn't": ['would', 'not'], "couldn't": ['could', 'not'], "shouldn't": ['should', 'not'],
-  "they're": ['they', 'be'], "we're": ['we', 'be'], "you're": ['you', 'be'],
-  "they've": ['they', 'have'], "we've": ['we', 'have'], "you've": ['you', 'have'],
-  "they'll": ['they', 'will'], "we'll": ['we', 'will'], "you'll": ['you', 'will'],
-  "they'd": ['they', 'would'], "we'd": ['we', 'would'], "you'd": ['you', 'would'],
-};
-
-function tokenize(text: string): TextToken[] {
-  const raw = text
-    .split(/(\b[a-zA-Z''']+\b)/)
-    .filter(p => p.length > 0);
-
-  const out: TextToken[] = [];
-  for (const p of raw) {
-    const normalized = p.replace(/['']/g, "'").toLowerCase();
-    const expansion = CONTRACTIONS[normalized];
-    if (expansion) {
-      out.push({ text: p, isWord: true, lemmas: expansion });
-    } else {
-      out.push({ text: p, isWord: /^[a-zA-Z''']+$/.test(p) });
-    }
-  }
-  return out;
-}
+import { tokenize } from './tokenizer';
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -84,20 +43,17 @@ export function SubtitleDisplay({
 
   const tokens = useMemo(() => displayText ? tokenize(displayText) : [], [displayText]);
 
-  // Check if every content word is known → auto-reveal
   const allWordsKnown = useMemo(() => {
     if (!displayText || !revealByKnownStatus || language !== 'en') return false;
-    const allLemmas: string[] = [];
+    let hasWord = false;
     for (const tok of tokens) {
       if (!tok.isWord) continue;
-      if (tok.lemmas) allLemmas.push(...tok.lemmas);
-      else allLemmas.push(tok.text.toLowerCase().replace(/'/g, "'"));
+      hasWord = true;
+      const lookups = tok.lemmas ?? [tok.text.toLowerCase().replace(/'/g, "'")];
+      const statuses = lookups.map(l => lexemes[l]?.status);
+      if (!statuses.includes('known') && !statuses.includes('ignored')) return false;
     }
-    if (!allLemmas.length) return false;
-    return allLemmas.every(l => {
-      const s = lexemes[l]?.status;
-      return s === 'known' || s === 'ignored';
-    });
+    return hasWord;
   }, [displayText, tokens, lexemes, revealByKnownStatus, language]);
 
   if (!cue || !displayText) return null;
@@ -144,9 +100,10 @@ export function SubtitleDisplay({
         }
 
         const lookups = tok.lemmas ?? [tok.text.toLowerCase().replace(/'/g, "'")];
-        const statuses = lookups.map(l => lexemes[l]?.status ?? 'unknown');
-        const worst = statuses.includes('unknown') ? 'unknown'
-          : statuses.includes('learning') ? 'learning' : 'known';
+        const statuses = lookups.map(l => lexemes[l]?.status);
+        const worst = statuses.includes('known') ? 'known'
+          : statuses.includes('learning') ? 'learning'
+          : statuses.includes('ignored') ? 'ignored' : 'unknown';
         const clickLemma = lookups[0];
 
         const underline = settings.showLearningStatusColors
