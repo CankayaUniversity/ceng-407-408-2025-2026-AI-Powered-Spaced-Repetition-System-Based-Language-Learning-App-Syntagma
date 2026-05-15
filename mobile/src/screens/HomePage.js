@@ -17,17 +17,19 @@ import {
   fetchCollectionById,
   fetchCollections,
   fetchDailyCards,
-  fetchReviewStats,
+  fetchAllWordKnowledge,
 } from '../shared/api';
 import { getBadgeState, getCache, saveCache, saveBadgeState } from '../shared/storage';
 import { flushQueues, getReviewedIdsToday } from '../shared/offline';
-import { BADGE_TIERS, computeBadgeState } from '../shared/badges';
+import { computeCefrState, getCefrMedal } from '../shared/badges';
+import { computeKnownWordsStats } from '../shared/known-words';
 import { useTheme } from '../shared/theme';
 
 const CACHE_COLLECTIONS = 'syntagma.cache.collections';
 const cacheCollectionKey = (id) => `syntagma.cache.collection.${id}`;
 const CACHE_DAILY = 'syntagma.cache.daily';
 const CACHE_ALL_FLASHCARDS = 'syntagma.cache.flashcards.all.v1';
+const CACHE_WORD_KNOWLEDGE = 'syntagma.cache.wordknowledge.all.v1';
 const OFFLINE_EMPTY_TITLE = 'Offline moddasin';
 const OFFLINE_EMPTY_SUBTITLE = 'Internet gelince koleksiyonlar senkronize olacak.';
 
@@ -94,15 +96,48 @@ export default function HomePage({ navigation }) {
       const loadBadge = async () => {
         const cached = await getBadgeState();
         if (isMounted && cached) {
-          setBadgeState(computeBadgeState(cached.totalReviews));
+          setBadgeState(computeCefrState(cached.knownWords));
         }
 
         try {
-          const stats = await fetchReviewStats('all');
-          const totalReviews = stats?.totalReviews ?? stats?.total ?? stats?.reviewCount ?? 0;
-          if (isMounted && Number.isFinite(totalReviews)) {
-            await saveBadgeState({ totalReviews });
-            setBadgeState(computeBadgeState(totalReviews));
+          if (isOffline) {
+            const cachedFlashcards = await getCache(CACHE_ALL_FLASHCARDS).catch(() => []);
+            const cachedKnowledge = await getCache(CACHE_WORD_KNOWLEDGE).catch(() => []);
+            if ((cachedFlashcards?.length ?? 0) > 0 || (cachedKnowledge?.length ?? 0) > 0) {
+              const { knownCount } = computeKnownWordsStats(
+                Array.isArray(cachedFlashcards) ? cachedFlashcards : [],
+                Array.isArray(cachedKnowledge) ? cachedKnowledge : []
+              );
+              if (isMounted) {
+                setBadgeState(computeCefrState(knownCount));
+              }
+            }
+            return;
+          }
+
+          const [flashcardsResult, knowledgeResult] = await Promise.allSettled([
+            fetchAllFlashcards(),
+            fetchAllWordKnowledge(),
+          ]);
+
+          const flashcards = flashcardsResult.status === 'fulfilled' ? flashcardsResult.value : [];
+          const knowledge = knowledgeResult.status === 'fulfilled' ? knowledgeResult.value : [];
+
+          if (flashcardsResult.status === 'fulfilled') {
+            saveCache(CACHE_ALL_FLASHCARDS, flashcards).catch(() => {});
+          }
+          if (knowledgeResult.status === 'fulfilled') {
+            saveCache(CACHE_WORD_KNOWLEDGE, knowledge).catch(() => {});
+          }
+
+          if (flashcardsResult.status === 'rejected' && knowledgeResult.status === 'rejected') {
+            throw flashcardsResult.reason || knowledgeResult.reason || new Error('Failed to load vocabulary.');
+          }
+
+          const { knownCount } = computeKnownWordsStats(flashcards, knowledge);
+          if (isMounted) {
+            await saveBadgeState({ knownWords: knownCount });
+            setBadgeState(computeCefrState(knownCount));
           }
         } catch (err) {
           // badge is non-critical
@@ -331,15 +366,27 @@ export default function HomePage({ navigation }) {
 
             {badgeState && (
               <View style={styles.badgeCard}>
-                <Image
-                  source={badgeState.currentTier?.image ?? BADGE_TIERS[0].image}
-                  style={[styles.badgeImage, !badgeState.currentTier && styles.badgeImageLocked]}
-                />
+                <View style={styles.levelBadgeRow}>
+                  <View style={styles.levelBadge}>
+                    {badgeState.currentLevel && getCefrMedal(badgeState.currentLevel.id) ? (
+                      <Image
+                        source={getCefrMedal(badgeState.currentLevel.id).image}
+                        style={styles.levelBadgeImage}
+                      />
+                    ) : (
+                      <Text style={styles.levelBadgeText}>
+                        {badgeState.currentLevel?.label ?? 'A0'}
+                      </Text>
+                    )}
+                  </View>
+                </View>
                 <View style={styles.badgeInfo}>
                   <Text style={styles.badgeLabel}>
-                    {badgeState.currentTier ? badgeState.currentTier.label : 'No badge yet'}
+                    {badgeState.currentLevel ? `Level ${badgeState.currentLevel.label}` : 'Level A0'}
                   </Text>
-                  <Text style={styles.badgeProgressText}>{badgeState.progressText}</Text>
+                  <Text style={styles.badgeProgressText}>
+                    {`${badgeState.progressPercent}% • ${badgeState.progressText}`}
+                  </Text>
                   <View style={styles.progressTrack}>
                     <View style={[styles.progressFill, { width: `${Math.round(badgeState.progress * 100)}%` }]} />
                   </View>
@@ -551,14 +598,28 @@ const createStyles = (colors) => StyleSheet.create({
     borderColor: colors.border,
     padding: 16,
   },
-  badgeImage: {
+  levelBadge: {
     width: 64,
     height: 64,
     borderRadius: 32,
+    backgroundColor: colors.mutedSurface,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  badgeImageLocked: {
-    opacity: 0.35,
+  levelBadgeRow: {
+    width: 74,
+    alignItems: 'center',
+    gap: 8,
   },
+  levelBadgeText: {
+    color: colors.accent,
+    fontSize: 20,
+    fontFamily: 'PlayfairDisplay_700Bold',
+  },
+    levelBadgeImage: {
+      width: 44,
+      height: 44,
+    },
   badgeInfo: {
     flex: 1,
   },

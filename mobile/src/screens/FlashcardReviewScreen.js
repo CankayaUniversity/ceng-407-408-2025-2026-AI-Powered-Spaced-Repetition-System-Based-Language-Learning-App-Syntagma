@@ -1,18 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
   Animated,
   Image,
   LayoutAnimation,
   Linking,
-  Modal,
   Platform,
   Pressable,
   ScrollView,
   StatusBar,
   StyleSheet,
   Text,
-  TextInput,
   UIManager,
   useWindowDimensions,
   View,
@@ -24,7 +21,6 @@ import {
   getCarryover,
   getLastStudyCount,
   saveCarryover,
-  saveLastStudyCount,
 } from '../shared/storage';
 import { submitReview, updateWordKnowledge } from '../shared/api';
 import { bumpDelta, enqueueReview, enqueueWordKnowledge, markCardReviewed } from '../shared/offline';
@@ -49,10 +45,8 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
   const [sessionCards, setSessionCards] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [targetCount, setTargetCount] = useState(0);
-  const [promptVisible, setPromptVisible] = useState(rawCards.length > 0);
-  const [studyCountInput, setStudyCountInput] = useState('10');
+  const [dailyCount, setDailyCount] = useState(10);
   const [carryoverCount, setCarryoverCount] = useState(0);
-  const [promptError, setPromptError] = useState('');
   const [sessionStarted, setSessionStarted] = useState(false);
   const [sessionCompleted, setSessionCompleted] = useState(false);
   const [cardState, setCardState] = useState('isCollapsed');
@@ -83,7 +77,7 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
       }
 
       if (Number.isFinite(lastCount) && lastCount > 0) {
-        setStudyCountInput(String(lastCount));
+        setDailyCount(lastCount);
       }
 
       if (carryover?.remaining > 0 && carryover?.date && carryover.date !== todayKey) {
@@ -99,10 +93,19 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
   }, [todayKey]);
 
   useEffect(() => {
-    if (!rawCards.length) {
-      setPromptVisible(false);
+    if (!rawCards.length || sessionStarted) {
+      return;
     }
-  }, [rawCards.length]);
+
+    const totalTarget = Math.min(rawCards.length, dailyCount + carryoverCount);
+    const nextCards = rawCards.slice(0, totalTarget);
+    const initialIndex = Math.max(0, Math.min(requestedStartIndex, Math.max(totalTarget - 1, 0)));
+
+    setTargetCount(totalTarget);
+    setSessionCards(nextCards);
+    setCurrentIndex(initialIndex);
+    setSessionStarted(true);
+  }, [carryoverCount, dailyCount, rawCards, requestedStartIndex, sessionStarted]);
 
   useEffect(() => {
     if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -114,30 +117,6 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
     inputRange: [0, 1],
     outputRange: [10, 0],
   });
-
-  const handleStartSession = useCallback(async () => {
-    setPromptError('');
-    const parsed = Number.parseInt(studyCountInput, 10);
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      setPromptError('Please enter a valid number.');
-      return;
-    }
-
-    const totalTarget = Math.min(cards.length, parsed + carryoverCount);
-    const nextCards = cards.slice(0, totalTarget);
-    const initialIndex = Math.max(0, Math.min(requestedStartIndex, Math.max(totalTarget - 1, 0)));
-
-    await saveLastStudyCount(parsed);
-    setTargetCount(totalTarget);
-    setSessionCards(nextCards);
-    setCurrentIndex(initialIndex);
-    setPromptVisible(false);
-    setSessionStarted(true);
-  }, [cards, carryoverCount, requestedStartIndex, studyCountInput]);
-
-  const handleCancelSession = useCallback(() => {
-    navigation.goBack();
-  }, [navigation]);
 
   const openDetails = useCallback(() => {
     if (detailsOpen) {
@@ -265,11 +244,6 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
     return <View style={styles.imageFallback} />;
   }, [activeCard?.imageUri, styles.contextImage, styles.imageFallback]);
 
-  const parsedCount = Number.parseInt(studyCountInput, 10);
-  const previewTotal = Number.isFinite(parsedCount)
-    ? Math.min(cards.length, parsedCount + carryoverCount)
-    : null;
-
   if (!cards.length) {
     return (
       <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
@@ -288,45 +262,6 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
   return (
     <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
-
-      {/* Card count prompt modal */}
-      <Modal visible={promptVisible} transparent animationType="fade">
-        <View style={styles.promptOverlay}>
-          <View style={styles.promptCard}>
-            <Text style={styles.promptTitle}>How many cards today?</Text>
-            <Text style={styles.promptSubtitle}>
-              {carryoverCount > 0
-                ? `Carryover from last day: +${carryoverCount}`
-                : 'Pick your study target.'}
-            </Text>
-
-            <TextInput
-              style={styles.promptInput}
-              keyboardType="number-pad"
-              value={studyCountInput}
-              onChangeText={setStudyCountInput}
-              placeholder="10"
-              placeholderTextColor={colors.textMuted}
-            />
-
-            {Number.isFinite(previewTotal) ? (
-              <Text style={styles.promptTotal}>{`Total cards: ${previewTotal}`}</Text>
-            ) : null}
-
-            {promptError ? <Text style={styles.promptError}>{promptError}</Text> : null}
-
-            <View style={styles.promptActions}>
-              <Pressable style={styles.promptCancel} onPress={handleCancelSession}>
-                <Text style={styles.promptCancelText}>Cancel</Text>
-              </Pressable>
-              <Pressable style={styles.promptStart} onPress={handleStartSession}>
-                <Text style={styles.promptStartText}>Start</Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
 
       <View style={styles.topBar}>
         <Image source={require('../../assets/capybara-avatar.jpg')} style={styles.avatar} />
@@ -452,83 +387,6 @@ const createStyles = (colors) =>
     topBarTitle: {
       color: colors.accent,
       fontSize: 18,
-      fontFamily: 'DMSans_600SemiBold',
-    },
-    promptOverlay: {
-      flex: 1,
-      backgroundColor: colors.overlay,
-      alignItems: 'center',
-      justifyContent: 'center',
-      paddingHorizontal: 24,
-    },
-    promptCard: {
-      width: '100%',
-      borderRadius: 22,
-      backgroundColor: colors.card,
-      padding: 22,
-      borderWidth: 0.5,
-      borderColor: colors.border,
-    },
-    promptTitle: {
-      color: colors.accent,
-      fontSize: 20,
-      fontFamily: 'PlayfairDisplay_700Bold',
-      marginBottom: 6,
-    },
-    promptSubtitle: {
-      color: colors.textSecondary,
-      fontSize: 13,
-      fontFamily: 'DMSans_400Regular',
-      marginBottom: 14,
-    },
-    promptInput: {
-      width: '100%',
-      height: 48,
-      borderRadius: 14,
-      backgroundColor: colors.mutedSurface,
-      paddingHorizontal: 16,
-      color: colors.textPrimary,
-      fontSize: 16,
-      fontFamily: 'DMSans_600SemiBold',
-    },
-    promptTotal: {
-      marginTop: 10,
-      color: colors.accent,
-      fontSize: 13,
-      fontFamily: 'DMSans_600SemiBold',
-    },
-    promptError: {
-      marginTop: 8,
-      color: colors.warning,
-      fontSize: 12,
-      fontFamily: 'DMSans_400Regular',
-    },
-    promptActions: {
-      marginTop: 18,
-      flexDirection: 'row',
-      gap: 10,
-      justifyContent: 'flex-end',
-    },
-    promptCancel: {
-      paddingHorizontal: 18,
-      paddingVertical: 10,
-      borderRadius: 18,
-      backgroundColor: colors.mutedSurface,
-    },
-    promptCancelText: {
-      color: colors.accent,
-      fontSize: 13,
-      fontFamily: 'DMSans_600SemiBold',
-    },
-    promptStart: {
-      paddingHorizontal: 20,
-      paddingVertical: 10,
-      borderRadius: 18,
-      backgroundColor: colors.accent,
-    },
-    promptStartText: {
-      color: colors.surface,
-      fontSize: 13,
       fontFamily: 'DMSans_600SemiBold',
     },
     // Empty state

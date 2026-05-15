@@ -134,14 +134,14 @@ export async function getReminderHour() {
   }
 }
 
-const BADGE_KEY = 'syntagma.badge';
+const BADGE_KEY = 'syntagma.cefr.badge';
 
-export async function saveBadgeState({ totalReviews }) {
-  if (!Number.isFinite(totalReviews)) {
+export async function saveBadgeState({ knownWords }) {
+  if (!Number.isFinite(knownWords)) {
     return;
   }
 
-  await AsyncStorage.setItem(BADGE_KEY, JSON.stringify({ totalReviews }));
+  await AsyncStorage.setItem(BADGE_KEY, JSON.stringify({ knownWords }));
 }
 
 export async function getBadgeState() {
@@ -152,7 +152,7 @@ export async function getBadgeState() {
 
   try {
     const parsed = JSON.parse(stored);
-    return Number.isFinite(parsed?.totalReviews) ? parsed : null;
+    return Number.isFinite(parsed?.knownWords) ? parsed : null;
   } catch (err) {
     return null;
   }
