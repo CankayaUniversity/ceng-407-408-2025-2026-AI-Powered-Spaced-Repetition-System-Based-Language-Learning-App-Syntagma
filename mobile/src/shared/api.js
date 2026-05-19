@@ -155,6 +155,14 @@ export async function fetchAllFlashcards({ pageSize = 100, maxPages = 20 } = {})
   return all;
 }
 
+export async function fetchFlashcardMedia(flashcardId) {
+  return apiRequest(`/api/flashcards/${flashcardId}/media`);
+}
+
+export async function fetchMediaDownloadUrl(mediaId) {
+  return apiRequest(`/api/media/${mediaId}/url`);
+}
+
 export async function fetchAllWordKnowledge({ pageSize = 100, maxPages = 20, status = null } = {}) {
   const all = [];
   let page = 0;

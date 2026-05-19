@@ -204,14 +204,27 @@ export default function HomePage({ navigation }) {
   }, []);
 
   const mapFlashcardsToCards = useCallback((items) => {
-    return items.map((item) => ({
-      flashcardId: item.flashcardId ?? item.id,
-      word: item.lemma || item.word || 'Unknown',
-      phonetic: '',
-      sentence: item.exampleSentence || item.sourceSentence || '',
-      translation: item.translation || '',
-      sentenceTranslation: '',
-    }));
+    return items.map((item) => {
+      const sentence = item.exampleSentence || item.sourceSentence || item.sentence || '';
+      return {
+        flashcardId: item.flashcardId ?? item.id,
+        word: item.lemma || item.word || 'Unknown',
+        phonetic: item.phonetic || '',
+        sentence,
+        exampleSentence: item.exampleSentence || '',
+        sourceSentence: item.sourceSentence || item.sentence || '',
+        translation: item.translation || item.trMeaning || '',
+        sentenceTranslation: item.sentenceTranslation || '',
+        sourceTitle: item.sourceTitle || '',
+        sourceUrl: item.sourceUrl || '',
+        videoTimestamp: item.videoTimestamp ?? null,
+        audioUrl: item.audioUrl || '',
+        sentenceAudioDataUrl: item.sentenceAudioDataUrl || '',
+        englishPronunciationUri: item.englishPronunciationUri || '',
+        turkishPronunciationUri: item.turkishPronunciationUri || '',
+        imageUri: item.imageUri || item.imageUrl || item.screenshotDataUrl || '',
+      };
+    });
   }, []);
 
   const loadCachedCollectionCards = useCallback(async (collectionId) => {
@@ -264,14 +277,27 @@ export default function HomePage({ navigation }) {
       try {
         const details = await fetchCollectionById(collectionId);
         const items = Array.isArray(details?.items) ? details.items : [];
-        const mappedItems = items.map((item) => ({
-          flashcardId: item.flashcardId ?? item.id,
-          word: item.lemma || item.word || 'Unknown',
-          phonetic: '',
-          sentence: '',
-          translation: item.translation || '',
-          sentenceTranslation: '',
-        }));
+        const mappedItems = items.map((item) => {
+          const sentence = item.exampleSentence || item.sourceSentence || item.sentence || '';
+          return {
+            flashcardId: item.flashcardId ?? item.id,
+            word: item.lemma || item.word || 'Unknown',
+            phonetic: item.phonetic || '',
+            sentence,
+            exampleSentence: item.exampleSentence || '',
+            sourceSentence: item.sourceSentence || item.sentence || '',
+            translation: item.translation || item.trMeaning || '',
+            sentenceTranslation: item.sentenceTranslation || '',
+            sourceTitle: item.sourceTitle || '',
+            sourceUrl: item.sourceUrl || '',
+            videoTimestamp: item.videoTimestamp ?? null,
+            audioUrl: item.audioUrl || '',
+            sentenceAudioDataUrl: item.sentenceAudioDataUrl || '',
+            englishPronunciationUri: item.englishPronunciationUri || '',
+            turkishPronunciationUri: item.turkishPronunciationUri || '',
+            imageUri: item.imageUri || item.imageUrl || item.screenshotDataUrl || '',
+          };
+        });
 
         let cards = mappedItems;
 

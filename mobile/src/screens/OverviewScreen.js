@@ -5,7 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { useNetInfo } from '@react-native-community/netinfo';
 import { fetchReviewStats } from '../shared/api';
-import { getCache, saveCache } from '../shared/storage';
+import { getCache, getStudyStreak, saveCache } from '../shared/storage';
 import { flushQueues, getReviewDeltaToday } from '../shared/offline';
 import { useTheme } from '../shared/theme';
 
@@ -84,17 +84,22 @@ export default function OverviewScreen() {
           rawStats = buildEmptyStats();
         }
         const delta = await getReviewDeltaToday().catch(() => 0);
-        setStats(applyDeltaToStats(rawStats, delta));
+        const mergedStats = applyDeltaToStats(rawStats, delta);
+        const localStreak = await getStudyStreak().catch(() => null);
+        setStats(localStreak != null ? { ...mergedStats, streakCount: localStreak } : mergedStats);
         return;
       }
       const rawStats = await fetchReviewStats(period.toLowerCase());
       saveCache(cacheStatsKey(period), rawStats).catch(() => {});
-      setStats(rawStats);
+      const localStreak = await getStudyStreak().catch(() => null);
+      setStats(localStreak != null ? { ...rawStats, streakCount: localStreak } : rawStats);
     } catch (err) {
       let rawStats = await getCache(cacheStatsKey(period)).catch(() => null);
       if (rawStats) {
         const delta = await getReviewDeltaToday().catch(() => 0);
-        setStats(applyDeltaToStats(rawStats, delta));
+        const mergedStats = applyDeltaToStats(rawStats, delta);
+        const localStreak = await getStudyStreak().catch(() => null);
+        setStats(localStreak != null ? { ...mergedStats, streakCount: localStreak } : mergedStats);
         setError('');
       } else {
         setError(err?.message || 'Stats could not be loaded.');

@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e \"const { execSync } = require\\('child_process'\\); const out = execSync\\('npm info expo-av@15.1.7 peerDependencies --json', {timeout:30000}\\); console.log\\(out.toString\\(\\)\\);\")",
+      "Bash(node -e \"const { execSync } = require\\('child_process'\\); const out = execSync\\('npm info expo-av@15.0.2 peerDependencies --json', {timeout:30000}\\); console.log\\('15.0.2 peers:', out.toString\\(\\)\\); const out2 = execSync\\('npm info expo-av@15.0.0 peerDependencies --json', {timeout:30000}\\); console.log\\('15.0.0 peers:', out2.toString\\(\\)\\);\")",
+      "Bash(npx expo *)"
+    ]
+  }
+}

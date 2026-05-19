@@ -28,6 +28,7 @@ import {
   getLastStudyCount,
   getNotificationPreference,
   getReminderHour,
+  getStudyStreak,
   clearAuth,
   saveBadgeState,
   saveLastStudyCount,
@@ -258,9 +259,14 @@ export default function SettingsScreen({ navigation }) {
 
       // Fetch streak + badge
       try {
-        const stats = await fetchReviewStats('week');
-        if (isMounted && stats?.streakCount != null) {
-          setStreakCount(stats.streakCount);
+        const localStreak = await getStudyStreak();
+        if (isMounted && localStreak != null) {
+          setStreakCount(localStreak);
+        } else {
+          const stats = await fetchReviewStats('week');
+          if (isMounted && stats?.streakCount != null) {
+            setStreakCount(stats.streakCount);
+          }
         }
       } catch (err) {
         // Streak and badge are optional, don't fail
