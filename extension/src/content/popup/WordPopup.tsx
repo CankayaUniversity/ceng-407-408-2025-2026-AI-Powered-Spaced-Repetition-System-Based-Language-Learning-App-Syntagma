@@ -127,9 +127,7 @@ function AIPanel({ result, loading, error }: { result: AiResultData | null; load
     const d = result.data;
     return (
       <div style={wrap}>
-        <Field label="Natural" value={d.naturalTranslation} />
-        <Field label="Literal" value={d.literalTranslation} />
-        <Field label="Alternative" value={d.alternativeTranslation} />
+        <Field label="Çeviri" value={d.naturalTranslation} />
       </div>
     );
   }

@@ -13,8 +13,6 @@ export interface AiWordExplainData {
 
 export interface AiTranslateData {
   naturalTranslation: string;
-  literalTranslation: string;
-  alternativeTranslation: string;
 }
 
 export interface AiSentencePart {
