@@ -12,13 +12,17 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
+import { useNetInfo } from '@react-native-community/netinfo';
 import { useTheme } from '../shared/theme';
-import { updateWordKnowledge } from '../shared/api';
+import { fetchAllFlashcards, fetchAllWordKnowledge, updateWordKnowledge } from '../shared/api';
+import { getCache, saveCache } from '../shared/storage';
+import { enqueueWordKnowledge } from '../shared/offline';
 
-// We fetch word knowledge via the generic apiRequest since the endpoint uses X-User-Id header
-import { getAuth } from '../shared/storage';
-
-const API_BASE_URL = 'https://syntagma.omerhanyigit.online';
+const CACHE_LIBRARY = 'syntagma.cache.wordlibrary.v1';
+const CACHE_FLASHCARDS = 'syntagma.cache.flashcards.all.v1';
+const CACHE_WORD_KNOWLEDGE = 'syntagma.cache.wordknowledge.all.v1';
+const OFFLINE_EMPTY_TITLE = 'Offline moddasin';
+const OFFLINE_EMPTY_SUBTITLE = 'Internet gelince kelimeler senkronize olacak.';
 
 const STATUSES = ['ALL', 'KNOWN', 'LEARNING', 'UNKNOWN', 'IGNORED'];
 
@@ -29,65 +33,149 @@ const STATUS_CONFIG = {
   IGNORED: { label: 'Ignored', icon: 'eye-off', color: '#6C757D', textColor: '#FFFFFF' },
 };
 
-async function fetchWordKnowledge(status = null, page = 0, size = 50) {
-  const auth = await getAuth();
-  const headers = {
-    'Content-Type': 'application/json',
-  };
+const VALID_STATUSES = new Set(['KNOWN', 'LEARNING', 'UNKNOWN', 'IGNORED']);
 
-  if (auth?.token) {
-    headers.Authorization = `Bearer ${auth.token}`;
+const normalizeLemma = (value) =>
+  typeof value === 'string' ? value.trim().toLowerCase() : '';
+
+const normalizeStatus = (value) => {
+  if (typeof value !== 'string') {
+    return null;
   }
-  if (auth?.userId) {
-    headers['X-User-Id'] = String(auth.userId);
+  const upper = value.trim().toUpperCase();
+  return VALID_STATUSES.has(upper) ? upper : null;
+};
+
+const mergeWordSources = (flashcards, knowledge) => {
+  const wkMap = new Map();
+  for (const item of knowledge) {
+    const lemmaValue = item?.lemma ?? item?.word;
+    const lemmaKey = normalizeLemma(lemmaValue);
+    if (!lemmaKey) {
+      continue;
+    }
+
+    const status = normalizeStatus(item?.status) || 'LEARNING';
+    wkMap.set(lemmaKey, {
+      lemma: String(lemmaValue || lemmaKey).trim() || lemmaKey,
+      lemmaKey,
+      status,
+      updatedAt: item?.updatedAt ?? null,
+    });
   }
 
-  let url = `${API_BASE_URL}/api/word-knowledge?page=${page}&size=${size}`;
-  if (status && status !== 'ALL') {
-    url += `&status=${status}`;
+  const merged = new Map();
+  for (const card of flashcards) {
+    const lemmaValue = card?.lemma ?? card?.word;
+    const lemmaKey = normalizeLemma(lemmaValue);
+    if (!lemmaKey) {
+      continue;
+    }
+
+    const wkEntry = wkMap.get(lemmaKey);
+    const status = wkEntry?.status || normalizeStatus(card?.knowledgeStatus) || 'LEARNING';
+    merged.set(lemmaKey, {
+      lemma: wkEntry?.lemma || String(lemmaValue || lemmaKey).trim() || lemmaKey,
+      lemmaKey,
+      status,
+      updatedAt: wkEntry?.updatedAt ?? card?.updatedAt ?? card?.createdAt ?? null,
+    });
   }
 
-  const response = await fetch(url, { headers });
-  const payload = await response.json();
-
-  if (!response.ok) {
-    throw new Error(payload?.message || 'Failed to load');
+  for (const [lemmaKey, wkEntry] of wkMap.entries()) {
+    if (!merged.has(lemmaKey)) {
+      merged.set(lemmaKey, wkEntry);
+    }
   }
 
-  const data = payload?.data ?? payload;
-  return data;
-}
+  return Array.from(merged.values()).sort((a, b) =>
+    a.lemma.localeCompare(b.lemma, 'tr-TR', { sensitivity: 'base' })
+  );
+};
 
 export default function FlashcardLibraryScreen() {
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const [words, setWords] = useState([]);
+  const [allWords, setAllWords] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [activeFilter, setActiveFilter] = useState('ALL');
   const [statusModalVisible, setStatusModalVisible] = useState(false);
   const [selectedWord, setSelectedWord] = useState(null);
-  const [updatingLemma, setUpdatingLemma] = useState(null);
+  const [updatingLemmaKey, setUpdatingLemmaKey] = useState(null);
+  const [offlineEmpty, setOfflineEmpty] = useState(false);
+  const netInfo = useNetInfo();
+  const isOffline = netInfo.isConnected === false || netInfo.isInternetReachable === false;
 
-  const loadWords = useCallback(async (filter) => {
+  const loadWords = useCallback(async () => {
     try {
       setLoading(true);
       setError('');
-      const data = await fetchWordKnowledge(filter === 'ALL' ? null : filter);
-      const list = Array.isArray(data?.content) ? data.content : Array.isArray(data) ? data : [];
-      setWords(list);
+      setOfflineEmpty(false);
+
+      if (isOffline) {
+        const cached = await getCache(CACHE_LIBRARY).catch(() => null);
+        if (cached) {
+          setAllWords(Array.isArray(cached) ? cached : []);
+          return;
+        }
+
+        const cachedFlashcards = await getCache(CACHE_FLASHCARDS).catch(() => []);
+        const cachedKnowledge = await getCache(CACHE_WORD_KNOWLEDGE).catch(() => []);
+        if ((cachedFlashcards?.length ?? 0) > 0 || (cachedKnowledge?.length ?? 0) > 0) {
+          const merged = mergeWordSources(
+            Array.isArray(cachedFlashcards) ? cachedFlashcards : [],
+            Array.isArray(cachedKnowledge) ? cachedKnowledge : []
+          );
+          setAllWords(merged);
+          saveCache(CACHE_LIBRARY, merged).catch(() => {});
+          return;
+        }
+
+        setAllWords([]);
+        setOfflineEmpty(true);
+        return;
+      }
+      const [flashcardsResult, knowledgeResult] = await Promise.allSettled([
+        fetchAllFlashcards(),
+        fetchAllWordKnowledge(),
+      ]);
+
+      const flashcards = flashcardsResult.status === 'fulfilled' ? flashcardsResult.value : [];
+      const knowledge = knowledgeResult.status === 'fulfilled' ? knowledgeResult.value : [];
+
+      if (flashcardsResult.status === 'fulfilled') {
+        saveCache(CACHE_FLASHCARDS, flashcards).catch(() => {});
+      }
+      if (knowledgeResult.status === 'fulfilled') {
+        saveCache(CACHE_WORD_KNOWLEDGE, knowledge).catch(() => {});
+      }
+
+      if (flashcardsResult.status === 'rejected' && knowledgeResult.status === 'rejected') {
+        throw flashcardsResult.reason || knowledgeResult.reason || new Error('Failed to load vocabulary.');
+      }
+
+      const merged = mergeWordSources(flashcards, knowledge);
+      setAllWords(merged);
+      saveCache(CACHE_LIBRARY, merged).catch(() => {});
     } catch (err) {
-      setError(err?.message || 'Could not load vocabulary.');
-      setWords([]);
+      const cached = await getCache(CACHE_LIBRARY).catch(() => null);
+      if (cached) {
+        setAllWords(Array.isArray(cached) ? cached : []);
+        setError('');
+      } else {
+        setError(err?.message || 'Could not load vocabulary.');
+        setAllWords([]);
+      }
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isOffline]);
 
   useFocusEffect(
     useCallback(() => {
-      loadWords(activeFilter);
-    }, [activeFilter, loadWords])
+      loadWords();
+    }, [loadWords])
   );
 
   const handleFilterChange = (filter) => {
@@ -101,26 +189,42 @@ export default function FlashcardLibraryScreen() {
 
   const handleChangeStatus = useCallback(async (newStatus) => {
     if (!selectedWord) return;
-    const lemma = selectedWord.lemma;
+    const lemmaKey = selectedWord.lemmaKey || normalizeLemma(selectedWord.lemma);
+    if (!lemmaKey) {
+      setStatusModalVisible(false);
+      setSelectedWord(null);
+      return;
+    }
 
     setStatusModalVisible(false);
-    setUpdatingLemma(lemma);
+    setUpdatingLemmaKey(lemmaKey);
 
     try {
-      await updateWordKnowledge(lemma, newStatus);
-      // Update local state
-      setWords((prev) =>
-        prev.map((w) =>
-          w.lemma === lemma ? { ...w, status: newStatus } : w
-        )
-      );
-    } catch (err) {
-      // Silently fail — the UI will still show old status
-    } finally {
-      setUpdatingLemma(null);
-      setSelectedWord(null);
+      await updateWordKnowledge(lemmaKey, newStatus);
+    } catch {
+      enqueueWordKnowledge(lemmaKey, newStatus).catch(() => {});
     }
+
+    setAllWords((prev) => {
+      const updated = prev.map((w) =>
+        w.lemmaKey === lemmaKey
+          ? { ...w, status: newStatus, updatedAt: new Date().toISOString() }
+          : w
+      );
+      saveCache(CACHE_LIBRARY, updated).catch(() => {});
+      return updated;
+    });
+
+    setUpdatingLemmaKey(null);
+    setSelectedWord(null);
   }, [selectedWord]);
+
+  const filteredWords = useMemo(() => {
+    if (activeFilter === 'ALL') {
+      return allWords;
+    }
+    return allWords.filter((word) => word.status === activeFilter);
+  }, [allWords, activeFilter]);
 
   const renderFilterChip = (filter) => {
     const isActive = filter === activeFilter;
@@ -152,7 +256,7 @@ export default function FlashcardLibraryScreen() {
 
   const renderWordItem = ({ item }) => {
     const config = STATUS_CONFIG[item.status] || STATUS_CONFIG.UNKNOWN;
-    const isUpdating = updatingLemma === item.lemma;
+    const isUpdating = updatingLemmaKey === item.lemmaKey;
 
     return (
       <Pressable
@@ -224,7 +328,11 @@ export default function FlashcardLibraryScreen() {
 
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Vocabulary</Text>
-        <Text style={styles.headerSubtitle}>{`${words.length} words tracked`}</Text>
+        <Text style={styles.headerSubtitle}>
+          {activeFilter === 'ALL'
+            ? `${allWords.length} words tracked`
+            : `${filteredWords.length} of ${allWords.length} words`}
+        </Text>
       </View>
 
       {/* Filter chips */}
@@ -241,17 +349,21 @@ export default function FlashcardLibraryScreen() {
         </View>
       ) : (
         <FlatList
-          data={words}
-          keyExtractor={(item) => item.lemma}
+          data={filteredWords}
+          keyExtractor={(item) => item.lemmaKey}
           renderItem={renderWordItem}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={
             <View style={styles.emptyWrap}>
               <Ionicons name="book-outline" size={48} color={colors.textMuted} />
-              <Text style={styles.emptyTitle}>No words yet</Text>
+              <Text style={styles.emptyTitle}>
+                {offlineEmpty ? OFFLINE_EMPTY_TITLE : 'No words yet'}
+              </Text>
               <Text style={styles.emptySubtitle}>
-                Start reviewing flashcards to build your vocabulary list.
+                {offlineEmpty
+                  ? OFFLINE_EMPTY_SUBTITLE
+                  : 'Start reviewing flashcards to build your vocabulary list.'}
               </Text>
             </View>
           }

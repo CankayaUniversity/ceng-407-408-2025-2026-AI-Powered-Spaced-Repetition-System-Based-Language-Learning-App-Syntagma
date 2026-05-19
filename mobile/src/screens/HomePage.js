@@ -11,10 +11,27 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
-import { fetchCollectionById, fetchCollections, fetchReviewStats } from '../shared/api';
-import { getBadgeState, saveBadgeState } from '../shared/storage';
-import { BADGE_TIERS, computeBadgeState } from '../shared/badges';
+import { useNetInfo } from '@react-native-community/netinfo';
+import {
+  fetchAllFlashcards,
+  fetchCollectionById,
+  fetchCollections,
+  fetchDailyCards,
+  fetchAllWordKnowledge,
+} from '../shared/api';
+import { getBadgeState, getCache, saveCache, saveBadgeState } from '../shared/storage';
+import { flushQueues, getReviewedIdsToday } from '../shared/offline';
+import { computeCefrState, getCefrMedal } from '../shared/badges';
+import { computeKnownWordsStats } from '../shared/known-words';
 import { useTheme } from '../shared/theme';
+
+const CACHE_COLLECTIONS = 'syntagma.cache.collections';
+const cacheCollectionKey = (id) => `syntagma.cache.collection.${id}`;
+const CACHE_DAILY = 'syntagma.cache.daily';
+const CACHE_ALL_FLASHCARDS = 'syntagma.cache.flashcards.all.v1';
+const CACHE_WORD_KNOWLEDGE = 'syntagma.cache.wordknowledge.all.v1';
+const OFFLINE_EMPTY_TITLE = 'Offline moddasin';
+const OFFLINE_EMPTY_SUBTITLE = 'Internet gelince koleksiyonlar senkronize olacak.';
 
 export default function HomePage({ navigation }) {
   const { colors, isDark } = useTheme();
@@ -24,11 +41,29 @@ export default function HomePage({ navigation }) {
   const [error, setError] = useState('');
   const [startingId, setStartingId] = useState(null);
   const [badgeState, setBadgeState] = useState(null);
+  const [offlineEmpty, setOfflineEmpty] = useState(false);
+  const netInfo = useNetInfo();
+  const isOffline = netInfo.isConnected === false || netInfo.isInternetReachable === false;
 
   const loadCollections = useCallback(async () => {
+    if (!isOffline) {
+      flushQueues().catch(() => {});
+    }
     try {
       setLoading(true);
       setError('');
+      setOfflineEmpty(false);
+
+      if (isOffline) {
+        const cached = await getCache(CACHE_COLLECTIONS).catch(() => null);
+        if (cached) {
+          setCollections(cached);
+        } else {
+          setCollections([]);
+          setOfflineEmpty(true);
+        }
+        return;
+      }
       const data = await fetchCollections();
       const list = Array.isArray(data)
         ? data
@@ -38,13 +73,20 @@ export default function HomePage({ navigation }) {
             ? data.collections
             : [];
       setCollections(list);
+      saveCache(CACHE_COLLECTIONS, list).catch(() => {});
     } catch (err) {
-      setError(err?.message || 'Collections could not be loaded.');
-      setCollections([]);
+      const cached = await getCache(CACHE_COLLECTIONS).catch(() => null);
+      if (cached) {
+        setCollections(cached);
+        setError('');
+      } else {
+        setError(err?.message || 'Collections could not be loaded.');
+        setCollections([]);
+      }
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isOffline]);
 
   useFocusEffect(
     useCallback(() => {
@@ -54,15 +96,48 @@ export default function HomePage({ navigation }) {
       const loadBadge = async () => {
         const cached = await getBadgeState();
         if (isMounted && cached) {
-          setBadgeState(computeBadgeState(cached.totalReviews));
+          setBadgeState(computeCefrState(cached.knownWords));
         }
 
         try {
-          const stats = await fetchReviewStats('all');
-          const totalReviews = stats?.totalReviews ?? stats?.total ?? stats?.reviewCount ?? 0;
-          if (isMounted && Number.isFinite(totalReviews)) {
-            await saveBadgeState({ totalReviews });
-            setBadgeState(computeBadgeState(totalReviews));
+          if (isOffline) {
+            const cachedFlashcards = await getCache(CACHE_ALL_FLASHCARDS).catch(() => []);
+            const cachedKnowledge = await getCache(CACHE_WORD_KNOWLEDGE).catch(() => []);
+            if ((cachedFlashcards?.length ?? 0) > 0 || (cachedKnowledge?.length ?? 0) > 0) {
+              const { knownCount } = computeKnownWordsStats(
+                Array.isArray(cachedFlashcards) ? cachedFlashcards : [],
+                Array.isArray(cachedKnowledge) ? cachedKnowledge : []
+              );
+              if (isMounted) {
+                setBadgeState(computeCefrState(knownCount));
+              }
+            }
+            return;
+          }
+
+          const [flashcardsResult, knowledgeResult] = await Promise.allSettled([
+            fetchAllFlashcards(),
+            fetchAllWordKnowledge(),
+          ]);
+
+          const flashcards = flashcardsResult.status === 'fulfilled' ? flashcardsResult.value : [];
+          const knowledge = knowledgeResult.status === 'fulfilled' ? knowledgeResult.value : [];
+
+          if (flashcardsResult.status === 'fulfilled') {
+            saveCache(CACHE_ALL_FLASHCARDS, flashcards).catch(() => {});
+          }
+          if (knowledgeResult.status === 'fulfilled') {
+            saveCache(CACHE_WORD_KNOWLEDGE, knowledge).catch(() => {});
+          }
+
+          if (flashcardsResult.status === 'rejected' && knowledgeResult.status === 'rejected') {
+            throw flashcardsResult.reason || knowledgeResult.reason || new Error('Failed to load vocabulary.');
+          }
+
+          const { knownCount } = computeKnownWordsStats(flashcards, knowledge);
+          if (isMounted) {
+            await saveBadgeState({ knownWords: knownCount });
+            setBadgeState(computeCefrState(knownCount));
           }
         } catch (err) {
           // badge is non-critical
@@ -72,6 +147,89 @@ export default function HomePage({ navigation }) {
       return () => { isMounted = false; };
     }, [loadCollections])
   );
+
+  const filterCardsForToday = useCallback(async (cards) => {
+    if (!cards.length) {
+      return cards;
+    }
+
+    let dailyCards = null;
+
+    try {
+      const daily = await fetchDailyCards();
+      if (Array.isArray(daily?.cards)) {
+        dailyCards = daily.cards;
+        saveCache(CACHE_DAILY, daily).catch(() => {});
+      }
+    } catch {
+      const cached = await getCache(CACHE_DAILY).catch(() => null);
+      if (Array.isArray(cached?.cards)) {
+        dailyCards = cached.cards;
+      }
+    }
+
+    let filtered = cards;
+
+    if (dailyCards !== null) {
+      const idSet = new Set(
+        dailyCards
+          .map((entry) => entry?.flashcardId)
+          .filter((id) => id != null)
+          .map((id) => Number(id))
+          .filter((id) => Number.isFinite(id))
+      );
+      filtered = idSet.size ? cards.filter((card) => idSet.has(Number(card.flashcardId))) : [];
+    }
+
+    const reviewedIds = await getReviewedIdsToday().catch(() => []);
+    if (reviewedIds.length > 0) {
+      const reviewedSet = new Set(reviewedIds.map(String));
+      filtered = filtered.filter(
+        (c) => !reviewedSet.has(String(c.flashcardId ?? c.id))
+      );
+    }
+
+    return filtered;
+  }, []);
+
+  const filterFlashcardsByCollection = useCallback((flashcards, collectionId) => {
+    return flashcards.filter((card) => {
+      const ids = Array.isArray(card?.collectionIds) ? card.collectionIds : [];
+      const allIds = ids.slice();
+      if (card?.collectionId != null) {
+        allIds.push(card.collectionId);
+      }
+      return allIds.some((id) => Number(id) === Number(collectionId));
+    });
+  }, []);
+
+  const mapFlashcardsToCards = useCallback((items) => {
+    return items.map((item) => ({
+      flashcardId: item.flashcardId ?? item.id,
+      word: item.lemma || item.word || 'Unknown',
+      phonetic: '',
+      sentence: item.exampleSentence || item.sourceSentence || '',
+      translation: item.translation || '',
+      sentenceTranslation: '',
+    }));
+  }, []);
+
+  const loadCachedCollectionCards = useCallback(async (collectionId) => {
+    const cachedCards = await getCache(cacheCollectionKey(collectionId)).catch(() => null);
+    if (Array.isArray(cachedCards) && cachedCards.length > 0) {
+      return cachedCards;
+    }
+
+    const cachedFlashcards = await getCache(CACHE_ALL_FLASHCARDS).catch(() => null);
+    if (Array.isArray(cachedFlashcards) && cachedFlashcards.length > 0) {
+      const filtered = filterFlashcardsByCollection(cachedFlashcards, collectionId);
+      if (filtered.length > 0) {
+        return mapFlashcardsToCards(filtered);
+      }
+    }
+
+    return null;
+  }, [filterFlashcardsByCollection, mapFlashcardsToCards]);
 
   const handleStart = useCallback(
     async (collection) => {
@@ -87,29 +245,70 @@ export default function HomePage({ navigation }) {
       setStartingId(collectionId);
       setError('');
 
+      if (isOffline) {
+        const cachedCards = await loadCachedCollectionCards(collectionId);
+        if (Array.isArray(cachedCards) && cachedCards.length > 0) {
+          const filteredCards = await filterCardsForToday(cachedCards);
+          navigation.navigate('FlashcardReview', {
+            cards: filteredCards,
+            collectionId,
+            collectionName: collection.name || 'Collection',
+          });
+        } else {
+          setError(OFFLINE_EMPTY_SUBTITLE);
+        }
+        setStartingId(null);
+        return;
+      }
+
       try {
         const details = await fetchCollectionById(collectionId);
         const items = Array.isArray(details?.items) ? details.items : [];
-        const cards = items.map((item) => ({
+        const mappedItems = items.map((item) => ({
+          flashcardId: item.flashcardId ?? item.id,
           word: item.lemma || item.word || 'Unknown',
           phonetic: '',
-          sentence: item.exampleSentence || item.sourceSentence || '',
+          sentence: '',
           translation: item.translation || '',
           sentenceTranslation: '',
         }));
 
+        let cards = mappedItems;
+
+        if (!cards.length) {
+          const allFlashcards = await fetchAllFlashcards();
+          saveCache(CACHE_ALL_FLASHCARDS, allFlashcards).catch(() => {});
+          const filtered = filterFlashcardsByCollection(allFlashcards, collectionId);
+
+          cards = mapFlashcardsToCards(filtered);
+        }
+
+        saveCache(cacheCollectionKey(collectionId), cards).catch(() => {});
+
+        const filteredCards = await filterCardsForToday(cards);
+
         navigation.navigate('FlashcardReview', {
-          cards,
+          cards: filteredCards,
           collectionId,
           collectionName: collection.name || details?.name || 'Collection',
         });
       } catch (err) {
-        setError(err?.message || 'Collection could not be loaded.');
+        const cachedCards = await loadCachedCollectionCards(collectionId);
+        if (Array.isArray(cachedCards) && cachedCards.length > 0) {
+          const filteredCards = await filterCardsForToday(cachedCards);
+          navigation.navigate('FlashcardReview', {
+            cards: filteredCards,
+            collectionId,
+            collectionName: collection.name || 'Collection',
+          });
+        } else {
+          setError(err?.message || 'Collection could not be loaded.');
+        }
       } finally {
         setStartingId(null);
       }
     },
-    [navigation]
+    [filterCardsForToday, isOffline, loadCachedCollectionCards, mapFlashcardsToCards, navigation, filterFlashcardsByCollection]
   );
 
   const renderCollectionCard = ({ item }) => {
@@ -167,15 +366,27 @@ export default function HomePage({ navigation }) {
 
             {badgeState && (
               <View style={styles.badgeCard}>
-                <Image
-                  source={badgeState.currentTier?.image ?? BADGE_TIERS[0].image}
-                  style={[styles.badgeImage, !badgeState.currentTier && styles.badgeImageLocked]}
-                />
+                <View style={styles.levelBadgeRow}>
+                  <View style={styles.levelBadge}>
+                    {badgeState.currentLevel && getCefrMedal(badgeState.currentLevel.id) ? (
+                      <Image
+                        source={getCefrMedal(badgeState.currentLevel.id).image}
+                        style={styles.levelBadgeImage}
+                      />
+                    ) : (
+                      <Text style={styles.levelBadgeText}>
+                        {badgeState.currentLevel?.label ?? 'A0'}
+                      </Text>
+                    )}
+                  </View>
+                </View>
                 <View style={styles.badgeInfo}>
                   <Text style={styles.badgeLabel}>
-                    {badgeState.currentTier ? badgeState.currentTier.label : 'No badge yet'}
+                    {badgeState.currentLevel ? `Level ${badgeState.currentLevel.label}` : 'Level A0'}
                   </Text>
-                  <Text style={styles.badgeProgressText}>{badgeState.progressText}</Text>
+                  <Text style={styles.badgeProgressText}>
+                    {`${badgeState.progressPercent}% • ${badgeState.progressText}`}
+                  </Text>
                   <View style={styles.progressTrack}>
                     <View style={[styles.progressFill, { width: `${Math.round(badgeState.progress * 100)}%` }]} />
                   </View>
@@ -198,8 +409,12 @@ export default function HomePage({ navigation }) {
         ListEmptyComponent={
           !loading ? (
             <View style={styles.emptyState}>
-              <Text style={styles.emptyTitle}>Çalışacak kartınız kalmadı.</Text>
-              <Text style={styles.emptySubtitle}>Yeni kelimeler eklediğinizde burada görünecek.</Text>
+              <Text style={styles.emptyTitle}>
+                {offlineEmpty ? OFFLINE_EMPTY_TITLE : 'Çalışacak kartınız kalmadı.'}
+              </Text>
+              <Text style={styles.emptySubtitle}>
+                {offlineEmpty ? OFFLINE_EMPTY_SUBTITLE : 'Yeni kelimeler eklediğinizde burada görünecek.'}
+              </Text>
             </View>
           ) : null
         }
@@ -383,14 +598,28 @@ const createStyles = (colors) => StyleSheet.create({
     borderColor: colors.border,
     padding: 16,
   },
-  badgeImage: {
+  levelBadge: {
     width: 64,
     height: 64,
     borderRadius: 32,
+    backgroundColor: colors.mutedSurface,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  badgeImageLocked: {
-    opacity: 0.35,
+  levelBadgeRow: {
+    width: 74,
+    alignItems: 'center',
+    gap: 8,
   },
+  levelBadgeText: {
+    color: colors.accent,
+    fontSize: 20,
+    fontFamily: 'PlayfairDisplay_700Bold',
+  },
+    levelBadgeImage: {
+      width: 44,
+      height: 44,
+    },
   badgeInfo: {
     flex: 1,
   },

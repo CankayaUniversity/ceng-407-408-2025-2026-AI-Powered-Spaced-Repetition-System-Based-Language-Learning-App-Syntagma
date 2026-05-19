@@ -10,22 +10,38 @@ import {
   StyleSheet,
   Switch,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Notifications from 'expo-notifications';
-import { fetchCurrentUser, fetchReviewStats } from '../shared/api';
+import {
+  fetchAllFlashcards,
+  fetchAllWordKnowledge,
+  fetchCurrentUser,
+  fetchReviewStats,
+} from '../shared/api';
 import {
   getAuth,
   getBadgeState,
+  getCache,
+  getLastStudyCount,
   getNotificationPreference,
   getReminderHour,
+  clearAuth,
   saveBadgeState,
+  saveLastStudyCount,
   saveNotificationPreference,
   saveReminderHour,
+  saveCache,
 } from '../shared/storage';
-import { BADGE_TIERS, computeBadgeState } from '../shared/badges';
+import { computeCefrState, getCefrMedal } from '../shared/badges';
+import { computeKnownWordsStats } from '../shared/known-words';
 import { useTheme } from '../shared/theme';
+
+const CACHE_ALL_FLASHCARDS = 'syntagma.cache.flashcards.all.v1';
+const CACHE_WORD_KNOWLEDGE = 'syntagma.cache.wordknowledge.all.v1';
+const DEFAULT_DAILY_COUNT = 10;
 
 // ── Small reusable components ──────────────────────────────────────
 
@@ -158,15 +174,27 @@ export default function SettingsScreen({ navigation }) {
   const [isDarkMode, setIsDarkMode] = useState(isDark);
   const [isNotificationsOn, setIsNotificationsOn] = useState(false);
   const [reminderHour, setReminderHour] = useState(20); // default 20:00 (8 PM)
+  const [dailyCount, setDailyCount] = useState(DEFAULT_DAILY_COUNT);
+  const [customDailyCount, setCustomDailyCount] = useState(String(DEFAULT_DAILY_COUNT));
+  const [customDailyError, setCustomDailyError] = useState('');
   const [profileName, setProfileName] = useState('');
   const [profileEmail, setProfileEmail] = useState('');
   const [timePickerVisible, setTimePickerVisible] = useState(false);
+  const [dailyPickerVisible, setDailyPickerVisible] = useState(false);
   const [streakCount, setStreakCount] = useState(null);
   const [badgeState, setBadgeState] = useState(null);
+  const [achievementsOpen, setAchievementsOpen] = useState(false);
 
   useEffect(() => {
     setIsDarkMode(isDark);
   }, [isDark]);
+
+  useEffect(() => {
+    if (dailyPickerVisible) {
+      setCustomDailyCount(String(dailyCount));
+      setCustomDailyError('');
+    }
+  }, [dailyCount, dailyPickerVisible]);
 
   // Load saved preferences
   useEffect(() => {
@@ -175,6 +203,7 @@ export default function SettingsScreen({ navigation }) {
     const load = async () => {
       const savedNotif = await getNotificationPreference();
       const savedHour = await getReminderHour();
+      const savedDailyCount = await getLastStudyCount();
 
       if (!isMounted) return;
 
@@ -183,6 +212,9 @@ export default function SettingsScreen({ navigation }) {
       }
       if (Number.isFinite(savedHour)) {
         setReminderHour(savedHour);
+      }
+      if (Number.isFinite(savedDailyCount) && savedDailyCount > 0) {
+        setDailyCount(savedDailyCount);
       }
     };
 
@@ -198,7 +230,7 @@ export default function SettingsScreen({ navigation }) {
       // Show cached badge immediately while network loads
       const cached = await getBadgeState();
       if (isMounted && cached) {
-        setBadgeState(computeBadgeState(cached.totalReviews));
+        setBadgeState(computeCefrState(cached.knownWords));
       }
 
       const auth = await getAuth();
@@ -230,14 +262,47 @@ export default function SettingsScreen({ navigation }) {
         if (isMounted && stats?.streakCount != null) {
           setStreakCount(stats.streakCount);
         }
-
-        const totalReviews = stats?.totalReviews ?? stats?.total ?? stats?.reviewCount ?? 0;
-        if (isMounted && Number.isFinite(totalReviews)) {
-          await saveBadgeState({ totalReviews });
-          setBadgeState(computeBadgeState(totalReviews));
-        }
       } catch (err) {
         // Streak and badge are optional, don't fail
+      }
+
+      try {
+        const [flashcardsResult, knowledgeResult] = await Promise.allSettled([
+          fetchAllFlashcards(),
+          fetchAllWordKnowledge(),
+        ]);
+
+        const flashcards = flashcardsResult.status === 'fulfilled' ? flashcardsResult.value : [];
+        const knowledge = knowledgeResult.status === 'fulfilled' ? knowledgeResult.value : [];
+
+        if (flashcardsResult.status === 'fulfilled') {
+          saveCache(CACHE_ALL_FLASHCARDS, flashcards).catch(() => {});
+        }
+        if (knowledgeResult.status === 'fulfilled') {
+          saveCache(CACHE_WORD_KNOWLEDGE, knowledge).catch(() => {});
+        }
+
+        if (flashcardsResult.status === 'rejected' && knowledgeResult.status === 'rejected') {
+          throw flashcardsResult.reason || knowledgeResult.reason || new Error('Failed to load vocabulary.');
+        }
+
+        const { knownCount } = computeKnownWordsStats(flashcards, knowledge);
+        if (isMounted) {
+          await saveBadgeState({ knownWords: knownCount });
+          setBadgeState(computeCefrState(knownCount));
+        }
+      } catch (err) {
+        const cachedFlashcards = await getCache(CACHE_ALL_FLASHCARDS).catch(() => []);
+        const cachedKnowledge = await getCache(CACHE_WORD_KNOWLEDGE).catch(() => []);
+        if ((cachedFlashcards?.length ?? 0) > 0 || (cachedKnowledge?.length ?? 0) > 0) {
+          const { knownCount } = computeKnownWordsStats(
+            Array.isArray(cachedFlashcards) ? cachedFlashcards : [],
+            Array.isArray(cachedKnowledge) ? cachedKnowledge : []
+          );
+          if (isMounted) {
+            setBadgeState(computeCefrState(knownCount));
+          }
+        }
       }
     };
 
@@ -245,7 +310,16 @@ export default function SettingsScreen({ navigation }) {
     return () => { isMounted = false; };
   }, []);
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
+    try {
+      await clearAuth();
+      await cancelAllReminders();
+      await saveNotificationPreference(false);
+      setIsNotificationsOn(false);
+    } catch (err) {
+      // Best-effort logout; navigation still proceeds.
+    }
+
     navigation.getParent()?.replace('Login');
   };
 
@@ -285,6 +359,27 @@ export default function SettingsScreen({ navigation }) {
       await scheduleSmartReminder(hour);
     }
   }, [isNotificationsOn]);
+
+  const handleSelectDailyCount = useCallback(async (count) => {
+    setDailyCount(count);
+    setDailyPickerVisible(false);
+    setCustomDailyCount(String(count));
+    setCustomDailyError('');
+    await saveLastStudyCount(count);
+  }, []);
+
+  const handleSaveCustomDailyCount = useCallback(async () => {
+    const parsed = Number.parseInt(customDailyCount, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setCustomDailyError('Please enter a positive number.');
+      return;
+    }
+
+    setDailyCount(parsed);
+    setDailyPickerVisible(false);
+    setCustomDailyError('');
+    await saveLastStudyCount(parsed);
+  }, [customDailyCount]);
 
   const handleTestNotification = useCallback(async () => {
     const granted = await requestNotificationPermission();
@@ -350,37 +445,6 @@ export default function SettingsScreen({ navigation }) {
           </View>
         )}
 
-        {badgeState && (
-          <>
-            <SectionLabel styles={styles}>BADGES</SectionLabel>
-            <View style={styles.card}>
-              <Text style={styles.badgeProgressText}>{badgeState.progressText}</Text>
-              <View style={styles.progressTrack}>
-                <View style={[styles.progressFill, { width: `${Math.round(badgeState.progress * 100)}%` }]} />
-              </View>
-              <View style={styles.badgeGallery}>
-                {BADGE_TIERS.map(tier => {
-                  const unlocked = badgeState.unlockedIds.includes(tier.id);
-                  return (
-                    <View key={tier.id} style={styles.badgeGalleryItem}>
-                      <Image
-                        source={tier.image}
-                        style={[styles.galleryImage, !unlocked && styles.galleryImageLocked]}
-                      />
-                      <Text style={[styles.galleryLabel, !unlocked && styles.galleryLabelLocked]}>
-                        {tier.label}
-                      </Text>
-                      {!unlocked && (
-                        <Text style={styles.lockedHint}>{tier.threshold} reviews</Text>
-                      )}
-                    </View>
-                  );
-                })}
-              </View>
-            </View>
-          </>
-        )}
-
         <SectionLabel styles={styles}>ACCOUNT</SectionLabel>
         <View style={styles.card}>
           <ReadonlyField
@@ -404,20 +468,18 @@ export default function SettingsScreen({ navigation }) {
           </Pressable>
         </View>
 
-        <SectionLabel styles={styles}>APPEARANCE</SectionLabel>
+        <SectionLabel styles={styles}>GENERAL SETTINGS</SectionLabel>
         <View style={styles.card}>
-          <ToggleRow
-            icon="moon-outline"
-            label="Dark Mode"
-            value={isDarkMode}
-            onChange={handleToggleDarkMode}
+          <ActionRow
+            icon="list-outline"
+            label="Daily card count"
+            subtitle={`${dailyCount} cards per day`}
+            onPress={() => setDailyPickerVisible(true)}
             colors={colors}
             styles={styles}
           />
-        </View>
 
-        <SectionLabel styles={styles}>NOTIFICATIONS</SectionLabel>
-        <View style={styles.card}>
+          <View style={styles.rowDivider} />
           <ToggleRow
             icon="notifications-outline"
             label="Study Reminders"
@@ -443,15 +505,76 @@ export default function SettingsScreen({ navigation }) {
                 {'\n'}
                 {`Streak warning at ${formatHour((reminderHour + 2) % 24)}`}
               </Text>
+
+              <View style={styles.rowDivider} />
+              <ActionRow
+                icon="paper-plane-outline"
+                label="Send Test Notification"
+                subtitle="Verify notifications work"
+                onPress={handleTestNotification}
+                colors={colors}
+                styles={styles}
+              />
             </>
           )}
 
           <View style={styles.rowDivider} />
           <ActionRow
-            icon="paper-plane-outline"
-            label="Send Test Notification"
-            subtitle="Verify notifications work"
-            onPress={handleTestNotification}
+            icon="trophy-outline"
+            label="Achievements"
+            subtitle={achievementsOpen ? 'Hide badges' : 'View badges'}
+            onPress={() => setAchievementsOpen((prev) => !prev)}
+            colors={colors}
+            styles={styles}
+          />
+
+          {achievementsOpen && badgeState && (
+            <View style={styles.achievementPanel}>
+              <View style={styles.achievementHeader}>
+                {badgeState.currentLevel && getCefrMedal(badgeState.currentLevel.id) ? (
+                  <Image
+                    source={getCefrMedal(badgeState.currentLevel.id).image}
+                    style={styles.achievementMedal}
+                  />
+                ) : null}
+                <View style={styles.achievementInfo}>
+                  <Text style={styles.badgeLabelText}>
+                    {badgeState.currentLevel ? `Level ${badgeState.currentLevel.label}` : 'Level A0'}
+                  </Text>
+                  <Text style={styles.badgeProgressText}>
+                    {`${badgeState.progressPercent}% • ${badgeState.progressText}`}
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.progressTrack}>
+                <View style={[styles.progressFill, { width: `${Math.round(badgeState.progress * 100)}%` }]} />
+              </View>
+
+              <View style={styles.achievementList}>
+                <View style={styles.achievementRow}>
+                  <Image source={getCefrMedal('A1')?.image} style={styles.achievementMini} />
+                  <Text style={styles.achievementText}>A1-A2: Bronze medal</Text>
+                </View>
+                <View style={styles.achievementRow}>
+                  <Image source={getCefrMedal('B1')?.image} style={styles.achievementMini} />
+                  <Text style={styles.achievementText}>B1-B2: Silver medal</Text>
+                </View>
+                <View style={styles.achievementRow}>
+                  <Image source={getCefrMedal('C1')?.image} style={styles.achievementMini} />
+                  <Text style={styles.achievementText}>C1-C2: Gold medal</Text>
+                </View>
+              </View>
+            </View>
+          )}
+        </View>
+
+        <SectionLabel styles={styles}>APPEARANCE</SectionLabel>
+        <View style={styles.card}>
+          <ToggleRow
+            icon="moon-outline"
+            label="Dark Mode"
+            value={isDarkMode}
+            onChange={handleToggleDarkMode}
             colors={colors}
             styles={styles}
           />
@@ -488,6 +611,66 @@ export default function SettingsScreen({ navigation }) {
             <Pressable
               style={styles.modalCancel}
               onPress={() => setTimePickerVisible(false)}
+            >
+              <Text style={styles.modalCancelText}>Cancel</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Daily count modal */}
+      <Modal visible={dailyPickerVisible} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Daily card count</Text>
+            <Text style={styles.modalSubtitle}>How many cards per day?</Text>
+
+            <ScrollView style={styles.hourList} showsVerticalScrollIndicator={false}>
+              {[5, 10, 15, 20, 25, 30, 40, 50].map((count) => {
+                const isSelected = count === dailyCount;
+                return (
+                  <Pressable
+                    key={count}
+                    style={[styles.hourItem, isSelected && styles.hourItemSelected]}
+                    onPress={() => handleSelectDailyCount(count)}
+                  >
+                    <Text style={[styles.hourText, isSelected && styles.hourTextSelected]}>
+                      {`${count} cards`}
+                    </Text>
+                    {isSelected && (
+                      <Ionicons name="checkmark" size={20} color={colors.surface} />
+                    )}
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+
+            <View style={styles.dailyCustomWrapper}>
+              <Text style={styles.dailyCustomLabel}>Other</Text>
+              <View style={styles.dailyCustomRow}>
+                <TextInput
+                  value={customDailyCount}
+                  onChangeText={(value) => {
+                    setCustomDailyCount(value.replace(/[^0-9]/g, ''));
+                    setCustomDailyError('');
+                  }}
+                  placeholder="Enter a number"
+                  placeholderTextColor={colors.textSecondary}
+                  keyboardType="numeric"
+                  style={styles.dailyCustomInput}
+                />
+                <Pressable style={styles.dailyCustomSave} onPress={handleSaveCustomDailyCount}>
+                  <Text style={styles.dailyCustomSaveText}>Save</Text>
+                </Pressable>
+              </View>
+              {customDailyError ? (
+                <Text style={styles.dailyCustomError}>{customDailyError}</Text>
+              ) : null}
+            </View>
+
+            <Pressable
+              style={styles.modalCancel}
+              onPress={() => setDailyPickerVisible(false)}
             >
               <Text style={styles.modalCancelText}>Cancel</Text>
             </Pressable>
@@ -713,11 +896,96 @@ const createStyles = (colors) => StyleSheet.create({
     fontSize: 14,
     fontFamily: 'DMSans_400Regular',
   },
+  dailyCustomWrapper: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  dailyCustomLabel: {
+    color: colors.textSecondary,
+    fontFamily: 'DMSans_500Medium',
+    fontSize: 12,
+    marginBottom: 6,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+  },
+  dailyCustomRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  dailyCustomInput: {
+    flex: 1,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.mutedSurface,
+    paddingHorizontal: 12,
+    paddingVertical: Platform.OS === 'ios' ? 10 : 8,
+    color: colors.textPrimary,
+    fontFamily: 'DMSans_500Medium',
+    fontSize: 14,
+  },
+  dailyCustomSave: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: colors.accent,
+  },
+  dailyCustomSaveText: {
+    color: colors.surface,
+    fontFamily: 'DMSans_600SemiBold',
+    fontSize: 13,
+  },
+  dailyCustomError: {
+    marginTop: 6,
+    color: colors.warning || '#D14343',
+    fontFamily: 'DMSans_500Medium',
+    fontSize: 12,
+  },
   badgeProgressText: {
     color: colors.textSecondary,
     fontSize: 12,
     fontFamily: 'DMSans_400Regular',
     marginBottom: 8,
+  },
+  achievementPanel: {
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  achievementHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 10,
+  },
+  achievementMedal: {
+    width: 50,
+    height: 50,
+  },
+  achievementInfo: {
+    flex: 1,
+  },
+  achievementList: {
+    marginTop: 6,
+    gap: 8,
+  },
+  achievementRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  achievementMini: {
+    width: 28,
+    height: 28,
+  },
+  achievementText: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontFamily: 'DMSans_400Regular',
   },
   progressTrack: {
     height: 6,
@@ -731,34 +999,36 @@ const createStyles = (colors) => StyleSheet.create({
     borderRadius: 3,
     backgroundColor: colors.accent,
   },
-  badgeGallery: {
+  cefrRow: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingTop: 4,
-  },
-  badgeGalleryItem: {
     alignItems: 'center',
-    gap: 4,
+    gap: 12,
+    marginBottom: 12,
   },
-  galleryImage: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
+  cefrBadge: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: colors.mutedSurface,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  galleryImageLocked: {
-    opacity: 0.3,
+  cefrBadgeText: {
+    color: colors.accent,
+    fontSize: 18,
+    fontFamily: 'PlayfairDisplay_700Bold',
   },
-  galleryLabel: {
-    color: colors.textPrimary,
-    fontSize: 13,
+  cefrMedal: {
+    width: 40,
+    height: 40,
+  },
+  cefrInfo: {
+    flex: 1,
+  },
+  badgeLabelText: {
+    color: colors.accent,
+    fontSize: 15,
     fontFamily: 'DMSans_600SemiBold',
-  },
-  galleryLabelLocked: {
-    color: colors.textMuted,
-  },
-  lockedHint: {
-    color: colors.textMuted,
-    fontSize: 10,
-    fontFamily: 'DMSans_400Regular',
+    marginBottom: 4,
   },
 });

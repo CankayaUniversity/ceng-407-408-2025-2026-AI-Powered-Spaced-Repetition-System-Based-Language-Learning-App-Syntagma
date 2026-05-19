@@ -1,18 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
   Animated,
   Image,
   LayoutAnimation,
   Linking,
-  Modal,
   Platform,
   Pressable,
   ScrollView,
   StatusBar,
   StyleSheet,
   Text,
-  TextInput,
   UIManager,
   useWindowDimensions,
   View,
@@ -24,9 +21,9 @@ import {
   getCarryover,
   getLastStudyCount,
   saveCarryover,
-  saveLastStudyCount,
 } from '../shared/storage';
-import { updateWordKnowledge } from '../shared/api';
+import { submitReview, updateWordKnowledge } from '../shared/api';
+import { bumpDelta, enqueueReview, enqueueWordKnowledge, markCardReviewed } from '../shared/offline';
 import { useTheme } from '../shared/theme';
 
 const DEFAULT_CARDS = [];
@@ -38,19 +35,6 @@ export const Rating = Object.freeze({
   Easy: 4,
 });
 
-export const KnowledgeStatus = Object.freeze({
-  KNOWN: 'KNOWN',
-  LEARNING: 'LEARNING',
-  UNKNOWN: 'UNKNOWN',
-  IGNORED: 'IGNORED',
-});
-
-const STATUS_META = [
-  { key: KnowledgeStatus.KNOWN, label: 'Known', icon: 'checkmark-circle', colorKey: 'knownBg' },
-  { key: KnowledgeStatus.LEARNING, label: 'Learning', icon: 'school', colorKey: 'learningBg' },
-  { key: KnowledgeStatus.UNKNOWN, label: 'Unknown', icon: 'help-circle', colorKey: 'unknownBg' },
-  { key: KnowledgeStatus.IGNORED, label: 'Ignored', icon: 'eye-off', colorKey: 'ignoredBg' },
-];
 
 export default function FlashcardReviewScreen({ route, navigation, onReview, onPlayPronunciation }) {
   const { colors, isDark } = useTheme();
@@ -61,15 +45,13 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
   const [sessionCards, setSessionCards] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [targetCount, setTargetCount] = useState(0);
-  const [promptVisible, setPromptVisible] = useState(rawCards.length > 0);
-  const [studyCountInput, setStudyCountInput] = useState('10');
+  const [dailyCount, setDailyCount] = useState(10);
+  const [dailyCountLoaded, setDailyCountLoaded] = useState(false);
   const [carryoverCount, setCarryoverCount] = useState(0);
-  const [promptError, setPromptError] = useState('');
   const [sessionStarted, setSessionStarted] = useState(false);
   const [sessionCompleted, setSessionCompleted] = useState(false);
   const [cardState, setCardState] = useState('isCollapsed');
-  const [statusPickerVisible, setStatusPickerVisible] = useState(false);
-  const [pendingRating, setPendingRating] = useState(null);
+
   const detailsAnim = useRef(new Animated.Value(0)).current;
   const cards = sessionCards.length ? sessionCards : rawCards;
   const activeCard = cards[currentIndex] || cards[0];
@@ -96,12 +78,14 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
       }
 
       if (Number.isFinite(lastCount) && lastCount > 0) {
-        setStudyCountInput(String(lastCount));
+        setDailyCount(lastCount);
       }
 
       if (carryover?.remaining > 0 && carryover?.date && carryover.date !== todayKey) {
         setCarryoverCount(carryover.remaining);
       }
+
+      setDailyCountLoaded(true);
     };
 
     loadDefaults();
@@ -112,10 +96,19 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
   }, [todayKey]);
 
   useEffect(() => {
-    if (!rawCards.length) {
-      setPromptVisible(false);
+    if (!rawCards.length || sessionStarted || !dailyCountLoaded) {
+      return;
     }
-  }, [rawCards.length]);
+
+    const totalTarget = Math.min(rawCards.length, dailyCount + carryoverCount);
+    const nextCards = rawCards.slice(0, totalTarget);
+    const initialIndex = Math.max(0, Math.min(requestedStartIndex, Math.max(totalTarget - 1, 0)));
+
+    setTargetCount(totalTarget);
+    setSessionCards(nextCards);
+    setCurrentIndex(initialIndex);
+    setSessionStarted(true);
+  }, [carryoverCount, dailyCount, dailyCountLoaded, rawCards, requestedStartIndex, sessionStarted]);
 
   useEffect(() => {
     if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -127,30 +120,6 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
     inputRange: [0, 1],
     outputRange: [10, 0],
   });
-
-  const handleStartSession = useCallback(async () => {
-    setPromptError('');
-    const parsed = Number.parseInt(studyCountInput, 10);
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      setPromptError('Please enter a valid number.');
-      return;
-    }
-
-    const totalTarget = Math.min(cards.length, parsed + carryoverCount);
-    const nextCards = cards.slice(0, totalTarget);
-    const initialIndex = Math.max(0, Math.min(requestedStartIndex, Math.max(totalTarget - 1, 0)));
-
-    await saveLastStudyCount(parsed);
-    setTargetCount(totalTarget);
-    setSessionCards(nextCards);
-    setCurrentIndex(initialIndex);
-    setPromptVisible(false);
-    setSessionStarted(true);
-  }, [cards, carryoverCount, requestedStartIndex, studyCountInput]);
-
-  const handleCancelSession = useCallback(() => {
-    navigation.goBack();
-  }, [navigation]);
 
   const openDetails = useCallback(() => {
     if (detailsOpen) {
@@ -202,38 +171,35 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
         reviewHandler(rating);
       }
 
-      // Show the knowledge status picker before advancing
-      setPendingRating(rating);
-      setStatusPickerVisible(true);
-    },
-    [onReview, routeOnReview]
-  );
-
-  const handleStatusSelect = useCallback(
-    async (status) => {
-      setStatusPickerVisible(false);
-      setPendingRating(null);
-
-      // Send knowledge status to backend (fire-and-forget)
       const lemma = activeCard?.word || activeCard?.lemma;
-      if (lemma) {
-        try {
-          await updateWordKnowledge(lemma, status);
-        } catch (err) {
-          // Silently ignore — we don't want to block the review flow
-        }
+      const flashcardId = activeCard?.flashcardId;
+      if (flashcardId != null) {
+        const review = {
+          flashcardId: Number(flashcardId),
+          result: rating,
+          device: 'MOBILE',
+          clientTimestamp: new Date().toISOString(),
+        };
+        submitReview(review)
+          .then((response) => {
+            markCardReviewed(review.flashcardId);
+            if ((response?.updatedSrsState?.scheduledDays ?? 0) >= 25 && lemma) {
+              updateWordKnowledge(lemma, 'KNOWN').catch(() =>
+                enqueueWordKnowledge(lemma, 'KNOWN').catch(() => {})
+              );
+            }
+          })
+          .catch(async () => {
+            await enqueueReview(review, lemma);
+            await bumpDelta();
+            await markCardReviewed(review.flashcardId);
+          });
       }
 
       advanceToNextCard();
     },
-    [activeCard, advanceToNextCard]
+    [activeCard, onReview, routeOnReview, advanceToNextCard]
   );
-
-  const handleStatusSkip = useCallback(() => {
-    setStatusPickerVisible(false);
-    setPendingRating(null);
-    advanceToNextCard();
-  }, [advanceToNextCard]);
 
   const handlePronunciation = useCallback(
     async (lang, uri) => {
@@ -281,11 +247,6 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
     return <View style={styles.imageFallback} />;
   }, [activeCard?.imageUri, styles.contextImage, styles.imageFallback]);
 
-  const parsedCount = Number.parseInt(studyCountInput, 10);
-  const previewTotal = Number.isFinite(parsedCount)
-    ? Math.min(cards.length, parsedCount + carryoverCount)
-    : null;
-
   if (!cards.length) {
     return (
       <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
@@ -304,73 +265,6 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
   return (
     <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
-
-      {/* Card count prompt modal */}
-      <Modal visible={promptVisible} transparent animationType="fade">
-        <View style={styles.promptOverlay}>
-          <View style={styles.promptCard}>
-            <Text style={styles.promptTitle}>How many cards today?</Text>
-            <Text style={styles.promptSubtitle}>
-              {carryoverCount > 0
-                ? `Carryover from last day: +${carryoverCount}`
-                : 'Pick your study target.'}
-            </Text>
-
-            <TextInput
-              style={styles.promptInput}
-              keyboardType="number-pad"
-              value={studyCountInput}
-              onChangeText={setStudyCountInput}
-              placeholder="10"
-              placeholderTextColor={colors.textMuted}
-            />
-
-            {Number.isFinite(previewTotal) ? (
-              <Text style={styles.promptTotal}>{`Total cards: ${previewTotal}`}</Text>
-            ) : null}
-
-            {promptError ? <Text style={styles.promptError}>{promptError}</Text> : null}
-
-            <View style={styles.promptActions}>
-              <Pressable style={styles.promptCancel} onPress={handleCancelSession}>
-                <Text style={styles.promptCancelText}>Cancel</Text>
-              </Pressable>
-              <Pressable style={styles.promptStart} onPress={handleStartSession}>
-                <Text style={styles.promptStartText}>Start</Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Knowledge status picker modal */}
-      <Modal visible={statusPickerVisible} transparent animationType="fade">
-        <View style={styles.promptOverlay}>
-          <View style={styles.promptCard}>
-            <Text style={styles.promptTitle}>How well do you know this word?</Text>
-            <Text style={styles.promptSubtitle}>
-              {activeCard?.word ? `"${activeCard.word}"` : 'Rate your knowledge'}
-            </Text>
-
-            <View style={styles.statusGrid}>
-              {STATUS_META.map((item) => (
-                <Pressable
-                  key={item.key}
-                  style={[styles.statusButton, { backgroundColor: statusColors[item.colorKey] }]}
-                  onPress={() => handleStatusSelect(item.key)}
-                >
-                  <Ionicons name={item.icon} size={22} color={colors.textPrimary} />
-                  <Text style={styles.statusButtonText}>{item.label}</Text>
-                </Pressable>
-              ))}
-            </View>
-
-            <Pressable style={styles.statusSkip} onPress={handleStatusSkip}>
-              <Text style={styles.statusSkipText}>Skip</Text>
-            </Pressable>
-          </View>
-        </View>
-      </Modal>
 
       <View style={styles.topBar}>
         <Image source={require('../../assets/capybara-avatar.jpg')} style={styles.avatar} />
@@ -474,12 +368,6 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
   );
 }
 
-const statusColors = {
-  knownBg: '#2D6A4F',
-  learningBg: '#E9A820',
-  unknownBg: '#C44536',
-  ignoredBg: '#6C757D',
-};
 
 const createStyles = (colors) =>
   StyleSheet.create({
@@ -503,115 +391,6 @@ const createStyles = (colors) =>
       color: colors.accent,
       fontSize: 18,
       fontFamily: 'DMSans_600SemiBold',
-    },
-    promptOverlay: {
-      flex: 1,
-      backgroundColor: colors.overlay,
-      alignItems: 'center',
-      justifyContent: 'center',
-      paddingHorizontal: 24,
-    },
-    promptCard: {
-      width: '100%',
-      borderRadius: 22,
-      backgroundColor: colors.card,
-      padding: 22,
-      borderWidth: 0.5,
-      borderColor: colors.border,
-    },
-    promptTitle: {
-      color: colors.accent,
-      fontSize: 20,
-      fontFamily: 'PlayfairDisplay_700Bold',
-      marginBottom: 6,
-    },
-    promptSubtitle: {
-      color: colors.textSecondary,
-      fontSize: 13,
-      fontFamily: 'DMSans_400Regular',
-      marginBottom: 14,
-    },
-    promptInput: {
-      width: '100%',
-      height: 48,
-      borderRadius: 14,
-      backgroundColor: colors.mutedSurface,
-      paddingHorizontal: 16,
-      color: colors.textPrimary,
-      fontSize: 16,
-      fontFamily: 'DMSans_600SemiBold',
-    },
-    promptTotal: {
-      marginTop: 10,
-      color: colors.accent,
-      fontSize: 13,
-      fontFamily: 'DMSans_600SemiBold',
-    },
-    promptError: {
-      marginTop: 8,
-      color: colors.warning,
-      fontSize: 12,
-      fontFamily: 'DMSans_400Regular',
-    },
-    promptActions: {
-      marginTop: 18,
-      flexDirection: 'row',
-      gap: 10,
-      justifyContent: 'flex-end',
-    },
-    promptCancel: {
-      paddingHorizontal: 18,
-      paddingVertical: 10,
-      borderRadius: 18,
-      backgroundColor: colors.mutedSurface,
-    },
-    promptCancelText: {
-      color: colors.accent,
-      fontSize: 13,
-      fontFamily: 'DMSans_600SemiBold',
-    },
-    promptStart: {
-      paddingHorizontal: 20,
-      paddingVertical: 10,
-      borderRadius: 18,
-      backgroundColor: colors.accent,
-    },
-    promptStartText: {
-      color: colors.surface,
-      fontSize: 13,
-      fontFamily: 'DMSans_600SemiBold',
-    },
-    // Knowledge status picker styles
-    statusGrid: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 10,
-      marginTop: 4,
-    },
-    statusButton: {
-      width: '47%',
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-      borderRadius: 16,
-      paddingVertical: 14,
-      paddingHorizontal: 14,
-    },
-    statusButtonText: {
-      color: '#FFFFFF',
-      fontSize: 14,
-      fontFamily: 'DMSans_600SemiBold',
-    },
-    statusSkip: {
-      marginTop: 14,
-      alignSelf: 'center',
-      paddingHorizontal: 20,
-      paddingVertical: 8,
-    },
-    statusSkipText: {
-      color: colors.textSecondary,
-      fontSize: 13,
-      fontFamily: 'DMSans_400Regular',
     },
     // Empty state
     emptyWrap: {

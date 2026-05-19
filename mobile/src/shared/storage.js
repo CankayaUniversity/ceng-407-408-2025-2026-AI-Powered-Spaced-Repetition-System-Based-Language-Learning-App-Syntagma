@@ -134,14 +134,14 @@ export async function getReminderHour() {
   }
 }
 
-const BADGE_KEY = 'syntagma.badge';
+const BADGE_KEY = 'syntagma.cefr.badge';
 
-export async function saveBadgeState({ totalReviews }) {
-  if (!Number.isFinite(totalReviews)) {
+export async function saveBadgeState({ knownWords }) {
+  if (!Number.isFinite(knownWords)) {
     return;
   }
 
-  await AsyncStorage.setItem(BADGE_KEY, JSON.stringify({ totalReviews }));
+  await AsyncStorage.setItem(BADGE_KEY, JSON.stringify({ knownWords }));
 }
 
 export async function getBadgeState() {
@@ -152,8 +152,150 @@ export async function getBadgeState() {
 
   try {
     const parsed = JSON.parse(stored);
-    return Number.isFinite(parsed?.totalReviews) ? parsed : null;
+    return Number.isFinite(parsed?.knownWords) ? parsed : null;
   } catch (err) {
     return null;
+  }
+}
+
+export async function saveCache(key, data) {
+  await AsyncStorage.setItem(key, JSON.stringify({ data, savedAt: Date.now() }));
+}
+
+export async function getCache(key, maxAgeMs = Infinity) {
+  const stored = await AsyncStorage.getItem(key);
+  if (!stored) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(stored);
+    if (maxAgeMs !== Infinity && Date.now() - parsed.savedAt > maxAgeMs) {
+      return null;
+    }
+    return parsed.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getQueue(key) {
+  const stored = await AsyncStorage.getItem(key);
+  if (!stored) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(stored);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function appendToQueue(key, item) {
+  const queue = await getQueue(key);
+  queue.push(item);
+  await AsyncStorage.setItem(key, JSON.stringify(queue));
+}
+
+export async function shiftQueue(key) {
+  const queue = await getQueue(key);
+  if (!queue.length) {
+    return null;
+  }
+  const item = queue.shift();
+  await AsyncStorage.setItem(key, JSON.stringify(queue));
+  return item;
+}
+
+export async function clearQueue(key) {
+  await AsyncStorage.removeItem(key);
+}
+
+const REVIEW_DELTA_INDEX_KEY = 'syntagma.review.delta.index';
+
+async function getReviewDeltaIndex() {
+  const stored = await AsyncStorage.getItem(REVIEW_DELTA_INDEX_KEY);
+  if (!stored) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(stored);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function saveReviewDeltaIndex(dates) {
+  await AsyncStorage.setItem(REVIEW_DELTA_INDEX_KEY, JSON.stringify(dates));
+}
+
+export async function getReviewDeltaDates() {
+  return getReviewDeltaIndex();
+}
+
+export async function clearReviewDelta(dateStr) {
+  await AsyncStorage.removeItem(`syntagma.review.delta.${dateStr}`);
+  const dates = await getReviewDeltaIndex();
+  const next = dates.filter((d) => d !== dateStr);
+  if (next.length) {
+    await saveReviewDeltaIndex(next);
+  } else {
+    await AsyncStorage.removeItem(REVIEW_DELTA_INDEX_KEY);
+  }
+}
+
+export async function clearAllReviewDeltas() {
+  const dates = await getReviewDeltaIndex();
+  await Promise.all(dates.map((dateStr) => AsyncStorage.removeItem(`syntagma.review.delta.${dateStr}`)));
+  await AsyncStorage.removeItem(REVIEW_DELTA_INDEX_KEY);
+}
+
+export async function getReviewDelta(dateStr) {
+  const stored = await AsyncStorage.getItem(`syntagma.review.delta.${dateStr}`);
+  if (!stored) {
+    return 0;
+  }
+  try {
+    const parsed = JSON.parse(stored);
+    return Number.isFinite(parsed?.count) ? parsed.count : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export async function incrementReviewDelta(dateStr) {
+  const current = await getReviewDelta(dateStr);
+  await AsyncStorage.setItem(
+    `syntagma.review.delta.${dateStr}`,
+    JSON.stringify({ count: current + 1 })
+  );
+  const dates = await getReviewDeltaIndex();
+  if (!dates.includes(dateStr)) {
+    dates.push(dateStr);
+    await saveReviewDeltaIndex(dates);
+  }
+}
+
+export async function getReviewedIds(dateStr) {
+  const stored = await AsyncStorage.getItem(`syntagma.reviewed.today.${dateStr}`);
+  if (!stored) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(stored);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function addReviewedId(dateStr, id) {
+  const ids = await getReviewedIds(dateStr);
+  const strId = String(id);
+  if (!ids.includes(strId)) {
+    ids.push(strId);
+    await AsyncStorage.setItem(`syntagma.reviewed.today.${dateStr}`, JSON.stringify(ids));
   }
 }
