@@ -86,11 +86,6 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
   const usageTimestamp =
     Number.isFinite(activeCard?.videoTimestamp) ? Number(activeCard.videoTimestamp) : null;
   const detailsOpen = cardState === 'isExpanded';
-  const totalPills = 5;
-  const completedPills = Math.max(
-    0,
-    Math.min(totalPills, Math.floor((currentIndex / Math.max(cards.length, 1)) * totalPills))
-  );
   const cardsLeft = Math.max(cards.length - currentIndex, 0);
   const cardHorizontalPadding = Math.max(16, Math.min(28, Math.round(width * 0.07)));
   const collectionName = route?.params?.collectionName;
@@ -448,20 +443,14 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
 
       <View style={styles.topBar}>
-        <Image source={require('../../assets/capybara-avatar.jpg')} style={styles.avatar} />
         <Text style={styles.topBarTitle}>
           {collectionName ? `${collectionName} Flashcards` : 'Syntagma Flashcards'}
         </Text>
       </View>
 
       <View style={styles.progressRow}>
-        <View style={styles.progressPills}>
-          {Array.from({ length: totalPills }).map((_, index) => (
-            <View
-              key={String(index)}
-              style={[styles.progressPill, index < completedPills ? styles.progressPillDone : styles.progressPillTodo]}
-            />
-          ))}
+        <View style={styles.progressBarTrack}>
+          <View style={[styles.progressBarFill, { width: `${(currentIndex / Math.max(cards.length, 1)) * 100}%` }]} />
         </View>
         <Text style={styles.cardsLeftText}>{`${cardsLeft} CARDS LEFT`}</Text>
       </View>
@@ -574,18 +563,18 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
                   </View>
                 ) : null}
 
-                <View style={styles.bottomDecisionRowInside}>
-                  <Pressable style={[styles.answerButton, styles.againButton]} onPress={() => handleAnswer(Rating.Again)}>
-                    <Text style={styles.againButtonText}>I don't know</Text>
-                  </Pressable>
-
-                  <Pressable style={[styles.answerButton, styles.goodButton]} onPress={() => handleAnswer(Rating.Good)}>
-                    <Text style={styles.goodButtonText}>I know</Text>
-                  </Pressable>
-                </View>
               </ScrollView>
             </Animated.View>
           )}
+        </Pressable>
+      </View>
+
+      <View style={styles.bottomRow}>
+        <Pressable style={[styles.answerButton, styles.againButton]} onPress={() => handleAnswer(Rating.Again)}>
+          <Text style={styles.againButtonText}>I don't know</Text>
+        </Pressable>
+        <Pressable style={[styles.answerButton, styles.goodButton]} onPress={() => handleAnswer(Rating.Good)}>
+          <Text style={styles.goodButtonText}>I know</Text>
         </Pressable>
       </View>
     </SafeAreaView>
@@ -604,12 +593,6 @@ const createStyles = (colors) =>
       alignItems: 'center',
       marginHorizontal: 24,
       marginTop: 12,
-    },
-    avatar: {
-      width: 32,
-      height: 32,
-      borderRadius: 16,
-      marginRight: 12,
     },
     topBarTitle: {
       color: colors.accent,
@@ -654,22 +637,18 @@ const createStyles = (colors) =>
       flexDirection: 'row',
       alignItems: 'center',
     },
-    progressPills: {
-      flex: 1,
-      flexDirection: 'row',
-      gap: 6,
-      marginRight: 10,
-    },
-    progressPill: {
+    progressBarTrack: {
       flex: 1,
       height: 6,
       borderRadius: 3,
-    },
-    progressPillDone: {
-      backgroundColor: colors.accent,
-    },
-    progressPillTodo: {
       backgroundColor: colors.border,
+      marginRight: 10,
+      overflow: 'hidden',
+    },
+    progressBarFill: {
+      height: 6,
+      borderRadius: 3,
+      backgroundColor: colors.accent,
     },
     cardsLeftText: {
       color: colors.accentStrong,
@@ -836,10 +815,12 @@ const createStyles = (colors) =>
       width: '100%',
       height: 160,
     },
-    bottomDecisionRowInside: {
-      marginTop: 18,
+    bottomRow: {
       flexDirection: 'row',
       gap: 12,
+      paddingHorizontal: 24,
+      paddingTop: 12,
+      paddingBottom: 8,
     },
     answerButton: {
       flex: 1,
