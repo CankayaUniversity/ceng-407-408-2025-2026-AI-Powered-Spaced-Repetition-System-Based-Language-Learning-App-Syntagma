@@ -30,6 +30,17 @@ import { useTheme } from '../shared/theme';
 
 const DEFAULT_CARDS = [];
 
+function fetchDictAudio(word, cancelled, setUri) {
+  fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`)
+    .then((r) => (r.ok ? r.json() : null))
+    .then((data) => {
+      if (cancelled || !Array.isArray(data)) return;
+      const audio = data[0]?.phonetics?.find((p) => p.audio)?.audio || '';
+      if (audio) setUri(audio);
+    })
+    .catch(() => {});
+}
+
 export const Rating = Object.freeze({
   Again: 1,
   Hard: 2,
@@ -56,6 +67,7 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
   const [audioStatus, setAudioStatus] = useState({ isPlaying: false, isLoading: false });
   const [fetchedAudioUri, setFetchedAudioUri] = useState('');
   const [fetchedImageUri, setFetchedImageUri] = useState('');
+  const [dictAudioUri, setDictAudioUri] = useState('');
   const soundRef = useRef(null);
 
   const detailsAnim = useRef(new Animated.Value(0)).current;
@@ -65,7 +77,7 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
     activeCard?.sentenceAudioDataUrl || activeCard?.audioUrl || activeCard?.audioUri || '';
   const cardImageUri =
     activeCard?.imageUri || activeCard?.imageUrl || activeCard?.screenshotDataUrl || '';
-  const effectiveAudioUri = cardAudioUri || fetchedAudioUri;
+  const effectiveAudioUri = cardAudioUri || fetchedAudioUri || dictAudioUri;
   const effectiveImageUri = cardImageUri || fetchedImageUri;
   const exampleSentence = activeCard?.exampleSentence || activeCard?.sentence || '';
   const usageSentence = activeCard?.sourceSentence || '';
@@ -132,15 +144,6 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
     if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
       UIManager.setLayoutAnimationEnabledExperimental(true);
     }
-  }, []);
-
-  useEffect(() => {
-    Audio.setAudioModeAsync({
-      allowsRecordingIOS: false,
-      playsInSilentModeIOS: true,
-      shouldDuckAndroid: true,
-      playThroughEarpieceAndroid: false,
-    });
   }, []);
 
   const detailTranslateY = detailsAnim.interpolate({
@@ -237,33 +240,38 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
 
     setAudioStatus({ isPlaying: false, isLoading: true });
 
-    try {
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: effectiveAudioUri },
-        { shouldPlay: true }
-      );
-      soundRef.current = sound;
-
-      sound.setOnPlaybackStatusUpdate((status) => {
-        if (!status.isLoaded) {
-          return;
-        }
-
-        if (status.didJustFinish) {
-          stopCardAudio();
-          return;
-        }
-
-        setAudioStatus((prev) => ({
-          ...prev,
-          isPlaying: status.isPlaying,
-          isLoading: false,
-        }));
+    const createSound = async (uri) => {
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        shouldDuckAndroid: true,
+        playThroughEarpieceAndroid: false,
       });
-    } catch (err) {
-      setAudioStatus({ isPlaying: false, isLoading: false });
+      const { sound } = await Audio.Sound.createAsync({ uri }, { shouldPlay: true });
+      soundRef.current = sound;
+      sound.setOnPlaybackStatusUpdate((status) => {
+        if (!status.isLoaded) return;
+        if (status.didJustFinish) { stopCardAudio(); return; }
+        setAudioStatus((prev) => ({ ...prev, isPlaying: status.isPlaying, isLoading: false }));
+      });
+    };
+
+    try {
+      await createSound(effectiveAudioUri);
+    } catch {
+      // Primary URI failed (e.g. unplayable YouTube/expired URL) — retry with dict audio
+      if (dictAudioUri && dictAudioUri !== effectiveAudioUri) {
+        try {
+          await createSound(dictAudioUri);
+          setFetchedAudioUri(dictAudioUri);
+        } catch {
+          setAudioStatus({ isPlaying: false, isLoading: false });
+        }
+      } else {
+        setAudioStatus({ isPlaying: false, isLoading: false });
+      }
     }
-  }, [audioStatus.isLoading, audioStatus.isPlaying, effectiveAudioUri, stopCardAudio]);
+  }, [audioStatus.isLoading, audioStatus.isPlaying, effectiveAudioUri, dictAudioUri, stopCardAudio]);
 
   const advanceToNextCard = useCallback(() => {
     const isLastCard = currentIndex >= cards.length - 1;
@@ -369,38 +377,52 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
   useEffect(() => {
     setFetchedAudioUri('');
     setFetchedImageUri('');
+    setDictAudioUri('');
 
     const flashcardId = activeCard?.flashcardId;
-    if (!flashcardId) return;
-
-    if (cardAudioUri && cardImageUri) return;
+    const word = activeCard?.word;
 
     let cancelled = false;
 
+    // Always pre-fetch dict audio for this word as a background fallback
+    if (word) fetchDictAudio(word, cancelled, setDictAudioUri);
+
+    if (!flashcardId) return () => { cancelled = true; };
+
     fetchFlashcardMedia(flashcardId)
-      .then(async (mediaList) => {
-        if (cancelled || !Array.isArray(mediaList)) return;
+      .then((mediaList) => {
+        if (cancelled) return;
+
+        if (!Array.isArray(mediaList)) {
+          if (!cardAudioUri && word) fetchDictAudio(word, cancelled, setFetchedAudioUri);
+          return;
+        }
 
         const audioAsset = mediaList.find((m) => m.type === 'AUDIO');
         const imageAsset = mediaList.find((m) => m.type === 'SCREENSHOT');
 
-        if (!cardAudioUri && audioAsset?.mediaId) {
-          fetchMediaDownloadUrl(audioAsset.mediaId)
-            .then((res) => {
-              if (!cancelled && res?.downloadUrl) setFetchedAudioUri(res.downloadUrl);
-            })
-            .catch(() => {});
+        if (!cardAudioUri) {
+          if (audioAsset?.mediaId) {
+            fetchMediaDownloadUrl(audioAsset.mediaId)
+              .then((res) => {
+                if (!cancelled && res?.downloadUrl) setFetchedAudioUri(res.downloadUrl);
+                else if (!cancelled && word) fetchDictAudio(word, cancelled, setFetchedAudioUri);
+              })
+              .catch(() => { if (!cancelled && word) fetchDictAudio(word, cancelled, setFetchedAudioUri); });
+          } else if (word) {
+            fetchDictAudio(word, cancelled, setFetchedAudioUri);
+          }
         }
 
         if (!cardImageUri && imageAsset?.mediaId) {
           fetchMediaDownloadUrl(imageAsset.mediaId)
-            .then((res) => {
-              if (!cancelled && res?.downloadUrl) setFetchedImageUri(res.downloadUrl);
-            })
+            .then((res) => { if (!cancelled && res?.downloadUrl) setFetchedImageUri(res.downloadUrl); })
             .catch(() => {});
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled && !cardAudioUri && word) fetchDictAudio(word, cancelled, setFetchedAudioUri);
+      });
 
     return () => { cancelled = true; };
   }, [currentIndex]); // eslint-disable-line react-hooks/exhaustive-deps
