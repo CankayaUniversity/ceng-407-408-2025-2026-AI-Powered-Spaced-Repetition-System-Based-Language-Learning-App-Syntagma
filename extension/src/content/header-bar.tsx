@@ -3,18 +3,19 @@ import { createRoot } from 'react-dom/client';
 import type { UserSettings, Token, LexemeEntry } from '../shared/types';
 import { usePageAnalysis } from './hooks/usePageAnalysis';
 import { MiniDonut, StatsPopup, StatsUIColors } from './components/StatsUI';
+import { useT } from '../shared/i18n';
 
 const C = {
-  base:     'var(--syn-base, #F5F1E9)',
+  base: 'var(--syn-base, #F5F1E9)',
   surface0: 'var(--syn-surface0, #FFFFFF)',
   surface1: 'var(--syn-surface1, #E2DACE)',
-  text:     'var(--syn-text, #4A3B2C)',
-  subtext:  'var(--syn-subtext, #877666)',
-  blue:     'var(--syn-blue, #98C1D9)',
-  red:      'var(--syn-red, #D97762)',
-  amber:    'var(--syn-amber, #E9C46A)',
-  green:    'var(--syn-green, #A8B693)',
-  overlay:  'var(--syn-overlay, rgba(245,241,233,0.95))',
+  text: 'var(--syn-text, #4A3B2C)',
+  subtext: 'var(--syn-subtext, #877666)',
+  blue: 'var(--syn-blue, #98C1D9)',
+  red: 'var(--syn-red, #D97762)',
+  amber: 'var(--syn-amber, #E9C46A)',
+  green: 'var(--syn-green, #A8B693)',
+  overlay: 'var(--syn-overlay, rgba(245,241,233,0.95))',
 };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -63,56 +64,6 @@ function IconBtn({
   );
 }
 
-// Keyboard shortcut reference panel
-const SHORTCUTS = [
-  { keys: 'Alt+A',   desc: 'Toggle word overlays' },
-  { keys: 'Alt+T',   desc: 'Open translator' },
-  { keys: 'Alt+X',   desc: 'Lock/unlock toolbar' },
-  { keys: 'Alt+S',   desc: 'Dictionary lookup' },
-  { keys: 'Q',       desc: 'Quick create card' },
-  { keys: 'E',       desc: 'Send to Card Creator' },
-  { keys: '1 / U',   desc: 'Mark unknown' },
-  { keys: '2 / T',   desc: 'Track word' },
-  { keys: '3 / K',   desc: 'Mark known' },
-  { keys: '4 / I',   desc: 'Ignore word' },
-  { keys: 'Shift',   desc: 'Hold to click links' },
-  { keys: 'Ctrl+X',  desc: 'Cancel quick card' },
-];
-
-function ShortcutsPanel({ onClose }: { onClose: () => void }) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const h = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
-    };
-    setTimeout(() => document.addEventListener('mousedown', h), 50);
-    return () => document.removeEventListener('mousedown', h);
-  }, [onClose]);
-
-  return (
-    <div ref={ref} style={{
-      position: 'fixed', top: '48px', right: '80px',
-      background: C.surface0, border: `1px solid ${C.surface1}`,
-      borderRadius: '10px', padding: '12px',
-      width: '240px', zIndex: 2147483646,
-      boxShadow: '0 8px 24px rgba(0,0,0,0.25)',
-      fontFamily: 'system-ui, -apple-system, sans-serif',
-    }}>
-      <div style={{ fontSize: '11px', fontWeight: 700, color: C.subtext, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>
-        Keyboard Shortcuts
-      </div>
-      {SHORTCUTS.map(s => (
-        <div key={s.keys} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '12px' }}>
-          <code style={{ background: C.surface1, borderRadius: '3px', padding: '1px 5px', color: C.text, fontWeight: 600, fontSize: '11px' }}>
-            {s.keys}
-          </code>
-          <span style={{ color: C.subtext }}>{s.desc}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 // (MiniDonut and StatsPopup have been extracted to StatsUI.tsx)
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
@@ -126,11 +77,11 @@ function TopBar({
   onToggleColors, onToggleTranslations, onOpenSettings,
   onOpenAdvancedCreator,
 }: HeaderBarState) {
+  const tt = useT(settings);
   const [collapsed, setCollapsed] = useState(false);
   const [locked, setLocked] = useState(false);
   const [colorsOn, setColorsOn] = useState(settings.showLearningStatusColors);
   const [trOn, setTrOn] = useState(settings.showInlineTranslations);
-  const [showShortcuts, setShowShortcuts] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [inVideoMode, setInVideoMode] = useState(false);
@@ -140,35 +91,35 @@ function TopBar({
 
   // Track sidebar visibility from VideoSidebarPanel events
   useEffect(() => {
-    const onOpen  = () => setSidebarOpen(true);
+    const onOpen = () => setSidebarOpen(true);
     const onClose = () => setSidebarOpen(false);
     window.addEventListener('syntagma:sidebar-visible', onOpen);
-    window.addEventListener('syntagma:sidebar-hidden',  onClose);
+    window.addEventListener('syntagma:sidebar-hidden', onClose);
     return () => {
       window.removeEventListener('syntagma:sidebar-visible', onOpen);
-      window.removeEventListener('syntagma:sidebar-hidden',  onClose);
+      window.removeEventListener('syntagma:sidebar-hidden', onClose);
     };
   }, []);
 
   // Show/hide video-mode buttons based on VideoOverlay lifecycle
   useEffect(() => {
     const onEnter = () => setInVideoMode(true);
-    const onExit  = () => setInVideoMode(false);
-    const onShown  = () => setSubtitlesOn(true);
+    const onExit = () => setInVideoMode(false);
+    const onShown = () => setSubtitlesOn(true);
     const onHidden = () => setSubtitlesOn(false);
-    window.addEventListener('syntagma:video-mode-enter',  onEnter);
-    window.addEventListener('syntagma:video-mode-exit',   onExit);
-    window.addEventListener('syntagma:subtitles-shown',   onShown);
-    window.addEventListener('syntagma:subtitles-hidden',  onHidden);
+    window.addEventListener('syntagma:video-mode-enter', onEnter);
+    window.addEventListener('syntagma:video-mode-exit', onExit);
+    window.addEventListener('syntagma:subtitles-shown', onShown);
+    window.addEventListener('syntagma:subtitles-hidden', onHidden);
     // If video mode was already active before this component mounted (race condition
     // where initVideoMode resolves before React commits effects), ask video/index.ts
     // to re-fire the enter event now that we're listening.
     window.dispatchEvent(new CustomEvent('syntagma:query-video-mode'));
     return () => {
-      window.removeEventListener('syntagma:video-mode-enter',  onEnter);
-      window.removeEventListener('syntagma:video-mode-exit',   onExit);
-      window.removeEventListener('syntagma:subtitles-shown',   onShown);
-      window.removeEventListener('syntagma:subtitles-hidden',  onHidden);
+      window.removeEventListener('syntagma:video-mode-enter', onEnter);
+      window.removeEventListener('syntagma:video-mode-exit', onExit);
+      window.removeEventListener('syntagma:subtitles-shown', onShown);
+      window.removeEventListener('syntagma:subtitles-hidden', onHidden);
     };
   }, []);
 
@@ -217,7 +168,7 @@ function TopBar({
         <div
           data-syntagma
           onClick={() => setCollapsed(false)}
-          title="Expand Syntagma (Alt+Z)"
+          title={tt('header.expand')}
           style={{
             position: 'fixed', top: 0, left: '50%', transform: 'translateX(-50%)',
             zIndex: 2147483647, background: C.overlay,
@@ -270,7 +221,7 @@ function TopBar({
         <button
           ref={statsRef}
           onClick={() => setShowStats(v => !v)}
-          title="Page analysis"
+          title={tt('header.pageAnalysis')}
           style={{
             background: showStats ? C.surface1 : 'transparent',
             border: `1px solid ${showStats ? C.surface1 : 'transparent'}`,
@@ -300,7 +251,7 @@ function TopBar({
         {/* Shift mode indicator */}
         {shiftMode && (
           <span style={{ fontSize: '11px', color: C.amber, fontWeight: 600, flexShrink: 0 }}>
-            LINK MODE
+            {tt('header.linkMode')}
           </span>
         )}
 
@@ -309,39 +260,31 @@ function TopBar({
         {/* ── Icon buttons (right side) ── */}
 
         {/* Visibility / Colors */}
-        <IconBtn title="Toggle status colors (Colors)" active={colorsOn} color={C.amber} onClick={handleToggleColors}>
+        <IconBtn title={tt('header.toggleColors')} active={colorsOn} color={C.amber} onClick={handleToggleColors}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-            <circle cx="12" cy="12" r="3"/>
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+            <circle cx="12" cy="12" r="3" />
           </svg>
         </IconBtn>
 
         {/* Translator / Inline TR */}
-        <IconBtn title="Toggle inline translations (TR)" active={trOn} color={C.blue} onClick={handleToggleTr}>
+        <IconBtn title={tt('header.toggleTranslations')} active={trOn} color={C.blue} onClick={handleToggleTr}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/>
-            <path d="M2 5h12"/><path d="M7 2h1"/>
-            <path d="m22 22-5-10-5 10"/><path d="M14 18h6"/>
-          </svg>
-        </IconBtn>
-
-        {/* Shortcuts panel */}
-        <IconBtn title="Keyboard shortcuts" active={showShortcuts} color={C.subtext} onClick={() => setShowShortcuts(v => !v)}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="2" y="4" width="20" height="16" rx="2"/>
-            <path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/>
+            <path d="m5 8 6 6" /><path d="m4 14 6-6 2-3" />
+            <path d="M2 5h12" /><path d="M7 2h1" />
+            <path d="m22 22-5-10-5 10" /><path d="M14 18h6" />
           </svg>
         </IconBtn>
 
         {/* Lock toolbar */}
-        <IconBtn title={locked ? 'Unlock toolbar (Alt+X)' : 'Lock toolbar (Alt+X)'} active={locked} color={C.subtext} onClick={() => setLocked(l => !l)}>
+        <IconBtn title={locked ? tt('header.unlockToolbar') : tt('header.lockToolbar')} active={locked} color={C.subtext} onClick={() => setLocked(l => !l)}>
           {locked ? (
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              <rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
             </svg>
           ) : (
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>
+              <rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 9.9-1" />
             </svg>
           )}
         </IconBtn>
@@ -349,42 +292,42 @@ function TopBar({
         {/* CC subtitle toggle — only in video mode */}
         {inVideoMode && (
           <IconBtn
-            title={subtitlesOn ? 'Hide subtitles' : 'Show subtitles'}
+            title={subtitlesOn ? tt('header.hideSubtitles') : tt('header.showSubtitles')}
             active={subtitlesOn}
             color={C.green}
             onClick={() => window.dispatchEvent(new CustomEvent('syntagma:toggle-subtitles'))}
           >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="2" y="5" width="20" height="14" rx="2"/>
-              <path d="M7 15h2m4 0h4M7 11h4m4 0h2"/>
+              <rect x="2" y="5" width="20" height="14" rx="2" />
+              <path d="M7 15h2m4 0h4M7 11h4m4 0h2" />
             </svg>
           </IconBtn>
         )}
 
         {/* Transcript sidebar toggle */}
-        <IconBtn title="Toggle transcript sidebar" color={C.blue} onClick={() => window.dispatchEvent(new CustomEvent('syntagma:toggle-sidebar'))} active={sidebarOpen}>
+        <IconBtn title={tt('header.toggleSidebar')} color={C.blue} onClick={() => window.dispatchEvent(new CustomEvent('syntagma:toggle-sidebar'))} active={sidebarOpen}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="3" width="18" height="18" rx="2"/>
-            <line x1="15" y1="3" x2="15" y2="21"/>
-            <line x1="3" y1="9" x2="15" y2="9"/>
-            <line x1="3" y1="15" x2="15" y2="15"/>
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <line x1="15" y1="3" x2="15" y2="21" />
+            <line x1="3" y1="9" x2="15" y2="9" />
+            <line x1="3" y1="15" x2="15" y2="15" />
           </svg>
         </IconBtn>
 
         {/* Advanced Creator */}
-        <IconBtn title="Advanced Card Creator (E)" color={C.green} onClick={() => onOpenAdvancedCreator()} active={false}>
+        <IconBtn title={tt('header.cardCreator')} color={C.green} onClick={() => onOpenAdvancedCreator()} active={false}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-            <polyline points="14 2 14 8 20 8"/>
-            <line x1="12" y1="18" x2="12" y2="12"/>
-            <line x1="9" y1="15" x2="15" y2="15"/>
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+            <line x1="12" y1="18" x2="12" y2="12" />
+            <line x1="9" y1="15" x2="15" y2="15" />
           </svg>
         </IconBtn>
 
         {/* Settings */}
         <button
           onClick={onOpenSettings}
-          title="Open settings"
+          title={tt('header.openSettings')}
           style={{
             background: 'transparent', color: C.subtext,
             border: `1px solid ${C.surface1}`, borderRadius: '5px',
@@ -396,7 +339,7 @@ function TopBar({
         {!locked && (
           <button
             onClick={() => setCollapsed(true)}
-            title="Collapse (restore with Alt+Z)"
+            title={tt('header.collapse')}
             style={{
               background: 'transparent', color: C.subtext, border: 'none',
               padding: '3px 4px', cursor: 'pointer', fontSize: '16px', lineHeight: 1,
@@ -411,10 +354,9 @@ function TopBar({
           analysis={analysis}
           anchorLeft={statsAnchorLeft}
           onClose={() => setShowStats(false)}
+          t={tt}
         />
       )}
-      {showShortcuts && <ShortcutsPanel onClose={() => setShowShortcuts(false)} />}
-
       {/* Toast notifications */}
       <Toasts toasts={toasts} />
     </>

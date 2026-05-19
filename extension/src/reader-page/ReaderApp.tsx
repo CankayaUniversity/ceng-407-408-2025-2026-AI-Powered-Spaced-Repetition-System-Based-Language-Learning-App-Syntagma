@@ -1078,6 +1078,7 @@ function ReaderView({
   onBack: () => void;
   theme: Theme;
 }) {
+  const _ = useT(settings);
   const viewerRef = useRef<HTMLDivElement>(null);
   const renditionRef = useRef<Rendition | null>(null);
   const bookRef = useRef<Book | null>(null);
@@ -1706,8 +1707,9 @@ function ReaderView({
           anchorLeft={statsAnchorLeft}
           onClose={() => setShowStats(false)}
           isFixed={false}
-          title="Book Analysis"
-          emptyMessage={bookAnalysisLoading ? 'Analyzing book...' : undefined}
+          title={_('stats.bookAnalysis')}
+          emptyMessage={bookAnalysisLoading ? _('stats.analyzingBook') : undefined}
+          t={_}
         />
       )}
     </div>

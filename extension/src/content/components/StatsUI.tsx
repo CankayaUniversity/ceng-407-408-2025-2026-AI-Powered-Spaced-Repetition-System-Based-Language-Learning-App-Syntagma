@@ -64,6 +64,7 @@ export interface StatsPopupProps {
   isFixed?: boolean;
   title?: string;
   emptyMessage?: string;
+  t?: (key: string) => string;
 }
 
 export function StatsPopup({
@@ -72,9 +73,13 @@ export function StatsPopup({
   onClose,
   themeColors = StatsUIColors,
   isFixed = true,
-  title = 'Page Analysis',
-  emptyMessage = 'No words analyzed yet.',
+  title,
+  emptyMessage,
+  t,
 }: StatsPopupProps) {
+  const tt = t ?? ((key: string) => key);
+  const resolvedTitle = title ?? tt('stats.pageAnalysis');
+  const resolvedEmpty = emptyMessage ?? tt('stats.noWords');
   const ref = useRef<HTMLDivElement>(null);
   const { counts, comprehensionScore, iPlusOneSentences } = analysis;
   const total = counts.total;
@@ -131,12 +136,12 @@ export function StatsPopup({
         textTransform: 'uppercase', letterSpacing: '0.6px',
         marginBottom: '16px', textAlign: 'center',
       }}>
-        {title}
+        {resolvedTitle}
       </div>
 
       {total === 0 ? (
         <div style={{ textAlign: 'center', color: themeColors.subtext, fontSize: '13px', padding: '24px 0' }}>
-          {emptyMessage}
+          {resolvedEmpty}
         </div>
       ) : (
         <>
@@ -173,9 +178,9 @@ export function StatsPopup({
           {/* Legend rows */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '7px' }}>
             {[
-              { color: themeColors.green, label: 'Known',    count: counts.known,    pct: pctK },
-              { color: themeColors.amber, label: 'Learning',  count: counts.learning, pct: pctL },
-              { color: themeColors.red,   label: 'Unknown',   count: counts.unknown,  pct: pctU },
+              { color: themeColors.green, label: tt('stats.known'),    count: counts.known,    pct: pctK },
+              { color: themeColors.amber, label: tt('stats.learning'), count: counts.learning, pct: pctL },
+              { color: themeColors.red,   label: tt('stats.unknown'),  count: counts.unknown,  pct: pctU },
             ].map(({ color, label, count, pct }) => (
               <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 {/* Color dot */}
@@ -196,12 +201,12 @@ export function StatsPopup({
             {/* Divider */}
             <div style={{ borderTop: `1px solid ${themeColors.surface1}`, marginTop: '4px', paddingTop: '8px', display: 'flex', flexDirection: 'column', gap: '5px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
-                <span style={{ color: themeColors.subtext }}>Total words</span>
+                <span style={{ color: themeColors.subtext }}>{tt('stats.totalWords')}</span>
                 <span style={{ color: themeColors.text, fontWeight: 600 }}>{total}</span>
               </div>
               {iPlusOneSentences > 0 && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
-                  <span style={{ color: themeColors.subtext }}>i+1 sentences</span>
+                  <span style={{ color: themeColors.subtext }}>{tt('stats.iPlusOne')}</span>
                   <span style={{ color: themeColors.blue, fontWeight: 600 }}>{iPlusOneSentences}</span>
                 </div>
               )}

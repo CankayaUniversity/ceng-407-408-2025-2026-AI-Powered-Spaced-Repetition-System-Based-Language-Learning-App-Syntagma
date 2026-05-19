@@ -140,7 +140,6 @@ async function init() {
     });
 
     document.addEventListener('click', handleWordClick, { capture: true });
-    document.addEventListener('keydown', handleKeyDown);
     document.addEventListener('contextmenu', handleContextMenu);
 
     if (settings.autoParseOnLoad) await handleParse();
@@ -367,47 +366,6 @@ function handleOpenSettings() {
   sendMessage({ type: 'OPEN_OPTIONS_PAGE', payload: null }).catch(() => {
     chrome.runtime.openOptionsPage?.();
   });
-}
-
-// ─── Keyboard shortcuts ───────────────────────────────────────────────────────
-
-function handleKeyDown(e: KeyboardEvent) {
-  if (!currentSettings?.enabled) return;
-  // Alt+A — toggle overlays (parse / remove)
-  if (e.altKey && e.key === 'a') {
-    e.preventDefault();
-    if (isParsed) { removeOverlays(); isParsed = false; currentTokens = []; refreshHeader(); }
-    else handleParse();
-    return;
-  }
-
-  // Alt+T — toggle inline translations
-  if (e.altKey && e.key === 't') {
-    e.preventDefault();
-    handleToggleTranslations(!currentSettings?.showInlineTranslations);
-    return;
-  }
-
-  // Alt+S — dictionary lookup for selected text
-  if (e.altKey && e.key === 's') {
-    e.preventDefault();
-    const sel = window.getSelection()?.toString().trim();
-    if (sel) handleOpenAdvancedCreator(sel, '');
-    return;
-  }
-
-  // E — send to advanced card creator
-  if (e.key === 'e' || e.key === 'E') {
-    const active = document.activeElement;
-    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || (active as HTMLElement).isContentEditable)) return;
-    const sel = window.getSelection()?.toString().trim();
-    if (sel) { handleOpenAdvancedCreator(sel, ''); return; }
-  }
-
-  // Escape — dismiss popup / creator
-  if (e.key === 'Escape') {
-    dismissWordPopup();
-  }
 }
 
 // ─── Shift key: link mode ─────────────────────────────────────────────────────

@@ -267,6 +267,32 @@ const dict: Record<string, { en: string; tr: string }> = {
   'popup.cardSaved': { en: 'Card saved!', tr: 'Kart kaydedildi!' },
   'popup.saveFailed': { en: 'Save failed', tr: 'Kaydetme başarısız' },
 
+  // ─── Header Bar / TopBar ──────────────────────────────────
+  'header.expand': { en: 'Expand Syntagma', tr: "Syntagma'yı genişlet" },
+  'header.pageAnalysis': { en: 'Page analysis', tr: 'Sayfa analizi' },
+  'header.linkMode': { en: 'LINK MODE', tr: 'BAĞLANTI MODU' },
+  'header.toggleColors': { en: 'Toggle status colors', tr: 'Durum renklerini aç/kapat' },
+  'header.toggleTranslations': { en: 'Toggle inline translations', tr: 'Satır içi çevirileri aç/kapat' },
+  'header.lockToolbar': { en: 'Lock toolbar (Alt+X)', tr: 'Araç çubuğunu kilitle (Alt+X)' },
+  'header.unlockToolbar': { en: 'Unlock toolbar (Alt+X)', tr: 'Araç çubuğunu aç (Alt+X)' },
+  'header.hideSubtitles': { en: 'Hide subtitles', tr: 'Altyazıları gizle' },
+  'header.showSubtitles': { en: 'Show subtitles', tr: 'Altyazıları göster' },
+  'header.toggleSidebar': { en: 'Toggle transcript sidebar', tr: 'Transkript kenar çubuğunu aç/kapat' },
+  'header.cardCreator': { en: 'Advanced Card Creator', tr: 'Gelişmiş Kart Oluşturucu' },
+  'header.openSettings': { en: 'Open settings', tr: 'Ayarları aç' },
+  'header.collapse': { en: 'Collapse', tr: 'Daralt' },
+
+  // ─── Stats Popup ─────────────────────────────────────────
+  'stats.pageAnalysis': { en: 'Page Analysis', tr: 'Sayfa Analizi' },
+  'stats.noWords': { en: 'No words analyzed yet.', tr: 'Henüz analiz edilen kelime yok.' },
+  'stats.known': { en: 'Known', tr: 'Bilinen' },
+  'stats.learning': { en: 'Learning', tr: 'Öğreniliyor' },
+  'stats.unknown': { en: 'Unknown', tr: 'Bilinmeyen' },
+  'stats.totalWords': { en: 'Total words', tr: 'Toplam kelime' },
+  'stats.iPlusOne': { en: 'i+1 sentences', tr: 'i+1 cümleler' },
+  'stats.bookAnalysis': { en: 'Book Analysis', tr: 'Kitap Analizi' },
+  'stats.analyzingBook': { en: 'Analyzing book...', tr: 'Kitap analiz ediliyor...' },
+
   // ─── Levels ───────────────────────────────────────────────
   'level.beginner': { en: 'A1 · Beginner (~1,235 words)', tr: 'A1 · Başlangıç (~1.235 kelime)' },
   'level.elementary': { en: 'A2 · Elementary (~2,531 words)', tr: 'A2 · Temel (~2.531 kelime)' },
