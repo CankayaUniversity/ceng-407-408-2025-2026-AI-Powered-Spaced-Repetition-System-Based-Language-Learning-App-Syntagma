@@ -98,6 +98,7 @@ public class AiService {
 
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
         ResponseEntity<Map> response = aiRestTemplate.postForEntity(apiUrl, entity, Map.class);
+        log.info("AI translate raw response: {}", response.getBody());
 
         if (!response.getStatusCode().is2xxSuccessful()) {
             throw new IllegalArgumentException("AI request failed with status: " + response.getStatusCode());
@@ -115,15 +116,13 @@ public class AiService {
     }
 
     private List<Map<String, String>> buildTranslateMessages(AiTranslateRequest request) {
-        String system = "You translate English sentences to Turkish for a Turkish-speaking English learner. "
-                + "Return JSON only (no markdown). All fields must be filled and in Turkish. "
-                + "naturalTranslation: fluent, idiomatic Turkish. "
-                + "literalTranslation: word-by-word literal Turkish (may sound awkward). "
-                + "alternativeTranslation: a different valid Turkish phrasing. "
-                + "JSON schema: {\"naturalTranslation\":\"...\","
-                + "\"literalTranslation\":\"...\",\"alternativeTranslation\":\"...\"}";
+        String system = "You are a professional English-to-Turkish translator. "
+                + "Translate the given English sentence into fluent, natural Turkish. "
+                + "The translation MUST be in Turkish language (Türkçe), never in English. "
+                + "Return ONLY valid JSON (no markdown, no explanation). "
+                + "JSON schema: {\"naturalTranslation\":\"<Turkish translation here>\"}";
 
-        String user = "Sentence: \"" + request.sentence() + "\"";
+        String user = "Translate to Turkish: \"" + request.sentence() + "\"";
 
         List<Map<String, String>> messages = new ArrayList<>();
         messages.add(Map.of("role", "system", "content", system));
