@@ -24,12 +24,11 @@ const CACHE_WORD_KNOWLEDGE = 'syntagma.cache.wordknowledge.all.v1';
 const OFFLINE_EMPTY_TITLE = 'Offline moddasin';
 const OFFLINE_EMPTY_SUBTITLE = 'Internet gelince kelimeler senkronize olacak.';
 
-const STATUSES = ['ALL', 'KNOWN', 'LEARNING', 'UNKNOWN', 'IGNORED'];
+const STATUSES = ['ALL', 'KNOWN', 'LEARNING', 'IGNORED'];
 
 const STATUS_CONFIG = {
   KNOWN: { label: 'Known', icon: 'checkmark-circle', color: '#2D6A4F', textColor: '#FFFFFF' },
   LEARNING: { label: 'Learning', icon: 'school', color: '#E9A820', textColor: '#FFFFFF' },
-  UNKNOWN: { label: 'Unknown', icon: 'help-circle', color: '#C44536', textColor: '#FFFFFF' },
   IGNORED: { label: 'Ignored', icon: 'eye-off', color: '#6C757D', textColor: '#FFFFFF' },
 };
 
@@ -255,7 +254,7 @@ export default function FlashcardLibraryScreen() {
   };
 
   const renderWordItem = ({ item }) => {
-    const config = STATUS_CONFIG[item.status] || STATUS_CONFIG.UNKNOWN;
+    const config = STATUS_CONFIG[item.status] || STATUS_CONFIG.LEARNING;
     const isUpdating = updatingLemmaKey === item.lemmaKey;
 
     return (

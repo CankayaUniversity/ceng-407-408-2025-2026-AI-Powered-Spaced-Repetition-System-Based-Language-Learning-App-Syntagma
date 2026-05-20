@@ -42,6 +42,7 @@ export default function HomePage({ navigation }) {
   const [startingId, setStartingId] = useState(null);
   const [badgeState, setBadgeState] = useState(null);
   const [offlineEmpty, setOfflineEmpty] = useState(false);
+  const [collectionCounts, setCollectionCounts] = useState({});
   const netInfo = useNetInfo();
   const isOffline = netInfo.isConnected === false || netInfo.isInternetReachable === false;
 
@@ -103,14 +104,24 @@ export default function HomePage({ navigation }) {
           if (isOffline) {
             const cachedFlashcards = await getCache(CACHE_ALL_FLASHCARDS).catch(() => []);
             const cachedKnowledge = await getCache(CACHE_WORD_KNOWLEDGE).catch(() => []);
-            if ((cachedFlashcards?.length ?? 0) > 0 || (cachedKnowledge?.length ?? 0) > 0) {
-              const { knownCount } = computeKnownWordsStats(
-                Array.isArray(cachedFlashcards) ? cachedFlashcards : [],
-                Array.isArray(cachedKnowledge) ? cachedKnowledge : []
-              );
+            const fcArr = Array.isArray(cachedFlashcards) ? cachedFlashcards : [];
+            if (fcArr.length > 0 || (cachedKnowledge?.length ?? 0) > 0) {
+              const { knownCount } = computeKnownWordsStats(fcArr, Array.isArray(cachedKnowledge) ? cachedKnowledge : []);
               if (isMounted) {
                 setBadgeState(computeCefrState(knownCount));
               }
+            }
+            if (isMounted && fcArr.length > 0) {
+              const counts = {};
+              for (const card of fcArr) {
+                const ids = Array.isArray(card.collectionIds) ? card.collectionIds.slice() : [];
+                if (card.collectionId != null) ids.push(card.collectionId);
+                for (const id of ids) {
+                  const n = Number(id);
+                  if (Number.isFinite(n)) counts[n] = (counts[n] || 0) + 1;
+                }
+              }
+              setCollectionCounts(counts);
             }
             return;
           }
@@ -138,6 +149,17 @@ export default function HomePage({ navigation }) {
           if (isMounted) {
             await saveBadgeState({ knownWords: knownCount });
             setBadgeState(computeCefrState(knownCount));
+
+            const counts = {};
+            for (const card of flashcards) {
+              const ids = Array.isArray(card.collectionIds) ? card.collectionIds.slice() : [];
+              if (card.collectionId != null) ids.push(card.collectionId);
+              for (const id of ids) {
+                const n = Number(id);
+                if (Number.isFinite(n)) counts[n] = (counts[n] || 0) + 1;
+              }
+            }
+            setCollectionCounts(counts);
           }
         } catch (err) {
           // badge is non-critical
@@ -338,7 +360,12 @@ export default function HomePage({ navigation }) {
   );
 
   const renderCollectionCard = ({ item }) => {
-    const itemCount = Array.isArray(item.items) ? item.items.length : item.itemsCount || 0;
+    const collectionId = item.collectionId ?? item.id;
+    const itemCount = Array.isArray(item.items)
+      ? item.items.length
+      : collectionId != null
+        ? (collectionCounts[Number(collectionId)] ?? item.itemsCount ?? 0)
+        : (item.itemsCount ?? 0);
     const initial = (item.name || 'C').trim().slice(0, 1).toUpperCase();
     const isStarting = startingId === (item.collectionId ?? item.id);
 
