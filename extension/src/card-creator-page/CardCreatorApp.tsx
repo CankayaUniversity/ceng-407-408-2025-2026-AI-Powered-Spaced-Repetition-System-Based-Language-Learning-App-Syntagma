@@ -892,6 +892,34 @@ export function CardCreatorApp() {
                       >
                         Edit
                       </button>
+                      <button
+                        onClick={async () => {
+                          try {
+                            const result = await sendMessage<{ ok: boolean; error?: string }>({
+                              type: 'DELETE_FLASHCARD',
+                              payload: { id: card.id },
+                            });
+                            if (!result.ok) throw new Error(result.error ?? 'Delete failed');
+                          } catch (err) {
+                            console.warn('[Syntagma] Backend delete failed:', err);
+                          }
+                          setFlashcards(prev => prev.filter(c => c.id !== card.id));
+                          if (editingCard?.id === card.id) resetEditorToCreateMode();
+                        }}
+                        style={{
+                          alignSelf: 'start',
+                          background: 'transparent',
+                          border: 'none',
+                          color: C.danger,
+                          cursor: 'pointer',
+                          fontSize: '16px',
+                          padding: '4px 6px',
+                          flexShrink: 0,
+                        }}
+                        title={_('common.delete')}
+                      >
+                        ×
+                      </button>
                     </div>
                   ))}
                 </div>
