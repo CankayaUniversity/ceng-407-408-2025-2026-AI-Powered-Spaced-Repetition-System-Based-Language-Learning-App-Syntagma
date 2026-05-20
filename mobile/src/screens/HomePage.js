@@ -42,8 +42,31 @@ export default function HomePage({ navigation }) {
   const [startingId, setStartingId] = useState(null);
   const [badgeState, setBadgeState] = useState(null);
   const [offlineEmpty, setOfflineEmpty] = useState(false);
+  const [collectionCounts, setCollectionCounts] = useState({});
   const netInfo = useNetInfo();
   const isOffline = netInfo.isConnected === false || netInfo.isInternetReachable === false;
+
+  const fetchCountsForCollections = useCallback(async (colList) => {
+    if (!colList.length) return;
+    try {
+      const allFlashcards = await fetchAllFlashcards();
+      saveCache(CACHE_ALL_FLASHCARDS, allFlashcards).catch(() => {});
+      const counts = {};
+      for (const col of colList) {
+        const id = Number(col.collectionId ?? col.id);
+        if (!Number.isFinite(id)) continue;
+        counts[id] = allFlashcards.filter((card) => {
+          const cardIds = Array.isArray(card?.collectionIds) ? card.collectionIds : [];
+          const allIds = [...cardIds];
+          if (card?.collectionId != null) allIds.push(card.collectionId);
+          return allIds.some((cid) => Number(cid) === id);
+        }).length;
+      }
+      setCollectionCounts(counts);
+    } catch {
+      // non-critical
+    }
+  }, []);
 
   const loadCollections = useCallback(async () => {
     if (!isOffline) {
@@ -58,6 +81,14 @@ export default function HomePage({ navigation }) {
         const cached = await getCache(CACHE_COLLECTIONS).catch(() => null);
         if (cached) {
           setCollections(cached);
+          const offlineCounts = {};
+          for (const col of cached) {
+            const id = Number(col.collectionId ?? col.id);
+            if (!Number.isFinite(id)) continue;
+            const colCache = await getCache(cacheCollectionKey(id)).catch(() => null);
+            if (Array.isArray(colCache)) offlineCounts[id] = colCache.length;
+          }
+          if (Object.keys(offlineCounts).length > 0) setCollectionCounts(offlineCounts);
         } else {
           setCollections([]);
           setOfflineEmpty(true);
@@ -74,11 +105,13 @@ export default function HomePage({ navigation }) {
             : [];
       setCollections(list);
       saveCache(CACHE_COLLECTIONS, list).catch(() => {});
+      fetchCountsForCollections(list);
     } catch (err) {
       const cached = await getCache(CACHE_COLLECTIONS).catch(() => null);
       if (cached) {
         setCollections(cached);
         setError('');
+        fetchCountsForCollections(cached);
       } else {
         setError(err?.message || 'Collections could not be loaded.');
         setCollections([]);
@@ -103,11 +136,9 @@ export default function HomePage({ navigation }) {
           if (isOffline) {
             const cachedFlashcards = await getCache(CACHE_ALL_FLASHCARDS).catch(() => []);
             const cachedKnowledge = await getCache(CACHE_WORD_KNOWLEDGE).catch(() => []);
-            if ((cachedFlashcards?.length ?? 0) > 0 || (cachedKnowledge?.length ?? 0) > 0) {
-              const { knownCount } = computeKnownWordsStats(
-                Array.isArray(cachedFlashcards) ? cachedFlashcards : [],
-                Array.isArray(cachedKnowledge) ? cachedKnowledge : []
-              );
+            const fcArr = Array.isArray(cachedFlashcards) ? cachedFlashcards : [];
+            if (fcArr.length > 0 || (cachedKnowledge?.length ?? 0) > 0) {
+              const { knownCount } = computeKnownWordsStats(fcArr, Array.isArray(cachedKnowledge) ? cachedKnowledge : []);
               if (isMounted) {
                 setBadgeState(computeCefrState(knownCount));
               }
@@ -204,14 +235,27 @@ export default function HomePage({ navigation }) {
   }, []);
 
   const mapFlashcardsToCards = useCallback((items) => {
-    return items.map((item) => ({
-      flashcardId: item.flashcardId ?? item.id,
-      word: item.lemma || item.word || 'Unknown',
-      phonetic: '',
-      sentence: item.exampleSentence || item.sourceSentence || '',
-      translation: item.translation || '',
-      sentenceTranslation: '',
-    }));
+    return items.map((item) => {
+      const sentence = item.exampleSentence || item.sourceSentence || item.sentence || '';
+      return {
+        flashcardId: item.flashcardId ?? item.id,
+        word: item.lemma || item.word || 'Unknown',
+        phonetic: item.phonetic || '',
+        sentence,
+        exampleSentence: item.exampleSentence || '',
+        sourceSentence: item.sourceSentence || item.sentence || '',
+        translation: item.translation || item.trMeaning || '',
+        sentenceTranslation: item.sentenceTranslation || '',
+        sourceTitle: item.sourceTitle || '',
+        sourceUrl: item.sourceUrl || '',
+        videoTimestamp: item.videoTimestamp ?? null,
+        audioUrl: item.audioUrl || '',
+        sentenceAudioDataUrl: item.sentenceAudioDataUrl || '',
+        englishPronunciationUri: item.englishPronunciationUri || '',
+        turkishPronunciationUri: item.turkishPronunciationUri || '',
+        imageUri: item.imageUri || item.imageUrl || item.screenshotDataUrl || '',
+      };
+    });
   }, []);
 
   const loadCachedCollectionCards = useCallback(async (collectionId) => {
@@ -264,14 +308,27 @@ export default function HomePage({ navigation }) {
       try {
         const details = await fetchCollectionById(collectionId);
         const items = Array.isArray(details?.items) ? details.items : [];
-        const mappedItems = items.map((item) => ({
-          flashcardId: item.flashcardId ?? item.id,
-          word: item.lemma || item.word || 'Unknown',
-          phonetic: '',
-          sentence: '',
-          translation: item.translation || '',
-          sentenceTranslation: '',
-        }));
+        const mappedItems = items.map((item) => {
+          const sentence = item.exampleSentence || item.sourceSentence || item.sentence || '';
+          return {
+            flashcardId: item.flashcardId ?? item.id,
+            word: item.lemma || item.word || 'Unknown',
+            phonetic: item.phonetic || '',
+            sentence,
+            exampleSentence: item.exampleSentence || '',
+            sourceSentence: item.sourceSentence || item.sentence || '',
+            translation: item.translation || item.trMeaning || '',
+            sentenceTranslation: item.sentenceTranslation || '',
+            sourceTitle: item.sourceTitle || '',
+            sourceUrl: item.sourceUrl || '',
+            videoTimestamp: item.videoTimestamp ?? null,
+            audioUrl: item.audioUrl || '',
+            sentenceAudioDataUrl: item.sentenceAudioDataUrl || '',
+            englishPronunciationUri: item.englishPronunciationUri || '',
+            turkishPronunciationUri: item.turkishPronunciationUri || '',
+            imageUri: item.imageUri || item.imageUrl || item.screenshotDataUrl || '',
+          };
+        });
 
         let cards = mappedItems;
 
@@ -312,7 +369,12 @@ export default function HomePage({ navigation }) {
   );
 
   const renderCollectionCard = ({ item }) => {
-    const itemCount = Array.isArray(item.items) ? item.items.length : item.itemsCount || 0;
+    const collectionId = item.collectionId ?? item.id;
+    const itemCount = Array.isArray(item.items) && item.items.length > 0
+      ? item.items.length
+      : collectionId != null
+        ? (collectionCounts[Number(collectionId)] ?? item.itemsCount ?? 0)
+        : (item.itemsCount ?? 0);
     const initial = (item.name || 'C').trim().slice(0, 1).toUpperCase();
     const isStarting = startingId === (item.collectionId ?? item.id);
 
@@ -346,6 +408,7 @@ export default function HomePage({ navigation }) {
 
       <FlatList
         data={collections}
+        extraData={collectionCounts}
         keyExtractor={(item) => String(item.collectionId ?? item.id ?? item.name)}
         renderItem={renderCollectionCard}
         numColumns={2}

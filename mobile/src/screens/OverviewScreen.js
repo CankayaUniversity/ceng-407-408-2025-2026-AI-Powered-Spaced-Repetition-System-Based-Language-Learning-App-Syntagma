@@ -1,11 +1,11 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View, Pressable } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useFocusEffect } from '@react-navigation/native';
+import { useIsFocused } from '@react-navigation/native';
 import { useNetInfo } from '@react-native-community/netinfo';
 import { fetchReviewStats } from '../shared/api';
-import { getCache, saveCache } from '../shared/storage';
+import { getCache, getStudyStreak, saveCache } from '../shared/storage';
 import { flushQueues, getReviewDeltaToday } from '../shared/offline';
 import { useTheme } from '../shared/theme';
 
@@ -67,6 +67,7 @@ export default function OverviewScreen() {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [chartHeight, setChartHeight] = useState(150);
   const netInfo = useNetInfo();
   const isOffline = netInfo.isConnected === false || netInfo.isInternetReachable === false;
 
@@ -84,17 +85,22 @@ export default function OverviewScreen() {
           rawStats = buildEmptyStats();
         }
         const delta = await getReviewDeltaToday().catch(() => 0);
-        setStats(applyDeltaToStats(rawStats, delta));
+        const mergedStats = applyDeltaToStats(rawStats, delta);
+        const localStreak = await getStudyStreak().catch(() => null);
+        setStats(localStreak != null ? { ...mergedStats, streakCount: localStreak } : mergedStats);
         return;
       }
       const rawStats = await fetchReviewStats(period.toLowerCase());
       saveCache(cacheStatsKey(period), rawStats).catch(() => {});
-      setStats(rawStats);
+      const localStreak = await getStudyStreak().catch(() => null);
+      setStats(localStreak != null ? { ...rawStats, streakCount: localStreak } : rawStats);
     } catch (err) {
       let rawStats = await getCache(cacheStatsKey(period)).catch(() => null);
       if (rawStats) {
         const delta = await getReviewDeltaToday().catch(() => 0);
-        setStats(applyDeltaToStats(rawStats, delta));
+        const mergedStats = applyDeltaToStats(rawStats, delta);
+        const localStreak = await getStudyStreak().catch(() => null);
+        setStats(localStreak != null ? { ...mergedStats, streakCount: localStreak } : mergedStats);
         setError('');
       } else {
         setError(err?.message || 'Stats could not be loaded.');
@@ -105,11 +111,13 @@ export default function OverviewScreen() {
     }
   }, [isOffline]);
 
-  useFocusEffect(
-    useCallback(() => {
+  const isFocused = useIsFocused();
+
+  useEffect(() => {
+    if (isFocused) {
       loadStats(activeTab);
-    }, [activeTab, loadStats])
-  );
+    }
+  }, [isFocused, activeTab, loadStats]);
 
   const handleTabChange = (tab) => {
     setActiveTab(tab);
@@ -118,11 +126,17 @@ export default function OverviewScreen() {
 
   const dailyCounts = useMemo(() => {
     if (activeTab !== 'WEEK') {
-      return (stats?.reviewsByDay ?? []).map((entry) => ({
-        date: entry.date,
-        label: getDayLabel(entry.date),
-        count: entry.count || 0,
-      }));
+      return (stats?.reviewsByDay ?? [])
+        .slice()
+        .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
+        .map((entry) => {
+          const d = entry.date ? new Date(entry.date + 'T00:00:00') : null;
+          return {
+            date: entry.date,
+            label: d ? `${d.getDate()}/${d.getMonth() + 1}` : '',
+            count: entry.count || 0,
+          };
+        });
     }
 
     // Always show Mon–Sun of the current week, filling 0 for missing days
@@ -232,10 +246,14 @@ export default function OverviewScreen() {
               <ActivityIndicator size="small" color={colors.accent} />
             </View>
           ) : dailyCounts.length > 0 ? (
-            <View style={styles.chartArea}>
+            <View
+              style={styles.chartArea}
+              onLayout={(e) => setChartHeight(e.nativeEvent.layout.height)}
+            >
               {dailyCounts.map((item, index) => {
                 const isSelected = selectedBarIndex === index;
-                const heightPct = Math.max(5, (item.count / maxCount) * 100);
+                const barAreaHeight = Math.max(0, chartHeight - 30);
+                const heightPx = Math.max(4, Math.round((item.count / maxCount) * barAreaHeight));
                 return (
                   <Pressable
                     key={item.date}
@@ -250,7 +268,7 @@ export default function OverviewScreen() {
                       }
                       start={{ x: 0.5, y: 0 }}
                       end={{ x: 0.5, y: 1 }}
-                      style={[styles.bar, { height: `${heightPct}%` }, isSelected && styles.barSelected]}
+                      style={[styles.bar, { height: heightPx }, isSelected && styles.barSelected]}
                     />
                     <Text style={[styles.dayLabel, isSelected && styles.dayLabelSelected]}>
                       {item.label}
@@ -265,10 +283,11 @@ export default function OverviewScreen() {
             </View>
           )}
 
-          <View style={styles.divider} />
-
-          <Text style={styles.mutedCaps}>{selectedBarText}</Text>
-          <Text style={styles.totalWords}>{`${totalWords} Reviews`}</Text>
+          <View style={styles.chartBottom}>
+            <View style={styles.divider} />
+            <Text style={styles.mutedCaps}>{selectedBarText}</Text>
+            <Text style={styles.totalWords}>{`${totalWords} Reviews`}</Text>
+          </View>
         </View>
       </View>
     </SafeAreaView>
@@ -407,18 +426,21 @@ const createStyles = (colors) => StyleSheet.create({
     shadowRadius: 10,
     elevation: 2,
   },
+  chartBottom: {},
   chartArea: {
     flex: 1,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-end',
-    height: 150,
+    overflow: 'hidden',
     paddingHorizontal: 2,
   },
   barColumn: {
     alignItems: 'center',
     flex: 1,
     maxWidth: 42,
+    alignSelf: 'stretch',
+    justifyContent: 'flex-end',
   },
   bar: {
     width: 22,

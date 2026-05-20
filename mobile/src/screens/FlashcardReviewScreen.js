@@ -15,18 +15,31 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { Audio } from 'expo-av';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   clearCarryover,
   getCarryover,
   getLastStudyCount,
+  markStudyDay,
   saveCarryover,
 } from '../shared/storage';
-import { submitReview, updateWordKnowledge } from '../shared/api';
+import { fetchFlashcardMedia, fetchMediaDownloadUrl, submitReview, updateWordKnowledge } from '../shared/api';
 import { bumpDelta, enqueueReview, enqueueWordKnowledge, markCardReviewed } from '../shared/offline';
 import { useTheme } from '../shared/theme';
 
 const DEFAULT_CARDS = [];
+
+function fetchDictAudio(word, cancelled, setUri) {
+  fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`)
+    .then((r) => (r.ok ? r.json() : null))
+    .then((data) => {
+      if (cancelled || !Array.isArray(data)) return;
+      const audio = data[0]?.phonetics?.find((p) => p.audio)?.audio || '';
+      if (audio) setUri(audio);
+    })
+    .catch(() => {});
+}
 
 export const Rating = Object.freeze({
   Again: 1,
@@ -51,16 +64,28 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
   const [sessionStarted, setSessionStarted] = useState(false);
   const [sessionCompleted, setSessionCompleted] = useState(false);
   const [cardState, setCardState] = useState('isCollapsed');
+  const [audioStatus, setAudioStatus] = useState({ isPlaying: false, isLoading: false });
+  const [fetchedAudioUri, setFetchedAudioUri] = useState('');
+  const [fetchedImageUri, setFetchedImageUri] = useState('');
+  const [dictAudioUri, setDictAudioUri] = useState('');
+  const soundRef = useRef(null);
 
   const detailsAnim = useRef(new Animated.Value(0)).current;
   const cards = sessionCards.length ? sessionCards : rawCards;
   const activeCard = cards[currentIndex] || cards[0];
+  const cardAudioUri =
+    activeCard?.sentenceAudioDataUrl || activeCard?.audioUrl || activeCard?.audioUri || '';
+  const cardImageUri =
+    activeCard?.imageUri || activeCard?.imageUrl || activeCard?.screenshotDataUrl || '';
+  const effectiveAudioUri = cardAudioUri || fetchedAudioUri || dictAudioUri;
+  const effectiveImageUri = cardImageUri || fetchedImageUri;
+  const exampleSentence = activeCard?.exampleSentence || activeCard?.sentence || '';
+  const usageSentence = activeCard?.sourceSentence || '';
+  const usageTitle = activeCard?.sourceTitle || '';
+  const usageUrl = activeCard?.sourceUrl || '';
+  const usageTimestamp =
+    Number.isFinite(activeCard?.videoTimestamp) ? Number(activeCard.videoTimestamp) : null;
   const detailsOpen = cardState === 'isExpanded';
-  const totalPills = 5;
-  const completedPills = Math.max(
-    0,
-    Math.min(totalPills, Math.floor((currentIndex / Math.max(cards.length, 1)) * totalPills))
-  );
   const cardsLeft = Math.max(cards.length - currentIndex, 0);
   const cardHorizontalPadding = Math.max(16, Math.min(28, Math.round(width * 0.07)));
   const collectionName = route?.params?.collectionName;
@@ -148,6 +173,101 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
   const routeOnReview = route?.params?.onReview;
   const routeOnPlayPronunciation = route?.params?.onPlayPronunciation;
 
+  const formatTimestamp = useCallback((seconds) => {
+    if (!Number.isFinite(seconds)) {
+      return '';
+    }
+
+    const total = Math.max(0, Math.floor(seconds));
+    const mins = Math.floor(total / 60);
+    const secs = total % 60;
+    return `${mins}:${String(secs).padStart(2, '0')}`;
+  }, []);
+
+  const usageMeta = useMemo(() => {
+    const pieces = [];
+    if (usageTitle) {
+      pieces.push(usageTitle);
+    }
+    if (usageUrl) {
+      pieces.push(usageUrl);
+    }
+    if (Number.isFinite(usageTimestamp)) {
+      pieces.push(formatTimestamp(usageTimestamp));
+    }
+    return pieces.join(' • ');
+  }, [formatTimestamp, usageTimestamp, usageTitle, usageUrl]);
+
+  const stopCardAudio = useCallback(async () => {
+    const sound = soundRef.current;
+    soundRef.current = null;
+
+    if (sound) {
+      try {
+        await sound.stopAsync();
+      } catch (err) {
+        // Ignore stop errors to keep UI responsive.
+      }
+
+      try {
+        await sound.unloadAsync();
+      } catch (err) {
+        // Ignore unload errors to keep UI responsive.
+      }
+    }
+
+    setAudioStatus((prev) =>
+      prev.isPlaying || prev.isLoading
+        ? { ...prev, isPlaying: false, isLoading: false }
+        : prev
+    );
+  }, []);
+
+  const handleCardAudio = useCallback(async () => {
+    if (!effectiveAudioUri) {
+      return;
+    }
+
+    if (audioStatus.isPlaying || audioStatus.isLoading) {
+      await stopCardAudio();
+      return;
+    }
+
+    setAudioStatus({ isPlaying: false, isLoading: true });
+
+    const createSound = async (uri) => {
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        shouldDuckAndroid: true,
+        playThroughEarpieceAndroid: false,
+      });
+      const { sound } = await Audio.Sound.createAsync({ uri }, { shouldPlay: true });
+      soundRef.current = sound;
+      sound.setOnPlaybackStatusUpdate((status) => {
+        if (!status.isLoaded) return;
+        if (status.didJustFinish) { stopCardAudio(); return; }
+        setAudioStatus((prev) => ({ ...prev, isPlaying: status.isPlaying, isLoading: false }));
+      });
+    };
+
+    try {
+      await createSound(effectiveAudioUri);
+    } catch {
+      // Primary URI failed (e.g. unplayable YouTube/expired URL) — retry with dict audio
+      if (dictAudioUri && dictAudioUri !== effectiveAudioUri) {
+        try {
+          await createSound(dictAudioUri);
+          setFetchedAudioUri(dictAudioUri);
+        } catch {
+          setAudioStatus({ isPlaying: false, isLoading: false });
+        }
+      } else {
+        setAudioStatus({ isPlaying: false, isLoading: false });
+      }
+    }
+  }, [audioStatus.isLoading, audioStatus.isPlaying, effectiveAudioUri, dictAudioUri, stopCardAudio]);
+
   const advanceToNextCard = useCallback(() => {
     const isLastCard = currentIndex >= cards.length - 1;
     if (isLastCard) {
@@ -170,6 +290,8 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
       if (typeof reviewHandler === 'function') {
         reviewHandler(rating);
       }
+
+      markStudyDay(todayKey).catch(() => {});
 
       const lemma = activeCard?.word || activeCard?.lemma;
       const flashcardId = activeCard?.flashcardId;
@@ -198,7 +320,7 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
 
       advanceToNextCard();
     },
-    [activeCard, onReview, routeOnReview, advanceToNextCard]
+    [activeCard, onReview, routeOnReview, advanceToNextCard, todayKey]
   );
 
   const handlePronunciation = useCallback(
@@ -223,6 +345,14 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
   );
 
   useEffect(() => {
+    stopCardAudio();
+  }, [currentIndex, stopCardAudio]);
+
+  useEffect(() => () => {
+    stopCardAudio();
+  }, [stopCardAudio]);
+
+  useEffect(() => {
     return () => {
       if (!sessionStarted || sessionCompleted) {
         return;
@@ -239,13 +369,59 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
     };
   }, [cards.length, currentIndex, sessionCompleted, sessionStarted, targetCount, todayKey]);
 
-  const imageNode = useMemo(() => {
-    if (activeCard?.imageUri) {
-      return <Image source={{ uri: activeCard.imageUri }} style={styles.contextImage} resizeMode="cover" />;
-    }
+  useEffect(() => {
+    setFetchedAudioUri('');
+    setFetchedImageUri('');
+    setDictAudioUri('');
 
-    return <View style={styles.imageFallback} />;
-  }, [activeCard?.imageUri, styles.contextImage, styles.imageFallback]);
+    const flashcardId = activeCard?.flashcardId;
+    const word = activeCard?.word;
+
+    let cancelled = false;
+
+    // Always pre-fetch dict audio for this word as a background fallback
+    if (word) fetchDictAudio(word, cancelled, setDictAudioUri);
+
+    if (!flashcardId) return () => { cancelled = true; };
+
+    fetchFlashcardMedia(flashcardId)
+      .then((mediaList) => {
+        if (cancelled) return;
+
+        if (!Array.isArray(mediaList)) {
+          if (!cardAudioUri && word) fetchDictAudio(word, cancelled, setFetchedAudioUri);
+          return;
+        }
+
+        const audioAsset = mediaList.find((m) => m.type === 'AUDIO');
+        const imageAsset = mediaList.find((m) => m.type === 'SCREENSHOT');
+
+        if (!cardAudioUri) {
+          if (audioAsset?.mediaId) {
+            fetchMediaDownloadUrl(audioAsset.mediaId)
+              .then((res) => {
+                if (!cancelled && res?.downloadUrl) setFetchedAudioUri(res.downloadUrl);
+                else if (!cancelled && word) fetchDictAudio(word, cancelled, setFetchedAudioUri);
+              })
+              .catch(() => { if (!cancelled && word) fetchDictAudio(word, cancelled, setFetchedAudioUri); });
+          } else if (word) {
+            fetchDictAudio(word, cancelled, setFetchedAudioUri);
+          }
+        }
+
+        if (!cardImageUri && imageAsset?.mediaId) {
+          fetchMediaDownloadUrl(imageAsset.mediaId)
+            .then((res) => { if (!cancelled && res?.downloadUrl) setFetchedImageUri(res.downloadUrl); })
+            .catch(() => {});
+        }
+      })
+      .catch(() => {
+        if (!cancelled && !cardAudioUri && word) fetchDictAudio(word, cancelled, setFetchedAudioUri);
+      });
+
+    return () => { cancelled = true; };
+  }, [currentIndex]); // eslint-disable-line react-hooks/exhaustive-deps
+
 
   if (!cards.length) {
     return (
@@ -267,20 +443,14 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
 
       <View style={styles.topBar}>
-        <Image source={require('../../assets/capybara-avatar.jpg')} style={styles.avatar} />
         <Text style={styles.topBarTitle}>
           {collectionName ? `${collectionName} Flashcards` : 'Syntagma Flashcards'}
         </Text>
       </View>
 
       <View style={styles.progressRow}>
-        <View style={styles.progressPills}>
-          {Array.from({ length: totalPills }).map((_, index) => (
-            <View
-              key={String(index)}
-              style={[styles.progressPill, index < completedPills ? styles.progressPillDone : styles.progressPillTodo]}
-            />
-          ))}
+        <View style={styles.progressBarTrack}>
+          <View style={[styles.progressBarFill, { width: `${(currentIndex / Math.max(cards.length, 1)) * 100}%` }]} />
         </View>
         <Text style={styles.cardsLeftText}>{`${cardsLeft} CARDS LEFT`}</Text>
       </View>
@@ -318,12 +488,51 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
                 contentContainerStyle={styles.detailsScrollContent}
                 showsVerticalScrollIndicator={false}
               >
+                <Text style={[styles.detailLabel, styles.detailLabelTop]}>Meaning</Text>
                 <View style={styles.translationPill}>
                   <Text style={styles.translationFlag}>🇹🇷</Text>
                   <Text style={styles.translationText}>{activeCard.translation}</Text>
                 </View>
 
-                <Text style={styles.sentenceTrText}>{activeCard.sentenceTranslation || '-'}</Text>
+                {activeCard.sentenceTranslation ? (
+                  <Text style={styles.sentenceTrText}>{activeCard.sentenceTranslation}</Text>
+                ) : null}
+
+                {exampleSentence ? (
+                  <View style={styles.detailBlock}>
+                    <Text style={styles.detailLabel}>Example sentence</Text>
+                    <Text style={styles.detailText}>{exampleSentence}</Text>
+                  </View>
+                ) : null}
+
+                {usageSentence || usageMeta ? (
+                  <View style={styles.detailBlock}>
+                    <Text style={styles.detailLabel}>Usage context</Text>
+                    {usageSentence ? <Text style={styles.detailText}>{usageSentence}</Text> : null}
+                    {usageMeta ? <Text style={styles.detailMeta}>{usageMeta}</Text> : null}
+                  </View>
+                ) : null}
+
+                {effectiveAudioUri ? (
+                  <Pressable
+                    style={styles.audioButton}
+                    onPress={handleCardAudio}
+                    disabled={audioStatus.isLoading}
+                  >
+                    <Ionicons
+                      name={audioStatus.isPlaying ? 'pause-circle-outline' : 'play-circle-outline'}
+                      size={18}
+                      color={colors.accent}
+                    />
+                    <Text style={styles.audioButtonText}>
+                      {audioStatus.isLoading
+                        ? 'Loading audio'
+                        : audioStatus.isPlaying
+                          ? 'Pause audio'
+                          : 'Play audio'}
+                    </Text>
+                  </Pressable>
+                ) : null}
 
                 {(activeCard.englishPronunciationUri || activeCard.turkishPronunciationUri) && (
                   <View style={styles.pronunciationRow}>
@@ -348,20 +557,24 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
                   </View>
                 )}
 
-                <View style={styles.imageWrap}>{imageNode}</View>
+                {effectiveImageUri ? (
+                  <View style={styles.imageWrap}>
+                    <Image source={{ uri: effectiveImageUri }} style={styles.contextImage} resizeMode="cover" />
+                  </View>
+                ) : null}
 
-                <View style={styles.bottomDecisionRowInside}>
-                  <Pressable style={[styles.answerButton, styles.againButton]} onPress={() => handleAnswer(Rating.Again)}>
-                    <Text style={styles.againButtonText}>I don't know</Text>
-                  </Pressable>
-
-                  <Pressable style={[styles.answerButton, styles.goodButton]} onPress={() => handleAnswer(Rating.Good)}>
-                    <Text style={styles.goodButtonText}>I know</Text>
-                  </Pressable>
-                </View>
               </ScrollView>
             </Animated.View>
           )}
+        </Pressable>
+      </View>
+
+      <View style={styles.bottomRow}>
+        <Pressable style={[styles.answerButton, styles.againButton]} onPress={() => handleAnswer(Rating.Again)}>
+          <Text style={styles.againButtonText}>I don't know</Text>
+        </Pressable>
+        <Pressable style={[styles.answerButton, styles.goodButton]} onPress={() => handleAnswer(Rating.Good)}>
+          <Text style={styles.goodButtonText}>I know</Text>
         </Pressable>
       </View>
     </SafeAreaView>
@@ -380,12 +593,6 @@ const createStyles = (colors) =>
       alignItems: 'center',
       marginHorizontal: 24,
       marginTop: 12,
-    },
-    avatar: {
-      width: 32,
-      height: 32,
-      borderRadius: 16,
-      marginRight: 12,
     },
     topBarTitle: {
       color: colors.accent,
@@ -430,22 +637,18 @@ const createStyles = (colors) =>
       flexDirection: 'row',
       alignItems: 'center',
     },
-    progressPills: {
-      flex: 1,
-      flexDirection: 'row',
-      gap: 6,
-      marginRight: 10,
-    },
-    progressPill: {
+    progressBarTrack: {
       flex: 1,
       height: 6,
       borderRadius: 3,
-    },
-    progressPillDone: {
-      backgroundColor: colors.accent,
-    },
-    progressPillTodo: {
       backgroundColor: colors.border,
+      marginRight: 10,
+      overflow: 'hidden',
+    },
+    progressBarFill: {
+      height: 6,
+      borderRadius: 3,
+      backgroundColor: colors.accent,
     },
     cardsLeftText: {
       color: colors.accentStrong,
@@ -532,6 +735,34 @@ const createStyles = (colors) =>
       fontSize: 18,
       fontFamily: 'DMSans_600SemiBold',
     },
+    detailLabel: {
+      alignSelf: 'flex-start',
+      marginBottom: 6,
+      color: colors.textMuted,
+      fontSize: 12,
+      fontFamily: 'DMSans_600SemiBold',
+      letterSpacing: 0.6,
+      textTransform: 'uppercase',
+    },
+    detailLabelTop: {
+      marginTop: 14,
+    },
+    detailBlock: {
+      marginTop: 14,
+      width: '100%',
+    },
+    detailText: {
+      color: colors.textSecondary,
+      fontSize: 15,
+      lineHeight: 22,
+      fontFamily: 'DMSans_400Regular',
+    },
+    detailMeta: {
+      marginTop: 6,
+      color: colors.textMuted,
+      fontSize: 12,
+      fontFamily: 'DMSans_400Regular',
+    },
     sentenceTrText: {
       marginTop: 12,
       color: colors.textSecondary,
@@ -539,6 +770,21 @@ const createStyles = (colors) =>
       lineHeight: 22,
       textAlign: 'center',
       fontFamily: 'DMSans_400Regular',
+    },
+    audioButton: {
+      marginTop: 16,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      borderRadius: 18,
+      backgroundColor: colors.mutedSurface,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+    },
+    audioButtonText: {
+      color: colors.accent,
+      fontSize: 12,
+      fontFamily: 'DMSans_600SemiBold',
     },
     pronunciationRow: {
       marginTop: 18,
@@ -569,16 +815,12 @@ const createStyles = (colors) =>
       width: '100%',
       height: 160,
     },
-    imageFallback: {
-      backgroundColor: colors.mutedSurface,
-      borderRadius: 18,
-      width: '100%',
-      height: 160,
-    },
-    bottomDecisionRowInside: {
-      marginTop: 18,
+    bottomRow: {
       flexDirection: 'row',
       gap: 12,
+      paddingHorizontal: 24,
+      paddingTop: 12,
+      paddingBottom: 8,
     },
     answerButton: {
       flex: 1,

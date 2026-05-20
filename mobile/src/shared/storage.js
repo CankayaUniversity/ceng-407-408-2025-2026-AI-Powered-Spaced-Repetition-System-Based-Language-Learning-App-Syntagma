@@ -4,6 +4,15 @@ const AUTH_KEY = 'syntagma.auth';
 const STUDY_PREF_KEY = 'syntagma.study.pref';
 const CARRYOVER_KEY = 'syntagma.study.carryover';
 const THEME_KEY = 'syntagma.theme';
+const STUDY_DAYS_KEY = 'syntagma.study.days';
+const MAX_STUDY_DAYS = 120;
+
+const toDateKey = (date = new Date()) => date.toISOString().slice(0, 10);
+
+const parseDateKey = (dateKey) => new Date(`${dateKey}T00:00:00Z`);
+
+const normalizeStudyDays = (days) =>
+  Array.from(new Set(days.filter((entry) => typeof entry === 'string' && entry.length >= 10))).sort();
 
 export async function saveAuth(auth) {
   if (!auth) {
@@ -93,6 +102,75 @@ export async function getThemePreference() {
   } catch (err) {
     return null;
   }
+}
+
+export async function getStudyDays() {
+  const stored = await AsyncStorage.getItem(STUDY_DAYS_KEY);
+  if (!stored) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(stored);
+    return normalizeStudyDays(Array.isArray(parsed) ? parsed : []);
+  } catch (err) {
+    return [];
+  }
+}
+
+export async function markStudyDay(dateStr = toDateKey()) {
+  const days = await getStudyDays();
+  const next = normalizeStudyDays([...days, dateStr]);
+
+  const cutoff = new Date();
+  cutoff.setUTCDate(cutoff.getUTCDate() - MAX_STUDY_DAYS);
+
+  const pruned = next.filter((entry) => {
+    const parsed = parseDateKey(entry);
+    return !Number.isNaN(parsed.getTime()) && parsed >= cutoff;
+  });
+
+  await AsyncStorage.setItem(STUDY_DAYS_KEY, JSON.stringify(pruned));
+}
+
+export function computeStudyStreakFromDays(days, todayStr = toDateKey()) {
+  if (!Array.isArray(days) || days.length === 0) {
+    return 0;
+  }
+
+  const daySet = new Set(days);
+
+  const yesterdayDate = parseDateKey(todayStr);
+  yesterdayDate.setUTCDate(yesterdayDate.getUTCDate() - 1);
+  const yesterdayStr = toDateKey(yesterdayDate);
+
+  let startStr;
+  if (daySet.has(todayStr)) {
+    startStr = todayStr;
+  } else if (daySet.has(yesterdayStr)) {
+    startStr = yesterdayStr;
+  } else {
+    return 0;
+  }
+
+  let streak = 0;
+  const cursor = parseDateKey(startStr);
+
+  while (!Number.isNaN(cursor.getTime())) {
+    const key = toDateKey(cursor);
+    if (!daySet.has(key)) {
+      break;
+    }
+    streak += 1;
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+  }
+
+  return streak;
+}
+
+export async function getStudyStreak() {
+  const days = await getStudyDays();
+  return computeStudyStreakFromDays(days);
 }
 
 const NOTIFICATIONS_KEY = 'syntagma.notifications';
