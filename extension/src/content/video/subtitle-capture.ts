@@ -1,6 +1,10 @@
 import type { SubtitleCue } from '../../shared/types';
 import { parseVTT } from './subtitle-parser';
 import {
+  fetchNetflixSubtitlesFromManifest,
+  normalizeNetflixCues,
+} from './netflix-subtitles';
+import {
   extractCaptionTracksFromDocument,
   extractYoutubeSubtitles,
   extractYoutubeVideoId,
@@ -509,380 +513,56 @@ function observeViaDOM(
   return () => observer.disconnect();
 }
 
-// ─── Netflix subtitle interceptor injection ─────────────────────────────────────
+// ─── Netflix manifest bridge ───────────────────────────────────────────────────
 
-export function injectNetflixInterceptor() {
-  const id = 'syntagma-netflix-interceptor';
-  if (document.getElementById(id)) return;
-  const script = document.createElement('script');
-  script.id = id;
-  // NOTE: This script runs in the page's JS context (not the extension context).
-  // It cannot use TypeScript, imports, or chrome.* APIs.
-  // Backticks are avoided inside the string to prevent template-literal conflicts.
-  script.textContent = `
-    (function () {
-      if (window.__SYNTAGMA_INTERCEPTOR_ACTIVE__) return;
-      window.__SYNTAGMA_INTERCEPTOR_ACTIVE__ = true;
+const NETFLIX_MANIFEST_EVENT = 'syntagma:netflix-manifest';
+const NETFLIX_CUES_EVENT = 'syntagma:netflix-cues';
+const NETFLIX_REQUEST_EVENT = 'syntagma:request-subtitles';
+const NETFLIX_UNAVAILABLE_EVENT = 'syntagma:netflix-subtitles-unavailable';
+const NETFLIX_MANIFEST_CACHE_ID = 'syntagma-netflix-manifest-cache';
+const NETFLIX_CUES_CACHE_ID = 'syntagma-netflix-cues-cache';
+const NETFLIX_CONTENT_SOURCE = 'syntagma-content';
 
-      // ── Helpers ────────────────────────────────────────────────────────────
-
-      function isSubtitleUrl(url) {
-        return typeof url === 'string' && url.includes('nflxvideo.net') && url.includes('?o=');
-      }
-
-      function isManifestUrl(url) {
-        if (typeof url !== 'string') return false;
-        if (!url.includes('netflix.com')) return false;
-        return url.includes('/playapi/') || url.includes('/cadmium/') || url.includes('/manifest');
-      }
-
-      // ── Mini TTML parser (runs entirely inside the page context) ───────────
-      // Parses Netflix TTML subtitle files and returns plain cue objects.
-      // Handles both tick-based time (e.g. "12345t") and HH:MM:SS.mmm format.
-      function parseTTMLtoCues(xml) {
-        if (!xml || (!xml.includes('begin=') && !xml.includes('<tt '))) return [];
-        var tickRateMatch = xml.match(/ttp:tickRate="(\d+)"/);
-        var tickRate = tickRateMatch ? parseInt(tickRateMatch[1], 10) : 10000000;
-
-        function parseTime(str) {
-          if (!str) return 0;
-          str = str.trim();
-          if (str.charAt(str.length - 1) === 't') {
-            return Math.round(parseInt(str, 10) / tickRate * 1000);
-          }
-          if (str.indexOf(':') !== -1) {
-            var parts = str.split(':');
-            if (parts.length === 3) {
-              return Math.round((parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2])) * 1000);
-            }
-          }
-          if (str.slice(-2) === 'ms') return parseInt(str, 10);
-          if (str.charAt(str.length - 1) === 's') return Math.round(parseFloat(str) * 1000);
-          return 0;
-        }
-
-        var cues = [];
-        var pRegex = /<p[^>]*begin="([^"]*)"[^>]*end="([^"]*)"[^>]*>([\s\S]*?)<\/p>/g;
-        var m;
-        while ((m = pRegex.exec(xml)) !== null) {
-          var startMs = parseTime(m[1]);
-          var endMs   = parseTime(m[2]);
-          var text = m[3]
-            .replace(/<br\s*\/?>/gi, '\n')
-            .replace(/<[^>]+>/g, '')
-            .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-            .replace(/&#39;/g, "'").replace(/&quot;/g, '"')
-            .replace(/\s+/g, ' ').trim();
-          if (text && endMs > startMs) {
-            cues.push({ startMs: startMs, endMs: endMs, text: text });
-          }
-        }
-        return cues;
-      }
-
-      // ── Dispatch raw TTML as fallback (for direct nflxvideo.net interception) ─
-      function tryDispatchTTML(text, url) {
-        if (!text || (!text.includes('begin=') && !text.includes('<tt '))) return;
-        window.dispatchEvent(new CustomEvent('syntagma:netflix-transcript', {
-          detail: { xml: text, url: url }
-        }));
-      }
-
-      // ── Extract subtitle download URLs from a Netflix manifest object ──────
-      function extractSubtitleUrls(manifest, lang) {
-        var tracks = manifest.timedtextTracks ||
-                     (manifest.result && manifest.result.timedtextTracks) || [];
-        var urls = [];
-        var prefLang = lang || 'en';
-
-        // Collect tracks whose language matches the preference; fall back to all
-        var matched = tracks.filter(function(t) {
-          return (t.language || '').toLowerCase().indexOf(prefLang) === 0;
-        });
-        if (matched.length === 0) matched = tracks;
-
-        var formatPriority = ['simplesdh', 'nflx-cmisc', 'imsc1.1'];
-
-        matched.forEach(function(track) {
-          var dlable = track.ttDownloadables || {};
-          // Try preferred formats first, then anything available
-          var formats = formatPriority.concat(
-            Object.keys(dlable).filter(function(k) { return formatPriority.indexOf(k) === -1; })
-          );
-          for (var fi = 0; fi < formats.length; fi++) {
-            var fmt = formats[fi];
-            if (!dlable[fmt]) continue;
-            var dlUrls = dlable[fmt].downloadUrls || dlable[fmt].urls || {};
-            var found = [];
-            Object.keys(dlUrls).forEach(function(k) {
-              if (typeof dlUrls[k] === 'string') found.push(dlUrls[k]);
-            });
-            if (found.length > 0) {
-              found.forEach(function(u) { urls.push(u); });
-              break; // only first successful format per track
-            }
-          }
-        });
-        return urls;
-      }
-
-      // ── Fetch all subtitle chunks from manifest and dispatch combined cues ─
-      // All chunks are fetched in parallel; the complete transcript is dispatched
-      // as a single 'syntagma:netflix-cues' event so the user sees it all at once.
-      function fetchAllSubtitlesFromManifest(manifest) {
-        var urls = extractSubtitleUrls(manifest, 'en');
-        if (urls.length === 0) {
-          console.log('[Syntagma] No subtitle URLs found in manifest');
-          return;
-        }
-        console.log('[Syntagma] Fetching ' + urls.length + ' subtitle chunk(s) from manifest...');
-
-        var promises = urls.map(function(url) {
-          return fetch(url, { credentials: 'include' })
-            .then(function(r) { return r.ok ? r.text() : null; })
-            .catch(function() { return null; });
-        });
-
-        Promise.all(promises).then(function(texts) {
-          var allCues = [];
-          var fetched = 0;
-          texts.forEach(function(text) {
-            if (!text) return;
-            var cues = parseTTMLtoCues(text);
-            if (cues.length > 0) { allCues = allCues.concat(cues); fetched++; }
-          });
-
-          if (allCues.length === 0) {
-            console.log('[Syntagma] Manifest fetch returned no parseable cues');
-            return;
-          }
-
-          // Sort and deduplicate by startMs
-          allCues.sort(function(a, b) { return a.startMs - b.startMs; });
-          allCues = allCues.filter(function(c, i) {
-            return i === 0 || c.startMs !== allCues[i - 1].startMs;
-          });
-
-          console.log('[Syntagma] Full transcript ready: ' + allCues.length + ' cues from ' + fetched + ' chunk(s)');
-          window.dispatchEvent(new CustomEvent('syntagma:netflix-cues', {
-            detail: { cues: allCues }
-          }));
-          // Cache cues in DOM so late-arriving content script listeners can still read them.
-          // The content script runs in an isolated world and cannot share window variables,
-          // but both contexts can access DOM elements.
-          try {
-            var cacheEl = document.getElementById('syntagma-netflix-cues-cache');
-            if (!cacheEl) {
-              cacheEl = document.createElement('div');
-              cacheEl.id = 'syntagma-netflix-cues-cache';
-              cacheEl.style.display = 'none';
-              document.body.appendChild(cacheEl);
-            }
-            cacheEl.setAttribute('data-cues', JSON.stringify(allCues));
-          } catch(cacheErr) {}
-        }).catch(function(e) {
-          console.log('[Syntagma] Manifest subtitle fetch error:', e);
-        });
-      }
-
-      // ── Try to parse a response body as a Netflix manifest ─────────────────
-      function tryProcessManifest(text) {
-        try {
-          var data = JSON.parse(text);
-          if (data && (data.timedtextTracks || (data.result && data.result.timedtextTracks))) {
-            fetchAllSubtitlesFromManifest(data);
-          }
-        } catch (e) { /* not a manifest JSON */ }
-      }
-
-      // ── On-demand subtitle fetch from player state ─────────────────────────
-      // Called by the content script when no cues were captured via interception
-      // (e.g. extension installed while video was already playing, or subtitles
-      // enabled after page load). Searches the Netflix player's internal memory
-      // for timedtextTracks metadata and re-fetches the TTML files directly.
-      function tryGetManifestFromPlayerState() {
-        var getPlayerFns = [
-          function() {
-            var vp = window.netflix.appContext.state.playerApp.getAPI().videoPlayer;
-            return vp.getVideoPlayerBySessionId(vp.getAllPlayerSessionIds()[0]);
-          },
-          function() {
-            var vp = window.netflix.appContext.getState().playerApp.getAPI().videoPlayer;
-            return vp.getVideoPlayerBySessionId(vp.getAllPlayerSessionIds()[0]);
-          },
-        ];
-
-        for (var gi = 0; gi < getPlayerFns.length; gi++) {
-          try {
-            var player = getPlayerFns[gi]();
-            if (!player) continue;
-
-            // Search one and two levels deep for an object containing timedtextTracks.
-            // Netflix stores the manifest in e.g. player._controller._impl.state.manifest
-            // but the exact path changes across versions — we scan shallowly instead.
-            for (var k1 in player) {
-              try {
-                var v1 = player[k1];
-                if (!v1 || typeof v1 !== 'object') continue;
-                if (v1.timedtextTracks) return { timedtextTracks: v1.timedtextTracks };
-                for (var k2 in v1) {
-                  try {
-                    var v2 = v1[k2];
-                    if (!v2 || typeof v2 !== 'object') continue;
-                    if (v2.timedtextTracks) return { timedtextTracks: v2.timedtextTracks };
-                    for (var k3 in v2) {
-                      try {
-                        var v3 = v2[k3];
-                        if (v3 && typeof v3 === 'object' && v3.timedtextTracks) {
-                          return { timedtextTracks: v3.timedtextTracks };
-                        }
-                      } catch(e3) {}
-                    }
-                  } catch(e2) {}
-                }
-              } catch(e1) {}
-            }
-          } catch(eg) {}
-        }
-        return null;
-      }
-
-      window.addEventListener('syntagma:request-subtitles', function() {
-        console.log('[Syntagma] On-demand subtitle fetch requested...');
-        var manifest = tryGetManifestFromPlayerState();
-        if (manifest && manifest.timedtextTracks && manifest.timedtextTracks.length > 0) {
-          console.log('[Syntagma] Found timedtextTracks in player state, fetching...');
-          fetchAllSubtitlesFromManifest(manifest);
-        } else {
-          console.warn('[Syntagma] No timedtextTracks found in player state.');
-          window.dispatchEvent(new CustomEvent('syntagma:netflix-subtitles-unavailable'));
-        }
-      });
-
-      // ── Netflix player seek helper ─────────────────────────────────────────
-      // Tries several Netflix internal API paths (they differ across versions).
-      // Never falls back to video.currentTime — touching the DRM video element
-      // directly causes Netflix error M7375 (EME state violation).
-      window.addEventListener('syntagma:netflix-seek', function(e) {
-        var timeMs = e.detail.timeMs;
-        var seeked = false;
-
-        // Netflix internal API — try multiple known path variants
-        var apiFns = [
-          function() {
-            var vp = window.netflix.appContext.state.playerApp.getAPI().videoPlayer;
-            vp.getVideoPlayerBySessionId(vp.getAllPlayerSessionIds()[0]).seek(timeMs);
-          },
-          function() {
-            var vp = window.netflix.appContext.getState().playerApp.getAPI().videoPlayer;
-            vp.getVideoPlayerBySessionId(vp.getAllPlayerSessionIds()[0]).seek(timeMs);
-          },
-          function() {
-            // Older API shape used before ~2022
-            var vp = window.netflix.player;
-            vp.seek(timeMs);
-          },
-        ];
-
-        for (var i = 0; i < apiFns.length; i++) {
-          try { apiFns[i](); seeked = true; break; } catch(apiErr) {}
-        }
-
-        if (!seeked) {
-          console.warn('[Syntagma] Netflix seek: no working API path found for seek to ' + timeMs + 'ms');
-        }
-      });
-
-      // ── Patch window.fetch ─────────────────────────────────────────────────
-      var origFetch = window.fetch;
-      window.fetch = async function () {
-        var args = Array.prototype.slice.call(arguments);
-        var response = await origFetch.apply(this, args);
-        var url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : '');
-        if (isSubtitleUrl(url)) {
-          response.clone().text().then(function(t) { tryDispatchTTML(t, url); }).catch(function() {});
-        }
-        if (isManifestUrl(url)) {
-          response.clone().text().then(tryProcessManifest).catch(function() {});
-        }
-        return response;
-      };
-
-      // ── Patch XMLHttpRequest ───────────────────────────────────────────────
-      var origOpen = XMLHttpRequest.prototype.open;
-      XMLHttpRequest.prototype.open = function () {
-        var url = arguments[1] ? arguments[1].toString() : '';
-        this.addEventListener('load', function () {
-          if (isSubtitleUrl(url)) {
-            try { tryDispatchTTML(this.responseText, url); } catch (e) {}
-          }
-          if (isManifestUrl(url)) {
-            try { tryProcessManifest(this.responseText); } catch (e) {}
-          }
-        });
-        origOpen.apply(this, arguments);
-      };
-    })();
-  `;
-  (document.head || document.documentElement).appendChild(script);
+function manifestFromEvent(e: Event): unknown | null {
+  const detail = (e as CustomEvent<{ manifestJson?: string; manifest?: unknown }>).detail;
+  if (!detail) return null;
+  if (detail.manifestJson) {
+    try { return JSON.parse(detail.manifestJson); } catch { return null; }
+  }
+  return detail.manifest ?? null;
 }
 
-// Netflix TTML parser
-function parseNetflixTTML(xml: string): SubtitleCue[] {
+function readCachedNetflixManifest(): unknown | null {
+  const cacheEl = document.getElementById(NETFLIX_MANIFEST_CACHE_ID);
+  const cachedJson = cacheEl?.getAttribute('data-manifest');
+  if (!cachedJson) return null;
+  try { return JSON.parse(cachedJson); } catch { return null; }
+}
+
+function readCachedNetflixCues(): SubtitleCue[] {
+  const cacheEl = document.getElementById(NETFLIX_CUES_CACHE_ID);
+  const cachedJson = cacheEl?.getAttribute('data-cues');
+  if (!cachedJson) return [];
   try {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(xml, 'text/xml');
-    const cues: SubtitleCue[] = [];
-    doc.querySelectorAll('p[begin][end]').forEach(p => {
-      // TTML uses "begin" and "end" in format "12345678t" or strict HH:MM:SS.mmm
-      // Netflix usually supplies native ticks (e.g. 1234t) where 1t = 1/10000000s or standard ms.
-      // Often TTML ticks depend on tickRate in <tt> header. Let's handle 't' suffix.
-      let startMs = 0;
-      let endMs = 0;
-      
-      const parseTime = (str: string) => {
-        if (str.endsWith('t')) {
-          const tickRateStr = doc.documentElement.getAttribute('ttp:tickRate');
-          const tickRate = tickRateStr ? parseInt(tickRateStr, 10) : 10000000;
-          return Math.round((parseInt(str, 10) / tickRate) * 1000);
-        } else if (str.includes(':')) {
-           // HH:MM:SS.mmm
-           const parts = str.split(':');
-           if (parts.length === 3) {
-             const h = parseFloat(parts[0]);
-             const m = parseFloat(parts[1]);
-             const s = parseFloat(parts[2]);
-             return Math.round((h * 3600 + m * 60 + s) * 1000);
-           }
-        } else if (str.endsWith('ms')) {
-           return parseInt(str, 10);
-        }
-        return 0;
-      };
-
-      startMs = parseTime(p.getAttribute('begin') || '');
-      endMs = parseTime(p.getAttribute('end') || '');
-
-      let text = p.innerHTML.replace(/<br\s*[\/]?>/gi, '\n');
-      text = text.replace(/<[^>]+>/g, '');
-      const unescapeEl = document.createElement('textarea');
-      unescapeEl.innerHTML = text;
-      text = unescapeEl.value.trim();
-
-      if (text) {
-        cues.push({
-          index: cues.length,
-          startMs, endMs,
-          text, rawText: text,
-          bookmarked: false, selected: false,
-        });
-      }
-    });
-
-    return cues;
-  } catch (err) {
-    console.error('[Syntagma] TTML parse error:', err);
+    const raw = JSON.parse(cachedJson) as SubtitleCue[];
+    return Array.isArray(raw) ? normalizeNetflixCues(raw) : [];
+  } catch {
     return [];
+  }
+}
+
+function writeCachedNetflixCues(cues: SubtitleCue[]): void {
+  try {
+    let cacheEl = document.getElementById(NETFLIX_CUES_CACHE_ID);
+    if (!cacheEl) {
+      cacheEl = document.createElement('div');
+      cacheEl.id = NETFLIX_CUES_CACHE_ID;
+      cacheEl.style.display = 'none';
+      (document.body || document.documentElement).appendChild(cacheEl);
+    }
+    cacheEl.setAttribute('data-cues', JSON.stringify(cues));
+  } catch {
+    // Cache is only for race recovery; failing to write it should not break playback.
   }
 }
 
@@ -892,116 +572,92 @@ export function observeNetflixCaptions(
   onCueDisappear: () => void,
   onAllCuesReady?: (cues: SubtitleCue[]) => void,
 ): () => void {
-  injectNetflixInterceptor();
-
   let stopFn: (() => void) | null = null;
   let attempts = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
-
-  // netflixCues holds the best transcript we've assembled so far.
-  // It grows monotonically — chunks from the manifest are merged in, never discarded.
+  let requestTimer: ReturnType<typeof setTimeout> | null = null;
+  let disposed = false;
   let netflixCues: SubtitleCue[] = [];
+  let fallbackCueCount = 0;
 
-  // ── Helper: merge new cues into the accumulator ─────────────────────────
-  // Deduplicates by startMs so overlapping chunks don't create duplicate lines.
-  function mergeCues(incoming: SubtitleCue[]): SubtitleCue[] {
-    const seen = new Set(netflixCues.map(c => c.startMs));
-    const novel = incoming.filter(c => !seen.has(c.startMs));
-    if (novel.length === 0) return netflixCues;
-    const combined = [...netflixCues, ...novel];
-    combined.sort((a, b) => a.startMs - b.startMs);
-    combined.forEach((c, i) => { c.index = i; });
-    trimOverlaps(combined);
-    return combined;
-  }
+  const publishCues = (incoming: SubtitleCue[]) => {
+    if (disposed || incoming.length === 0) return;
+    const combined = normalizeNetflixCues([...netflixCues, ...incoming]);
+    if (combined.length <= netflixCues.length) return;
 
-  // ── Path A: manifest-based full transcript (pre-parsed, atomic) ──────────
-  // The injected script fetches ALL subtitle chunks in parallel and dispatches
-  // this event once with every cue.  This is the preferred path — no scrubbing.
+    netflixCues = combined;
+    writeCachedNetflixCues(netflixCues);
+    onAllCuesReady?.(netflixCues);
+    window.dispatchEvent(new CustomEvent(NETFLIX_CUES_EVENT, {
+      detail: {
+        source: NETFLIX_CONTENT_SOURCE,
+        cues: netflixCues.map(({ startMs, endMs, text }) => ({ startMs, endMs, text })),
+      },
+    }));
+    console.log('[Syntagma] Full Netflix transcript ready: ' + netflixCues.length + ' cues.');
+  };
+
+  const fetchFromManifest = (manifest: unknown) => {
+    fetchNetflixSubtitlesFromManifest(manifest, { preferredLang: 'en', debug: true })
+      .then((cues) => {
+        if (disposed) return;
+        if (cues.length > 0) {
+          publishCues(cues);
+          return;
+        }
+        if (netflixCues.length === 0) {
+          window.dispatchEvent(new CustomEvent(NETFLIX_UNAVAILABLE_EVENT));
+        }
+      })
+      .catch(() => {
+        if (!disposed && netflixCues.length === 0) {
+          window.dispatchEvent(new CustomEvent(NETFLIX_UNAVAILABLE_EVENT));
+        }
+      });
+  };
+
+  const handleManifest = (e: Event) => {
+    const manifest = manifestFromEvent(e);
+    if (manifest) fetchFromManifest(manifest);
+  };
+  window.addEventListener(NETFLIX_MANIFEST_EVENT, handleManifest);
+
   const handleParsedCues = (e: Event) => {
-    const raw = (e as CustomEvent<{ cues: Array<{ startMs: number; endMs: number; text: string }> }>).detail.cues;
-    if (!raw?.length) return;
-
-    const incoming: SubtitleCue[] = raw.map((c, i) => ({
-      index: i,
-      startMs: c.startMs,
-      endMs:   c.endMs,
-      text:    c.text,
-      rawText: c.text,
+    const detail = (e as CustomEvent<{ source?: string; cues?: Array<{ startMs: number; endMs: number; text: string }> }>).detail;
+    if (detail?.source === NETFLIX_CONTENT_SOURCE || !detail?.cues?.length) return;
+    publishCues(detail.cues.map((cue, index) => ({
+      index,
+      startMs: cue.startMs,
+      endMs: cue.endMs,
+      text: cue.text,
+      rawText: cue.text,
       bookmarked: false,
       selected: false,
-    }));
-
-    netflixCues = mergeCues(incoming);
-    onAllCuesReady?.(netflixCues);
-    console.log('[Syntagma] Full transcript from manifest: ' + netflixCues.length + ' cues.');
+    })));
   };
-  window.addEventListener('syntagma:netflix-cues', handleParsedCues);
+  window.addEventListener(NETFLIX_CUES_EVENT, handleParsedCues);
 
-  // ── Read DOM cache: handle race where manifest fired before this listener ──
-  // The page-injected script may have dispatched syntagma:netflix-cues before
-  // this content-script listener was attached (race during initial page load).
-  // The injected script caches the cues in a DOM element so we can recover here.
-  const cacheEl = document.getElementById('syntagma-netflix-cues-cache');
-  const cachedJson = cacheEl?.getAttribute('data-cues');
-  if (cachedJson) {
-    try {
-      const raw = JSON.parse(cachedJson) as Array<{ startMs: number; endMs: number; text: string }>;
-      if (raw?.length > 0) {
-        const incoming: SubtitleCue[] = raw.map((c, i) => ({
-          index: i,
-          startMs: c.startMs,
-          endMs: c.endMs,
-          text: c.text,
-          rawText: c.text,
-          bookmarked: false,
-          selected: false,
-        }));
-        netflixCues = mergeCues(incoming);
-        onAllCuesReady?.(netflixCues);
-        console.log('[Syntagma] Recovered ' + netflixCues.length + ' cues from DOM cache.');
-      }
-    } catch { /* malformed cache — ignore */ }
+  const cachedCues = readCachedNetflixCues();
+  if (cachedCues.length > 0) {
+    publishCues(cachedCues);
   }
 
-  // ── Path B: individual TTML chunk intercepted during playback ────────────
-  // Fired for each nflxvideo.net subtitle file the player fetches naturally.
-  // Chunks are merged so the transcript grows without losing earlier data.
-  const handleIntercept = (e: Event) => {
-    const { xml } = (e as CustomEvent).detail;
-    const incoming = parseNetflixTTML(xml);
-    if (incoming.length === 0) return;
+  const cachedManifest = readCachedNetflixManifest();
+  if (cachedManifest) {
+    fetchFromManifest(cachedManifest);
+  }
 
-    netflixCues = mergeCues(incoming);
-    onAllCuesReady?.(netflixCues);
-    console.log('[Syntagma] Merged subtitle chunk: ' + netflixCues.length + ' cues total.');
-  };
-  window.addEventListener('syntagma:netflix-transcript', handleIntercept);
-
-  // ── Path D: on-demand fetch from player state ─────────────────────────────
-  // Triggered after 1.5 s if no cues arrived via interception, and also by the
-  // sidebar Retry button. The injected page script searches Netflix's internal
-  // player state for timedtextTracks URLs and re-runs fetchAllSubtitlesFromManifest.
-  let onDemandTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
-    onDemandTimer = null;
+  requestTimer = setTimeout(() => {
+    requestTimer = null;
     if (netflixCues.length === 0) {
-      console.log('[Syntagma] No cues yet — triggering on-demand player-state fetch...');
-      window.dispatchEvent(new CustomEvent('syntagma:request-subtitles'));
+      window.dispatchEvent(new CustomEvent(NETFLIX_REQUEST_EVENT));
     }
   }, 1500);
 
-  window.addEventListener('syntagma:request-subtitles', () => {
-    // Content script side is just a relay — the injected page script does the work.
-    // Re-dispatching here allows the sidebar Retry button to also trigger it.
-  });
-
-  // ── Path C: live DOM / TextTrack observer (progressive, real-time) ───────
-  // Only used for live caption display (onCueAppear/Disappear) and as a last-
-  // resort transcript builder when the manifest path fails.
   const safeOnAllCuesReady = (cues: SubtitleCue[]) => {
-    // If manifest/chunk interception already gave us a richer transcript, skip.
-    if (netflixCues.length >= cues.length) return;
-    onAllCuesReady?.(cues);
+    if (netflixCues.length > 0 || cues.length <= fallbackCueCount) return;
+    fallbackCueCount = cues.length;
+    onAllCuesReady?.(normalizeNetflixCues(cues));
   };
 
   const tryAttach = () => {
@@ -1021,11 +677,12 @@ export function observeNetflixCaptions(
   tryAttach();
 
   return () => {
+    disposed = true;
     if (timer) clearTimeout(timer);
-    if (onDemandTimer) clearTimeout(onDemandTimer);
+    if (requestTimer) clearTimeout(requestTimer);
     stopFn?.();
     video.textTracks.removeEventListener('addtrack', onAddTrack);
-    window.removeEventListener('syntagma:netflix-transcript', handleIntercept);
-    window.removeEventListener('syntagma:netflix-cues', handleParsedCues);
+    window.removeEventListener(NETFLIX_MANIFEST_EVENT, handleManifest);
+    window.removeEventListener(NETFLIX_CUES_EVENT, handleParsedCues);
   };
 }

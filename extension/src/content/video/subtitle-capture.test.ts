@@ -24,6 +24,9 @@ describe('video/subtitle-capture', () => {
   });
 
   it('maps extractor segments to legacy subtitle cues', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('', { status: 404 }));
     mockExtractYoutubeSubtitles.mockResolvedValue({
       videoId: 'WHYMGNbPv2U',
       languageCode: 'en',
@@ -35,7 +38,7 @@ describe('video/subtitle-capture', () => {
       ],
     });
 
-    const cues = await captureYouTubeSubtitles('en', 1);
+    const cues = await captureYouTubeSubtitles('en', 50);
 
     expect(cues).toHaveLength(2);
     expect(cues[0]).toMatchObject({
@@ -50,6 +53,8 @@ describe('video/subtitle-capture', () => {
       endMs: 2700,
       text: 'Second',
     });
+
+    fetchMock.mockRestore();
   });
 
   it('falls back to timedtext JSON3 when extractor returns no cues', async () => {

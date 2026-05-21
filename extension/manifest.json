@@ -11,6 +11,12 @@
   },
   "content_scripts": [
     {
+      "matches": ["https://www.netflix.com/*"],
+      "js": ["content/netflix-main-world.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
       "matches": ["<all_urls>"],
       "js": ["content/index.js"],
       "run_at": "document_start"

@@ -39,10 +39,18 @@ export class AudioRecorder {
   initFromVideo(video: HTMLVideoElement): Promise<boolean> {
     this.video = video;
     this.cleanupRetry();
+    let captureUnsupported = false;
 
     const tryAttach = (): boolean => {
       if (this.stream) return true;
-      const fullStream = (video as any).captureStream?.() as MediaStream | undefined;
+      let fullStream: MediaStream | undefined;
+      try {
+        fullStream = (video as any).captureStream?.() as MediaStream | undefined;
+      } catch (err) {
+        captureUnsupported = true;
+        console.warn('[Syntagma] AudioRecorder disabled: video captureStream is not available for this DRM video.', err);
+        return false;
+      }
       if (!fullStream) return false;
       const audioTracks = fullStream.getAudioTracks();
       if (audioTracks.length === 0) return false;
@@ -53,6 +61,11 @@ export class AudioRecorder {
 
     if (tryAttach()) {
       this.initPromise = Promise.resolve(true);
+      return this.initPromise;
+    }
+
+    if (captureUnsupported) {
+      this.initPromise = Promise.resolve(false);
       return this.initPromise;
     }
 
@@ -70,10 +83,14 @@ export class AudioRecorder {
       this.retryInterval = setInterval(() => {
         attempts++;
         if (tryAttach()) { done(true); return; }
+        if (captureUnsupported) { done(false); return; }
         if (attempts > 30) done(false);
       }, 1000);
 
-      this.playingHandler = () => { if (tryAttach()) done(true); };
+      this.playingHandler = () => {
+        if (tryAttach()) done(true);
+        else if (captureUnsupported) done(false);
+      };
       video.addEventListener('playing', this.playingHandler);
     });
     return this.initPromise;

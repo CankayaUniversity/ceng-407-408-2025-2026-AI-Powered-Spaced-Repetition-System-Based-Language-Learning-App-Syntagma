@@ -14,12 +14,6 @@ import {
 import { mountHeaderBar, updateHeaderBar, unmountHeaderBar } from './header-bar';
 import { mountWordPopup, dismissWordPopup } from './popup/WordPopup';
 import { initVideoMode, destroyVideoMode } from './video';
-import { injectNetflixInterceptor } from './video/subtitle-capture';
-
-// Inject interceptor immediately at document_start to catch initial network requests!
-if (window.location.hostname.includes('netflix.com')) {
-  injectNetflixInterceptor();
-}
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
