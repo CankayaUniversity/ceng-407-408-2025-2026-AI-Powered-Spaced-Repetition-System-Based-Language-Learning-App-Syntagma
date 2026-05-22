@@ -29,11 +29,14 @@ const CONTRACTIONS: Record<string, string[]> = {
   "they'd": ['they', 'would'], "we'd": ['we', 'would'], "you'd": ['you', 'would'],
 };
 
+// Normalize all apostrophe-like Unicode chars to ASCII apostrophe
+const APOSTROPHE_RE = /[''‚‛′ʹʼʻ`]/g;
+
 function resolveContractionStatus(
   surface: string,
   lexemes: Record<string, { status: WordStatus }>,
 ): WordStatus | null {
-  const normalized = surface.toLowerCase().replace(/['']/g, "'");
+  const normalized = surface.toLowerCase().replace(APOSTROPHE_RE, "'");
   const parts = CONTRACTIONS[normalized];
   if (!parts) return null;
   const statuses = parts.map(l => lexemes[l]?.status ?? 'unknown');
@@ -43,7 +46,8 @@ function resolveContractionStatus(
 }
 
 // Only process tokens that look like English words (latin alphabet)
-const ENGLISH_WORD_RE = /^[a-zA-Z]{2,}(?:[''][a-zA-Z]+)?$/;
+// Allow single-letter prefix for contractions like I'm, I've, I'll, I'd
+const ENGLISH_WORD_RE = /^[a-zA-Z]+(?:[''][a-zA-Z]+)?$/;
 
 export interface ParseResult {
   tokens: Token[];
@@ -81,15 +85,17 @@ function getSentenceContext(textNode: Text): string {
 }
 
 export function tokenizeText(text: string): Array<{ surface: string; startOffset: number; endOffset: number }> {
+  const normalized = text.replace(APOSTROPHE_RE, "'");
   const tokens: Array<{ surface: string; startOffset: number; endOffset: number }> = [];
-  // Match word tokens (including apostrophes for contractions like "don't")
-  const wordRe = /[a-zA-Z]{2,}(?:[''][a-zA-Z]+)?/g;
+  // Match word tokens including contractions (I'm, don't, you've, etc.)
+  const wordRe = /[a-zA-Z]+(?:'[a-zA-Z]+)?/g;
   let match: RegExpExecArray | null;
-  while ((match = wordRe.exec(text)) !== null) {
+  while ((match = wordRe.exec(normalized)) !== null) {
     const surface = match[0];
-    if (surface.length >= MIN_WORD_LENGTH && ENGLISH_WORD_RE.test(surface)) {
+    const isContraction = surface.includes("'") && CONTRACTIONS[surface.toLowerCase()] !== undefined;
+    if ((surface.length >= MIN_WORD_LENGTH || isContraction) && ENGLISH_WORD_RE.test(surface)) {
       tokens.push({
-        surface,
+        surface: text.slice(match.index, match.index + surface.length),
         startOffset: match.index,
         endOffset: match.index + surface.length,
       });

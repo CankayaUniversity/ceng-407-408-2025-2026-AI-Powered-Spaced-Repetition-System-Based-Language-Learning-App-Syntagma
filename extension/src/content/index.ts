@@ -86,7 +86,7 @@ function refreshHeader(overrides: Partial<Parameters<typeof mountHeaderBar>[0]> 
     shiftMode,
     onParse: handleParse,
     onToggleColors: handleToggleColors,
-    onToggleTranslations: handleToggleTranslations,
+
     onOpenSettings: handleOpenSettings,
     onQuickAddCard: handleQuickAddCard,
     onOpenAdvancedCreator: handleOpenAdvancedCreator,
@@ -127,7 +127,7 @@ async function init() {
       shiftMode: false,
       onParse: handleParse,
       onToggleColors: handleToggleColors,
-      onToggleTranslations: handleToggleTranslations,
+  
       onOpenSettings: handleOpenSettings,
       onQuickAddCard: handleQuickAddCard,
       onOpenAdvancedCreator: handleOpenAdvancedCreator,

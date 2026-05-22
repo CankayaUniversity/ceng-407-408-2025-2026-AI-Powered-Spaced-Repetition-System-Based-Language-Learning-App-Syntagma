@@ -6,10 +6,15 @@ import { sendMessage } from '../shared/messages';
 import { parseSubtitleFile } from '../content/video/subtitle-parser';
 import { buildSentences } from '../content/video/sentence-grouping';
 import type { SentenceGroup } from '../content/video/sentence-grouping';
-import { lookupFrequency } from '../shared/frequency';
+import { lookupFrequency, getFrequencyBand } from '../shared/frequency';
 import { initFrequencyTable } from '../shared/frequency';
-import { tokenize } from '../content/video/tokenizer';
+import { tokenize, CONTRACTION_EXPANSIONS } from '../content/video/tokenizer';
 import { useT, LocaleToggle, type UILocale } from '../shared/i18n';
+import type { AiResultData } from '../shared/backend-ai';
+import { PopupButtons } from '../content/popup/PopupButtons';
+import { StatusRow } from '../content/popup/StatusRow';
+import { MiniDonut, StatsPopup } from '../content/components/StatsUI';
+import type { PageAnalysis } from '../content/hooks/usePageAnalysis';
 
 // ─── Theme (warm, matches extension) ─────────────────────────────────────────
 
@@ -356,7 +361,8 @@ const CueRow = memo(function CueRow({ sentence, isActive, selected, lexemes, sho
                worst === 'learning' ? 'rgba(233,196,106,0.55)' :
                'transparent')
             : 'transparent';
-          const clickLemma = lookups[0];
+          const normForm = tok.text.toLowerCase().replace(/[''‚‛′ʹʼʻ`]/g, "'");
+          const clickLemma = CONTRACTION_EXPANSIONS[normForm] ? normForm : lookups[0];
           return (
             <span
               key={ti}
@@ -393,6 +399,126 @@ interface WordPopupState {
 
 
 
+type AIActionType = 'explain-word' | 'explain-sentence' | 'translate';
+
+function FreqBadge({ rank }: { rank?: number }) {
+  if (!rank) return null;
+  const band = getFrequencyBand(rank);
+  const colors: Record<string, string> = {
+    'very-common': C.green,
+    'common': C.blue,
+    'medium': C.amber,
+    'rare': C.subtext,
+  };
+  return (
+    <span style={{
+      background: C.surface1,
+      color: colors[band] ?? C.subtext,
+      borderRadius: '3px',
+      padding: '1px 5px',
+      fontSize: '10px',
+      fontWeight: 600,
+    }}>
+      #{rank}
+    </span>
+  );
+}
+
+function Field({ label, value }: { label: string; value?: string | null }) {
+  if (!value) return null;
+  return (
+    <div style={{ marginBottom: '6px' }}>
+      <div style={{ fontSize: '10px', fontWeight: 700, color: C.subtext, textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: '2px' }}>
+        {label}
+      </div>
+      <div style={{ color: C.text }}>{value}</div>
+    </div>
+  );
+}
+
+function AIPanel({ result, loading, error }: { result: AiResultData | null; loading: boolean; error?: string | null }) {
+  if (!result && !loading && !error) return null;
+
+  const wrap: React.CSSProperties = {
+    background: C.surface0,
+    borderRadius: '6px',
+    padding: '10px 12px',
+    marginBottom: '8px',
+    fontSize: '12px',
+    color: C.text,
+    lineHeight: 1.55,
+    maxHeight: '260px',
+    overflowY: 'auto',
+  };
+
+  if (error) {
+    return <div style={wrap}><span style={{ color: C.red }}>{error}</span></div>;
+  }
+
+  if (loading && !result) {
+    return <div style={wrap}><span style={{ color: C.subtext }}>Thinking…</span></div>;
+  }
+
+  if (!result) return null;
+
+  if (result.kind === 'explain-word') {
+    const d = result.data;
+    return (
+      <div style={wrap}>
+        <Field label="Meaning" value={d.meaning} />
+        <Field label="Part of Speech" value={d.partOfSpeech} />
+        <Field label="Usage Note" value={d.usageNote} />
+        <Field label="Common Mistake" value={d.commonMistake} />
+        {d.examples?.length > 0 && (
+          <div>
+            <div style={{ fontSize: '10px', fontWeight: 700, color: C.subtext, textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: '2px' }}>
+              Examples
+            </div>
+            <ul style={{ margin: 0, paddingLeft: '18px' }}>
+              {d.examples.map((ex: string, i: number) => <li key={i} style={{ marginBottom: '2px' }}>{ex}</li>)}
+            </ul>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (result.kind === 'translate') {
+    const d = result.data;
+    return (
+      <div style={wrap}>
+        <Field label="Çeviri" value={d.naturalTranslation} />
+      </div>
+    );
+  }
+
+  // explain-sentence
+  const d = result.data;
+  return (
+    <div style={wrap}>
+      {d.parts?.length > 0 && (
+        <div style={{ marginBottom: '6px' }}>
+          <div style={{ fontSize: '10px', fontWeight: 700, color: C.subtext, textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: '2px' }}>
+            Parts
+          </div>
+          <ul style={{ margin: 0, paddingLeft: '18px' }}>
+            {d.parts.map((p: { chunk: string; function: string }, i: number) => (
+              <li key={i} style={{ marginBottom: '2px' }}>
+                <span style={{ fontWeight: 600 }}>{p.chunk}</span>
+                <span style={{ color: C.subtext }}> — {p.function}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <Field label="Turkish Meaning" value={d.turkishMeaning} />
+      <Field label="Grammar" value={d.grammarStructure} />
+      <Field label="Why This Structure" value={d.whyThisStructure} />
+      <Field label="Learner Tip" value={d.learnerTip} />
+    </div>
+  );
+}
+
 function VideoWordPopup({
   popup, lexemes, settings, videoName, videoRef, audioRef, audioSrc,
   captureAudio,
@@ -410,16 +536,21 @@ function VideoWordPopup({
   onStatusChange: (lemma: string, status: WordStatus) => void;
 }) {
   const { word, surface, sentence, anchorRect } = popup;
+  const contractionExpansion = CONTRACTION_EXPANSIONS[word.toLowerCase().replace(/[''‚‛′ʹʼʻ`]/g, "'")];
   const lexeme = lexemes[word] ?? null;
   const [currentStatus, setCurrentStatus] = useState<WordStatus>(lexeme?.status ?? 'unknown');
   const [translations, setTranslations] = useState<string[]>([]);
   const [cardSaved, setCardSaved] = useState<'idle' | 'saving' | 'done' | 'error'>('idle');
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [aiResult, setAiResult] = useState<AiResultData | null>(null);
+  const [aiLoading, setAiLoading] = useState<AIActionType | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
   const popupRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
   const wasPlayingRef = useRef(false);
+  const requestIdRef = useRef<string | null>(null);
   const freqEntry = lookupFrequency(word);
 
   // Pause video on mount, resume on unmount (close)
@@ -523,12 +654,26 @@ function VideoWordPopup({
     return () => document.removeEventListener('keydown', handler);
   }, [onClose]);
 
-  const STATUS_CONFIG: Array<{ status: WordStatus; color: string; label: string }> = [
-    { status: 'unknown', color: C.red, label: 'Unknown' },
-    { status: 'learning', color: C.amber, label: 'Learning' },
-    { status: 'known', color: C.green, label: 'Known' },
-    { status: 'ignored', color: C.subtext, label: 'Ignore' },
-  ];
+  // Listen for AI result messages
+  useEffect(() => {
+    const handler = (msg: { type: string; payload: { requestId: string; result?: AiResultData; error?: string } }) => {
+      if (!requestIdRef.current) return;
+      if (msg.payload?.requestId !== requestIdRef.current) return;
+
+      if (msg.type === 'AI_RESULT' && msg.payload.result) {
+        setAiResult(msg.payload.result);
+        setAiLoading(null);
+        requestIdRef.current = null;
+      } else if (msg.type === 'AI_STREAM_ERROR') {
+        setAiError(msg.payload.error ?? 'AI error');
+        setAiLoading(null);
+        requestIdRef.current = null;
+      }
+    };
+
+    chrome.runtime.onMessage.addListener(handler);
+    return () => chrome.runtime.onMessage.removeListener(handler);
+  }, []);
 
   const handleStatusChange = useCallback((status: WordStatus) => {
     setCurrentStatus(status);
@@ -536,11 +681,39 @@ function VideoWordPopup({
     sendMessage({ type: 'SET_WORD_STATUS', payload: { lemma: word, status } }).catch(console.error);
   }, [word, onStatusChange]);
 
-  const handleCycleStatus = useCallback(() => {
-    const idx = STATUS_CONFIG.findIndex(c => c.status === currentStatus);
-    const next = STATUS_CONFIG[(idx + 1) % STATUS_CONFIG.length];
-    handleStatusChange(next.status);
-  }, [currentStatus, handleStatusChange]);
+  const handleAIAction = useCallback((type: AIActionType) => {
+    const reqId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    requestIdRef.current = reqId;
+    setAiResult(null);
+    setAiError(null);
+    setAiLoading(type);
+
+    if (type === 'explain-word') {
+      sendMessage({
+        type: 'EXPLAIN_WORD_WITH_AI',
+        payload: { word, sentence, level: settings.learnerLevel, requestId: reqId },
+      }).catch(err => {
+        setAiError((err as Error).message);
+        setAiLoading(null);
+      });
+    } else if (type === 'explain-sentence') {
+      sendMessage({
+        type: 'EXPLAIN_SENTENCE_WITH_AI',
+        payload: { sentence, level: settings.learnerLevel, requestId: reqId },
+      }).catch(err => {
+        setAiError((err as Error).message);
+        setAiLoading(null);
+      });
+    } else if (type === 'translate') {
+      sendMessage({
+        type: 'TRANSLATE_SENTENCE_WITH_AI',
+        payload: { sentence, requestId: reqId },
+      }).catch(err => {
+        setAiError((err as Error).message);
+        setAiLoading(null);
+      });
+    }
+  }, [word, sentence, settings.learnerLevel]);
 
   const handleSaveCard = useCallback(async () => {
     if (cardSaved !== 'idle') return;
@@ -616,23 +789,12 @@ function VideoWordPopup({
     }).catch(() => {});
   }, [word, sentence, popup.startMs, popup.endMs, videoName, lexeme, translations, videoRef, captureAudio]);
 
-  const currentCfg = STATUS_CONFIG.find(c => c.status === currentStatus) ?? STATUS_CONFIG[0];
-
-  const btnStyle = (active?: boolean, color?: string): React.CSSProperties => ({
-    width: '32px', height: '32px', borderRadius: '16px',
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    background: active ? (color ?? C.blue) : 'transparent',
-    color: active ? C.base : (color ?? C.blue),
-    border: `1.5px solid ${color ?? C.blue}`,
-    cursor: 'pointer', padding: 0, transition: 'all 0.15s', flexShrink: 0,
-  });
-
   return (
     <div ref={popupRef} style={{
       position: 'fixed', zIndex: 2147483645, width: '340px',
       background: C.overlay, backdropFilter: 'blur(12px)',
       border: `1px solid ${C.surface1}`, borderRadius: '8px',
-      padding: '12px', boxShadow: '0 8px 32px rgba(0,0,0,0.15)',
+      padding: '12px', boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
       fontFamily: 'system-ui, -apple-system, sans-serif', fontSize: '13px', color: C.text,
       ...(position ? { top: position.top, left: position.left } : { top: -9999, left: -9999, visibility: 'hidden' as const }),
       ...(isDragging ? { userSelect: 'none' as const, cursor: 'grabbing' } : {}),
@@ -657,51 +819,54 @@ function VideoWordPopup({
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
             <span style={{ fontSize: '18px', fontWeight: 700, color: C.text }}>{surface}</span>
-            {surface.toLowerCase() !== word && (
+            {contractionExpansion ? (
+              <span style={{ fontSize: '12px', color: C.blue, fontWeight: 600 }}>= {contractionExpansion}</span>
+            ) : surface.toLowerCase() !== word ? (
               <span style={{ fontSize: '12px', color: C.subtext }}>({word})</span>
-            )}
-            {freqEntry && (
-              <span style={{ background: C.surface1, color: C.subtext, borderRadius: '3px', padding: '1px 5px', fontSize: '10px', fontWeight: 600 }}>
-                #{freqEntry.rank}
-              </span>
-            )}
+            ) : null}
+            {!contractionExpansion && <FreqBadge rank={freqEntry?.rank} />}
           </div>
           {lexeme?.trMeaning && (
             <div style={{ fontSize: '12px', color: C.blue, fontStyle: 'italic' }}>{lexeme.trMeaning}</div>
           )}
         </div>
-        <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+        <div style={{ display: 'flex', gap: '6px' }}>
           <button
             onClick={handleSaveCard}
-            title={!settings.authToken ? 'Log in to save cards' : cardSaved === 'done' ? 'Card saved!' : 'Quick add to flashcards'}
-            disabled={!settings.authToken || cardSaved !== 'idle'}
+            title={!settings.authToken ? 'Log in to save cards' : cardSaved === 'done' ? 'Card saved!' : cardSaved === 'error' ? 'Save failed' : 'Quick add to flashcards'}
+            disabled={!settings.authToken || cardSaved === 'saving'}
             style={{
-              height: '28px', borderRadius: '14px',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px',
-              background: cardSaved === 'done' ? C.green : cardSaved === 'error' ? C.red : cardSaved === 'saving' ? C.amber : C.green,
-              color: C.base, border: 'none',
+              width: '32px',
+              height: '32px',
+              borderRadius: '16px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: cardSaved === 'done' ? C.green : cardSaved === 'error' ? C.red : C.green,
+              color: C.base,
+              border: 'none',
               cursor: cardSaved === 'idle' ? 'pointer' : 'default',
-              padding: '0 10px', transition: 'background 0.2s', flexShrink: 0,
-              fontSize: '11px', fontWeight: 700,
+              padding: 0,
+              transition: 'background 0.2s',
+              flexShrink: 0,
             }}
           >
             {cardSaved === 'done' ? (
-              <>
-                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
-                Saved!
-              </>
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
             ) : cardSaved === 'error' ? (
-              <>
-                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-                Error
-              </>
-            ) : cardSaved === 'saving' ? (
-              <>Saving...</>
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
             ) : (
-              <>
-                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="12" y1="18" x2="12" y2="12" /><line x1="9" y1="15" x2="15" y2="15" /></svg>
-                Save
-              </>
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+                <line x1="12" y1="18" x2="12" y2="12"></line>
+                <line x1="9" y1="15" x2="15" y2="15"></line>
+              </svg>
             )}
           </button>
           <button
@@ -709,11 +874,19 @@ function VideoWordPopup({
             title={!settings.authToken ? 'Log in to edit cards' : 'Open in card creator'}
             disabled={!settings.authToken}
             style={{
-              width: '32px', height: '32px', borderRadius: '16px',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              background: C.blue, color: C.base, border: 'none',
+              width: '32px',
+              height: '32px',
+              borderRadius: '16px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: C.blue,
+              color: C.base,
+              border: 'none',
               cursor: settings.authToken ? 'pointer' : 'default',
-              padding: 0, transition: 'background 0.2s', flexShrink: 0,
+              padding: 0,
+              transition: 'background 0.2s',
+              flexShrink: 0,
             }}
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -730,11 +903,11 @@ function VideoWordPopup({
           display: 'flex', alignItems: 'center', gap: '6px',
           background: cardSaved === 'done' ? C.green + '22' : C.red + '22',
           border: `1px solid ${cardSaved === 'done' ? C.green : C.red}`,
-          borderRadius: '5px', padding: '5px 9px', marginBottom: '8px',
-          fontSize: '12px', fontWeight: 600,
+          borderRadius: '5px', padding: '5px 9px',
+          marginBottom: '8px', fontSize: '12px', fontWeight: 600,
           color: cardSaved === 'done' ? C.green : C.red,
         }}>
-          {cardSaved === 'done' ? 'Card saved to your flashcards!' : 'Failed to save card. Try again.'}
+          {cardSaved === 'done' ? '✓ Card saved to your flashcards!' : '✕ Failed to save card. Try again.'}
         </div>
       )}
 
@@ -743,22 +916,21 @@ function VideoWordPopup({
         <div style={{
           background: C.surface0, borderRadius: '4px', padding: '6px 8px',
           marginBottom: '8px', fontSize: '12px', color: C.subtext,
-          lineHeight: 1.5, fontStyle: 'italic', maxHeight: '80px', overflowY: 'auto',
+          lineHeight: 1.5, fontStyle: 'italic', maxHeight: '120px', overflowY: 'auto',
         }}>
           {sentence}
         </div>
       )}
 
-      {/* Pronounce button */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
-        <button onClick={() => {
-          const u = new SpeechSynthesisUtterance(surface);
-          u.lang = 'en-US'; u.rate = 0.85;
-          window.speechSynthesis.speak(u);
-        }} style={btnStyle(false, C.green)} title="Pronounce word">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3" /></svg>
-        </button>
-      </div>
+      {/* Action buttons (pronounce, AI explain word, AI explain sentence, translate, external links) */}
+      <PopupButtons
+        word={word}
+        sentence={sentence}
+        level={settings.learnerLevel}
+        audioUrl={lexeme?.audioUrl}
+        onAIAction={handleAIAction}
+        aiLoading={aiLoading}
+      />
 
       {/* Dictionary translations */}
       {translations.length > 0 && (
@@ -767,16 +939,15 @@ function VideoWordPopup({
         </ul>
       )}
 
+      {/* AI output panel */}
+      <AIPanel result={aiResult} loading={aiLoading !== null} error={aiError} />
+
       {/* Status row */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', borderTop: `1px solid ${C.surface1}`, paddingTop: '10px' }}>
-        <button onClick={handleCycleStatus} title="Click to cycle status" style={{
-          background: currentCfg.color, color: C.base, border: 'none', borderRadius: '16px',
-          padding: '6px 12px', cursor: 'pointer', fontSize: '12px', fontWeight: 800,
-          transition: 'all 0.15s', display: 'flex', alignItems: 'center', gap: '6px',
-          textTransform: 'uppercase', letterSpacing: '0.5px',
-        }}>
-          {currentCfg.label}
-        </button>
+        <StatusRow
+          currentStatus={currentStatus}
+          onStatusChange={handleStatusChange}
+        />
       </div>
     </div>
   );
@@ -806,6 +977,8 @@ export function VideoPlayerApp() {
   const [subPosition, setSubPosition] = useState<'bottom' | 'top'>('bottom');
   const [showSettingsDrawer, setShowSettingsDrawer] = useState(false);
   const [isSubRevealed, setIsSubRevealed] = useState(false);
+  const [showStats, setShowStats] = useState(false);
+  const statsRef = useRef<HTMLButtonElement>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -822,6 +995,46 @@ export function VideoPlayerApp() {
     () => rolling ? buildSentencesFromRolling(cues) : buildSentences(cues),
     [cues, rolling],
   );
+
+  // Analyse subtitle tokens for the stats donut
+  const subtitleAnalysis: PageAnalysis = useMemo(() => {
+    if (sentences.length === 0) {
+      return { comprehensionScore: 0, iPlusOneSentences: 0, unknownWords: [], counts: { total: 0, known: 0, learning: 0, unknown: 0 } };
+    }
+    let known = 0, learning = 0, unknown = 0;
+    let iPlusOne = 0;
+    const unknownMap = new Map<string, { lemma: string; surface: string; occurrences: number; frequencyRank?: number }>();
+
+    for (const s of sentences) {
+      const tokens = tokenize(s.text);
+      const sentenceUnknowns = new Set<string>();
+      for (const tok of tokens) {
+        if (!tok.isWord) continue;
+        const lookups = tok.lemmas ?? [tok.text.toLowerCase()];
+        const statuses = lookups.map(l => lexemes[l]?.status);
+        if (statuses.includes('ignored')) continue;
+        if (statuses.includes('known')) { known++; }
+        else if (statuses.includes('learning')) { learning++; }
+        else {
+          unknown++;
+          const lemma = lookups[0];
+          sentenceUnknowns.add(lemma);
+          const entry = unknownMap.get(lemma);
+          if (entry) { entry.occurrences++; }
+          else {
+            const freq = lookupFrequency(lemma);
+            unknownMap.set(lemma, { lemma, surface: tok.text, occurrences: 1, frequencyRank: freq?.rank });
+          }
+        }
+      }
+      if (sentenceUnknowns.size === 1) iPlusOne++;
+    }
+
+    const total = known + learning + unknown;
+    const score = total > 0 ? Math.round(((known + 0.5 * learning) / total) * 100) : 0;
+    const unknownWords = [...unknownMap.values()].sort((a, b) => b.occurrences - a.occurrences);
+    return { comprehensionScore: score, iPlusOneSentences: iPlusOne, unknownWords, counts: { total, known, learning, unknown } };
+  }, [sentences, lexemes]);
 
   const toggleSelect = useCallback((key: string) => {
     setSelectedKeys(prev => {
@@ -1192,11 +1405,46 @@ export function VideoPlayerApp() {
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           padding: '8px 16px', background: C.surface0,
           borderBottom: `1px solid ${C.surface1}`, flexShrink: 0,
+          position: 'relative',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '1px' }}>
             <span style={{ color: C.blue, fontWeight: 800, fontSize: '16px' }}>Syn</span>
             <span style={{ color: C.amber, fontWeight: 800, fontSize: '16px' }}>tagma</span>
             <span style={{ color: C.subtext, fontSize: '13px', marginLeft: '6px' }}>{_('video.videoPlayer')}</span>
+
+            {/* Stats trigger — mini donut + % score (always visible once subtitles loaded) */}
+            <button
+              ref={statsRef}
+              onClick={() => { if (sentences.length > 0) setShowStats(v => !v); }}
+              title="Page Analysis"
+              style={{
+                background: showStats ? C.surface1 : 'transparent',
+                border: `1px solid ${showStats ? C.surface1 : 'transparent'}`,
+                borderRadius: '8px',
+                display: 'flex', alignItems: 'center', gap: '6px',
+                padding: '4px 8px', marginLeft: '10px',
+                cursor: sentences.length > 0 ? 'pointer' : 'default',
+                transition: 'all 0.15s', flexShrink: 0,
+              }}
+            >
+              <MiniDonut
+                known={subtitleAnalysis.counts.known}
+                learning={subtitleAnalysis.counts.learning}
+                unknown={subtitleAnalysis.counts.unknown}
+                total={subtitleAnalysis.counts.total}
+              />
+              {subtitleAnalysis.comprehensionScore > 0 ? (
+                <span style={{
+                  fontWeight: 700, fontSize: '13px',
+                  color: subtitleAnalysis.comprehensionScore >= 90 ? C.green
+                    : subtitleAnalysis.comprehensionScore >= 70 ? C.amber : C.red,
+                }}>
+                  {subtitleAnalysis.comprehensionScore}%
+                </span>
+              ) : (
+                <span style={{ fontSize: '12px', color: C.subtext }}>—</span>
+              )}
+            </button>
           </div>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <LocaleToggle settings={settings} onToggle={handleLocaleToggle} />
@@ -1220,6 +1468,17 @@ export function VideoPlayerApp() {
             >{_('video.loadSubtitles')}</button>
           </div>
         </div>
+
+        {/* Stats popup (fixed overlay, triggered from top bar donut) */}
+        {showStats && subtitleAnalysis.counts.total > 0 && (
+          <StatsPopup
+            analysis={subtitleAnalysis}
+            anchorLeft={statsRef.current ? statsRef.current.getBoundingClientRect().left : 80}
+            onClose={() => setShowStats(false)}
+            isFixed={true}
+            title="Page Analysis"
+          />
+        )}
 
         {/* Video area */}
         <div data-video-area="" style={{
@@ -1311,7 +1570,8 @@ export function VideoPlayerApp() {
                   const underline = settings.showLearningStatusColors
                     ? (worst === 'unknown' ? C.red : worst === 'learning' ? C.amber : 'transparent')
                     : 'transparent';
-                  const clickLemma = lookups[0];
+                  const normForm = tok.text.toLowerCase().replace(/[''‚‛′ʹʼʻ`]/g, "'");
+          const clickLemma = CONTRACTION_EXPANSIONS[normForm] ? normForm : lookups[0];
                   return (
                     <span key={i}
                       onClick={e => handleOverlayWordClick(clickLemma, tok.text, activeOverlayTextProcessed, (e.currentTarget as HTMLElement).getBoundingClientRect())}
@@ -1448,7 +1708,8 @@ export function VideoPlayerApp() {
               </button>
             )}
           </div>
-        </div>
+
+          </div>
 
         {/* Hint row */}
         {cues.length > 0 && (

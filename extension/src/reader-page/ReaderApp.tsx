@@ -6,6 +6,7 @@ import { DEFAULT_SETTINGS, userScopedKey, getAuthHeaders } from '../shared/stora
 import { sendMessage } from '../shared/messages';
 import { lookupFrequency, initFrequencyTable } from '../shared/frequency';
 import { lemmatize } from '../shared/lemmatizer';
+import { CONTRACTION_EXPANSIONS } from '../content/video/tokenizer';
 import { usePageAnalysis } from '../content/hooks/usePageAnalysis';
 import { MiniDonut, StatsPopup, StatsUIColors } from '../content/components/StatsUI';
 import { collectWholeBookAnalysisFromBuffer } from './reader-analysis';
@@ -253,6 +254,39 @@ async function updateEbookProgress(ebookId: string, lastPage: number): Promise<v
   }
 }
 
+// ─── Contraction handling ──────────────────────────────────────────────────
+
+const APOSTROPHE_RE = /[''‚‛′ʹʼʻ`]/g;
+
+const CONTRACTIONS: Record<string, string[]> = {
+  "i'm": ['i', 'be'], "i'll": ['i', 'will'], "i've": ['i', 'have'], "i'd": ['i', 'would'],
+  "it's": ['it', 'be'], "that's": ['that', 'be'], "what's": ['what', 'be'],
+  "there's": ['there', 'be'], "here's": ['here', 'be'], "who's": ['who', 'be'],
+  "he's": ['he', 'be'], "she's": ['she', 'be'], "let's": ['let', 'us'],
+  "won't": ['will', 'not'], "can't": ['can', 'not'], "don't": ['do', 'not'],
+  "doesn't": ['do', 'not'], "didn't": ['do', 'not'], "isn't": ['be', 'not'],
+  "aren't": ['be', 'not'], "wasn't": ['be', 'not'], "weren't": ['be', 'not'],
+  "hasn't": ['have', 'not'], "haven't": ['have', 'not'], "hadn't": ['have', 'not'],
+  "wouldn't": ['would', 'not'], "couldn't": ['could', 'not'], "shouldn't": ['should', 'not'],
+  "they're": ['they', 'be'], "we're": ['we', 'be'], "you're": ['you', 'be'],
+  "they've": ['they', 'have'], "we've": ['we', 'have'], "you've": ['you', 'have'],
+  "they'll": ['they', 'will'], "we'll": ['we', 'will'], "you'll": ['you', 'will'],
+  "they'd": ['they', 'would'], "we'd": ['we', 'would'], "you'd": ['you', 'would'],
+};
+
+function resolveContractionStatus(
+  surface: string,
+  lexemes: Record<string, { status: WordStatus }>,
+): WordStatus | null {
+  const normalized = surface.toLowerCase().replace(APOSTROPHE_RE, "'");
+  const parts = CONTRACTIONS[normalized];
+  if (!parts) return null;
+  const statuses = parts.map(l => lexemes[l]?.status ?? 'unknown');
+  if (statuses.includes('unknown')) return 'unknown';
+  if (statuses.includes('learning')) return 'learning';
+  return 'known';
+}
+
 // ─── Word interaction helpers ───────────────────────────────────────────────
 
 function getStatusColor(status: WordStatus): string | undefined {
@@ -278,30 +312,36 @@ function wrapWordsInElement(container: Document, lexemes: Record<string, LexemeE
   }
 
   for (const textNode of textNodes) {
-    const text = textNode.textContent ?? '';
-    // Regex matches words (letters, apostrophes, hyphens) and everything else as segments
-    const segments = text.split(/([a-zA-Z]{2,}(?:[''][a-zA-Z]+)?)/);
+    const rawText = textNode.textContent ?? '';
+    const text = rawText.replace(APOSTROPHE_RE, "'");
+    const segments = text.split(/([a-zA-Z]+(?:'[a-zA-Z]+)?)/);
     if (segments.length <= 1) continue;
 
     const frag = container.createDocumentFragment();
-    for (const segment of segments) {
-      // Check if segment is a word (matches our regex)
-      if (/^[a-zA-Z]{2,}(?:[''][a-zA-Z]+)?$/.test(segment)) {
+    for (let si = 0; si < segments.length; si++) {
+      const segment = segments[si];
+      const normalized = segment.toLowerCase();
+      const isContraction = CONTRACTIONS[normalized] !== undefined;
+      if ((segment.length >= 2 || isContraction) && /^[a-zA-Z]+(?:'[a-zA-Z]+)?$/.test(segment)) {
+        const contractionStatus = resolveContractionStatus(segment, lexemes);
         const lemma = lemmatize(segment);
         const entry = lexemes[lemma];
-        const status = entry?.status ?? 'unknown';
-        
+        const status = contractionStatus ?? entry?.status ?? 'unknown';
+
         tokens.push({ surface: segment, lemma, status });
-        
+
         const span = container.createElement('span');
-        span.textContent = segment;
+        span.textContent = rawText.slice(
+          text.indexOf(segment, segments.slice(0, si).join('').length),
+          text.indexOf(segment, segments.slice(0, si).join('').length) + segment.length
+        );
         span.dataset.syntagmaWord = lemma;
         span.dataset.surface = segment;
+        if (isContraction) span.dataset.contraction = normalized;
         span.style.cursor = 'pointer';
         span.style.transition = 'background-color 0.1s, border-color 0.1s';
-        
+
         if (settings.readerShowLearningStatusColors) {
-          const status = entry?.status ?? 'unknown';
           span.style.borderBottom = getUnderlineStyle(status);
         } else {
           span.style.borderBottom = '2px solid transparent';
@@ -717,9 +757,13 @@ function ReaderWordPopup({
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
             <span style={{ fontSize: '18px', fontWeight: 700, color: PC.text }}>{surface}</span>
-            {surface.toLowerCase() !== word && (
-              <span style={{ fontSize: '12px', color: PC.subtext }}>({word})</span>
-            )}
+            {(() => {
+              const normForm = surface.toLowerCase().replace(APOSTROPHE_RE, "'");
+              const expansion = CONTRACTION_EXPANSIONS[normForm] ?? CONTRACTION_EXPANSIONS[word];
+              if (expansion) return <span style={{ fontSize: '12px', color: PC.subtext }}>= {expansion}</span>;
+              if (surface.toLowerCase() !== word) return <span style={{ fontSize: '12px', color: PC.subtext }}>({word})</span>;
+              return null;
+            })()}
             {freqEntry && (
               <span style={{ background: PC.surface1, color: PC.subtext, borderRadius: '3px', padding: '1px 5px', fontSize: '10px', fontWeight: 600 }}>
                 #{freqEntry.rank}
@@ -1251,7 +1295,8 @@ function ReaderView({
           const span = target.closest('span[data-syntagma-word]') as HTMLElement;
           
           if (span) {
-            const word = span.dataset.syntagmaWord!;
+            const contraction = span.dataset.contraction;
+            const word = contraction ?? span.dataset.syntagmaWord!;
             const surface = span.dataset.surface || word;
             const sentence = extractSentence(span);
             

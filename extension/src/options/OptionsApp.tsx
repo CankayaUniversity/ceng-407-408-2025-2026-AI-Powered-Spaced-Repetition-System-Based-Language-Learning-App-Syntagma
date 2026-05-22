@@ -286,7 +286,6 @@ function GeneralTab({ settings, onUpdate }: { settings: UserSettings; onUpdate: 
       <SectionTitle>{_('opt.display')}</SectionTitle>
       <Toggle value={settings.showComprehensionHeader} onChange={v => onUpdate({ showComprehensionHeader: v })} label={_('opt.showHeader')} />
       <Toggle value={settings.showLearningStatusColors} onChange={v => onUpdate({ showLearningStatusColors: v })} label={_('opt.showStatusColors')} description={_('opt.statusColorDesc')} />
-      <Toggle value={settings.showInlineTranslations} onChange={v => onUpdate({ showInlineTranslations: v })} label={_('opt.showInlineTr')} />
 
       <Select
         label={_('opt.yourLevel')}

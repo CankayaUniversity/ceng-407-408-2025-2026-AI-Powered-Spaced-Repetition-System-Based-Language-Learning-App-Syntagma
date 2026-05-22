@@ -28,7 +28,7 @@ export interface HeaderBarState {
   shiftMode: boolean;
   onParse: () => void;
   onToggleColors: (val: boolean) => void;
-  onToggleTranslations: (val: boolean) => void;
+
   onOpenSettings: () => void;
   onQuickAddCard: (lemma: string, sentence: string) => Promise<void>;
   onOpenAdvancedCreator: (lemma?: string, sentence?: string) => void;
@@ -74,14 +74,13 @@ interface ToastMsg { text: string; ok: boolean; id: number }
 
 function TopBar({
   settings, tokens, lexemes, shiftMode,
-  onToggleColors, onToggleTranslations, onOpenSettings,
+  onToggleColors, onOpenSettings,
   onOpenAdvancedCreator,
 }: HeaderBarState) {
   const tt = useT(settings);
   const [collapsed, setCollapsed] = useState(false);
   const [locked, setLocked] = useState(false);
   const [colorsOn, setColorsOn] = useState(settings.showLearningStatusColors);
-  const [trOn, setTrOn] = useState(settings.showInlineTranslations);
   const [showStats, setShowStats] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [inVideoMode, setInVideoMode] = useState(false);
@@ -125,7 +124,7 @@ function TopBar({
 
   useEffect(() => {
     setColorsOn(settings.showLearningStatusColors);
-    setTrOn(settings.showInlineTranslations);
+
   }, [settings]);
 
   const showToast = useCallback((text: string, ok: boolean) => {
@@ -141,11 +140,7 @@ function TopBar({
     onToggleColors(v);
   }, [colorsOn, onToggleColors]);
 
-  const handleToggleTr = useCallback(() => {
-    const v = !trOn;
-    setTrOn(v);
-    onToggleTranslations(v);
-  }, [trOn, onToggleTranslations]);
+
 
   // Alt+X locks toolbar
   useEffect(() => {
@@ -267,14 +262,7 @@ function TopBar({
           </svg>
         </IconBtn>
 
-        {/* Translator / Inline TR */}
-        <IconBtn title={tt('header.toggleTranslations')} active={trOn} color={C.blue} onClick={handleToggleTr}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="m5 8 6 6" /><path d="m4 14 6-6 2-3" />
-            <path d="M2 5h12" /><path d="M7 2h1" />
-            <path d="m22 22-5-10-5 10" /><path d="M14 18h6" />
-          </svg>
-        </IconBtn>
+
 
         {/* Lock toolbar */}
         <IconBtn title={locked ? tt('header.unlockToolbar') : tt('header.lockToolbar')} active={locked} color={C.subtext} onClick={() => setLocked(l => !l)}>

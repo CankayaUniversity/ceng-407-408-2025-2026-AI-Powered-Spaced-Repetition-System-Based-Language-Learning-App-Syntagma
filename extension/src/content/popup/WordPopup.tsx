@@ -6,6 +6,7 @@ import type { AiResultData } from '../../shared/backend-ai';
 import { lookupFrequency, getFrequencyBand } from '../../shared/frequency';
 import { StatusRow } from './StatusRow';
 import { PopupButtons } from './PopupButtons';
+import { CONTRACTION_EXPANSIONS } from '../video/tokenizer';
 
 const C = {
   base: '#F5F1E9',
@@ -172,6 +173,8 @@ function WordPopupInner({
   onClose,
   onStatusChange,
 }: WordPopupProps) {
+  const contractionExpansion = CONTRACTION_EXPANSIONS[lemma.toLowerCase().replace(/[''‚‛′ʹʼʻ`]/g, "'")]
+    ?? CONTRACTION_EXPANSIONS[surface.toLowerCase().replace(/[''‚‛′ʹʼʻ`]/g, "'")];
   const [currentStatus, setCurrentStatus] = useState<WordStatus>(lexeme?.status ?? 'unknown');
   const [aiResult, setAiResult] = useState<AiResultData | null>(null);
   const [aiLoading, setAiLoading] = useState<AIActionType | null>(null);
@@ -511,10 +514,12 @@ function WordPopupInner({
           {/* Headword */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
             <span style={{ fontSize: '18px', fontWeight: 700, color: C.text }}>{surface}</span>
-            {surface.toLowerCase() !== lemma && (
+            {contractionExpansion ? (
+              <span style={{ fontSize: '12px', color: C.blue, fontWeight: 600 }}>= {contractionExpansion}</span>
+            ) : surface.toLowerCase() !== lemma ? (
               <span style={{ fontSize: '12px', color: C.subtext }}>({lemma})</span>
-            )}
-            <FreqBadge rank={freqEntry?.rank} />
+            ) : null}
+            {!contractionExpansion && <FreqBadge rank={freqEntry?.rank} />}
           </div>
           {/* Turkish meaning if available */}
           {lexeme?.trMeaning && (
