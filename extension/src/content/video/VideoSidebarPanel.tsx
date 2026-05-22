@@ -4,7 +4,7 @@ import { parseSubtitleFile } from './subtitle-parser';
 import { mountWordPopup, dismissWordPopup } from '../popup/WordPopup';
 import { buildSentences } from './sentence-grouping';
 import type { SentenceGroup } from './sentence-grouping';
-import { tokenize } from './tokenizer';
+import { tokenize, CONTRACTION_EXPANSIONS } from './tokenizer';
 
 // ─── Memoized sentence row ────────────────────────────────────────────────────
 
@@ -154,7 +154,8 @@ const CueRow = memo(function CueRow({ sentence, isActive, selected, lexemes, sho
                worst === 'learning' ? 'rgba(233, 196, 106,0.55)' :
                'transparent')
             : 'transparent';
-          const clickLemma = lookups[0];
+          const normForm = tok.text.toLowerCase().replace(/[''‚‛′ʹʼʻ`]/g, "'");
+          const clickLemma = CONTRACTION_EXPANSIONS[normForm] ? normForm : lookups[0];
           return (
             <span
               key={ti}
