@@ -57,7 +57,7 @@ class FlashcardServiceTest {
     void create_Success() {
         User user = mockUser();
         FlashcardCreateRequest request = new FlashcardCreateRequest(
-                "hello", "merhaba", "Hello world", "Merhaba dünya", KnowledgeStatus.UNKNOWN);
+                "hello", "merhaba", "Hello world", "Merhaba dünya", null, false, KnowledgeStatus.UNKNOWN);
 
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
         when(collectionItemRepository.findCollectionIdsByFlashcardId(anyLong())).thenReturn(List.of());
@@ -79,7 +79,7 @@ class FlashcardServiceTest {
     void create_UserNotFound_ThrowsException() {
         when(userRepository.findById(99L)).thenReturn(Optional.empty());
         FlashcardCreateRequest request = new FlashcardCreateRequest(
-                "hello", "merhaba", null, null, KnowledgeStatus.UNKNOWN);
+                "hello", "merhaba", null, null, null, false, KnowledgeStatus.UNKNOWN);
 
         assertThrows(EntityNotFoundException.class, () -> flashcardService.create(99L, request));
     }
@@ -113,7 +113,7 @@ class FlashcardServiceTest {
         User user = mockUser();
         Flashcard flashcard = mockFlashcard(user);
         FlashcardUpdateRequest request = new FlashcardUpdateRequest(
-                null, "günaydın", null, null, null);
+                null, "günaydın", null, null, null, false, null);
 
         when(flashcardRepository.findById(10L)).thenReturn(Optional.of(flashcard));
         when(flashcardRepository.save(any(Flashcard.class))).thenReturn(flashcard);

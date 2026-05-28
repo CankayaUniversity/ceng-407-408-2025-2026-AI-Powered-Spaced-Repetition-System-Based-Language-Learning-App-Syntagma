@@ -5,6 +5,7 @@ import com.syntagma.backend.dto.response.SrsStateResponse;
 import com.syntagma.backend.entity.Flashcard;
 import com.syntagma.backend.entity.SrsState;
 import com.syntagma.backend.entity.User;
+import com.syntagma.backend.entity.enums.KnowledgeStatus;
 import com.syntagma.backend.repository.FlashcardRepository;
 import com.syntagma.backend.repository.SrsStateRepository;
 import jakarta.persistence.EntityNotFoundException;
@@ -101,7 +102,7 @@ class SrsServiceTest {
         s2.setStability(2.0f);
         s2.setDifficulty(4.0f);
 
-        when(srsStateRepository.findDueCards(eq(1L), any(LocalDateTime.class)))
+        when(srsStateRepository.findDueCards(eq(1L), any(LocalDateTime.class), eq(KnowledgeStatus.KNOWN)))
                 .thenReturn(List.of(s1, s2));
 
         DueCardsResponse response = srsService.getDueCards(1L, 1);
@@ -112,7 +113,7 @@ class SrsServiceTest {
 
     @Test
     void getDueCards_EmptyResults() {
-        when(srsStateRepository.findDueCards(eq(1L), any(LocalDateTime.class)))
+        when(srsStateRepository.findDueCards(eq(1L), any(LocalDateTime.class), eq(KnowledgeStatus.KNOWN)))
                 .thenReturn(List.of());
 
         DueCardsResponse response = srsService.getDueCards(1L, 20);

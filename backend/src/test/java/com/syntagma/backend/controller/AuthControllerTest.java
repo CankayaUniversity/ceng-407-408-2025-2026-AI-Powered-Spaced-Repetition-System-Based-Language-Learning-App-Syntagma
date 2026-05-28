@@ -43,7 +43,7 @@ class AuthControllerTest {
     @Test
     void register_Success() throws Exception {
         UserRegisterRequest request = new UserRegisterRequest("test@example.com", "password123");
-        UserResponse mockResponse = new UserResponse(1L, "test@example.com", LocalDateTime.now(), null, 0);
+        UserResponse mockResponse = new UserResponse(1L, "test@example.com", LocalDateTime.now(), null, 0, 10);
 
         when(userService.register(any(UserRegisterRequest.class))).thenReturn(mockResponse);
 
