@@ -28,6 +28,9 @@ public class Flashcard {
     @Column(columnDefinition = "TEXT")
     private String exampleSentence;
 
+    @Column(columnDefinition = "TEXT")
+    private String usageNote;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "collection_id")
     private Collection collection;

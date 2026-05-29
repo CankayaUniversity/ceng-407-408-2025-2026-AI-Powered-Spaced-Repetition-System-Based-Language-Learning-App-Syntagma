@@ -26,8 +26,7 @@ import {
   getLastStudyCount,
   getNotificationPreference,
   getReminderHour,
-  getStudyStreak,
-  clearAuth,
+  clearSession,
   saveBadgeState,
   saveLastStudyCount,
   saveNotificationPreference,
@@ -177,6 +176,7 @@ export default function SettingsScreen({ navigation }) {
   const [timePickerVisible, setTimePickerVisible] = useState(false);
   const [dailyPickerVisible, setDailyPickerVisible] = useState(false);
   const [streakCount, setStreakCount] = useState(null);
+  const [longestStreakCount, setLongestStreakCount] = useState(null);
   const [badgeState, setBadgeState] = useState(null);
   const [achievementsOpen, setAchievementsOpen] = useState(false);
 
@@ -253,14 +253,11 @@ export default function SettingsScreen({ navigation }) {
 
       // Fetch streak + badge
       try {
-        const localStreak = await getStudyStreak();
-        if (isMounted && localStreak != null) {
-          setStreakCount(localStreak);
-        } else {
-          const stats = await fetchReviewStats('week');
-          if (isMounted && stats?.streakCount != null) {
-            setStreakCount(stats.streakCount);
-          }
+        const stats = await fetchReviewStats('month').catch(() => null);
+
+        if (isMounted) {
+          setStreakCount(stats?.streakCount ?? 0);
+          setLongestStreakCount(stats?.longestStreakCount ?? 0);
         }
       } catch (err) {
         // Streak and badge are optional, don't fail
@@ -283,7 +280,7 @@ export default function SettingsScreen({ navigation }) {
 
   const handleSignOut = async () => {
     try {
-      await clearAuth();
+      await clearSession();
       await cancelAllReminders();
       await saveNotificationPreference(false);
       setIsNotificationsOn(false);
@@ -400,9 +397,7 @@ export default function SettingsScreen({ navigation }) {
 
           <Text style={styles.headerTitle}>Syntagma</Text>
 
-          <Pressable onPress={() => {}} hitSlop={10}>
-            <Ionicons name="settings-outline" size={24} color={colors.accent} />
-          </Pressable>
+          <View style={styles.headerSpacer} />
         </View>
 
         {/* Streak banner */}
@@ -411,7 +406,11 @@ export default function SettingsScreen({ navigation }) {
             <Text style={styles.streakEmoji}>🔥</Text>
             <View>
               <Text style={styles.streakCount}>{streakCount} day streak</Text>
-              <Text style={styles.streakHint}>Keep it going!</Text>
+              <Text style={styles.streakHint}>
+                {longestStreakCount != null
+                  ? `Longest streak: ${longestStreakCount} days`
+                  : 'Keep it going!'}
+              </Text>
             </View>
           </View>
         )}
@@ -682,6 +681,10 @@ const createStyles = (colors) => StyleSheet.create({
     color: colors.accent,
     fontSize: 30,
     fontFamily: 'PlayfairDisplay_700Bold',
+  },
+  headerSpacer: {
+    width: 24,
+    height: 24,
   },
   // Streak banner
   streakBanner: {

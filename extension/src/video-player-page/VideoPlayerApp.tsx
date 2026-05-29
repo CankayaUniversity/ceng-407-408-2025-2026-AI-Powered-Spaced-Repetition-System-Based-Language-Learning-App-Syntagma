@@ -733,6 +733,7 @@ function VideoWordPopup({
         sourceUrl: `syntagma-video://${videoName}`,
         sourceTitle: videoName || 'Video',
         trMeaning: lexeme?.trMeaning ?? (translations[0] ?? ''),
+        usageNote: aiResult?.kind === 'explain-word' ? aiResult.data.usageNote : undefined,
         createdAt: Date.now(),
         deckName: settings.activeCollectionName || 'Syntagma',
         tags: ['syntagma', 'video-player'],
@@ -751,7 +752,7 @@ function VideoWordPopup({
       setCardSaved('error');
       setTimeout(() => setCardSaved('idle'), 3000);
     }
-  }, [cardSaved, word, surface, sentence, popup.startMs, popup.endMs, lexeme, translations, videoName, settings, handleStatusChange, captureAudio]);
+  }, [cardSaved, word, surface, sentence, popup.startMs, popup.endMs, lexeme, translations, aiResult, videoName, settings, handleStatusChange, captureAudio]);
 
   const handleOpenCardCreator = useCallback(async () => {
     let screenshotDataUrl: string | undefined;
@@ -783,11 +784,12 @@ function VideoWordPopup({
         sourceUrl: `syntagma-video://${videoName}`,
         sourceTitle: videoName || 'Video',
         trMeaning: lexeme?.trMeaning ?? (translations[0] ?? ''),
+        usageNote: aiResult?.kind === 'explain-word' ? aiResult.data.usageNote : undefined,
         screenshotDataUrl,
         sentenceAudioDataUrl,
       },
     }).catch(() => {});
-  }, [word, sentence, popup.startMs, popup.endMs, videoName, lexeme, translations, videoRef, captureAudio]);
+  }, [word, sentence, popup.startMs, popup.endMs, videoName, lexeme, translations, aiResult, videoRef, captureAudio]);
 
   return (
     <div ref={popupRef} style={{

@@ -643,6 +643,7 @@ function ReaderWordPopup({
         sourceUrl: `syntagma-reader://${bookId}`,
         sourceTitle: bookTitle,
         trMeaning: lexeme?.trMeaning ?? (translations[0] ?? ''),
+        usageNote: aiResult?.kind === 'explain-word' ? aiResult.data.usageNote : undefined,
         createdAt: Date.now(),
         deckName: settings.activeCollectionName || 'Syntagma',
         tags: ['syntagma', 'reader'],
@@ -660,7 +661,7 @@ function ReaderWordPopup({
       setCardSaved('error');
       setTimeout(() => setCardSaved('idle'), 3000);
     }
-  }, [cardSaved, word, surface, sentence, lexeme, translations, bookId, bookTitle, settings, handleStatusChange]);
+  }, [cardSaved, word, surface, sentence, lexeme, translations, aiResult, bookId, bookTitle, settings, handleStatusChange]);
 
   const currentCfg = STATUS_CONFIG.find(c => c.status === currentStatus) ?? STATUS_CONFIG[0];
   const popupW = 340;
@@ -808,6 +809,7 @@ function ReaderWordPopup({
                   sourceUrl: `syntagma-reader://${bookId}`,
                   sourceTitle: bookTitle,
                   trMeaning: lexeme?.trMeaning ?? (translations[0] ?? ''),
+                  usageNote: aiResult?.kind === 'explain-word' ? aiResult.data.usageNote : undefined,
                 },
               }).catch(() => {});
             }}

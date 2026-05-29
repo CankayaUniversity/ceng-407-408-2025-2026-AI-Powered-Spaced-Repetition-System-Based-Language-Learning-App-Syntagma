@@ -1280,11 +1280,11 @@ onMessage(async (msg, sender) => {
         });
         params = new URLSearchParams({ mode: 'edit', draftKey });
       } else {
-        const { panel, word, sentence, sourceUrl, sourceTitle, trMeaning, screenshotDataUrl, sentenceAudioDataUrl } = msg.payload;
+        const { panel, word, sentence, sourceUrl, sourceTitle, trMeaning, usageNote, screenshotDataUrl, sentenceAudioDataUrl } = msg.payload;
         console.log('[Syntagma] OPEN_CARD_CREATOR create — hasScreenshot:', !!screenshotDataUrl, 'hasAudio:', !!sentenceAudioDataUrl);
 
         let draftKey: string | undefined = undefined;
-        if (screenshotDataUrl || sentenceAudioDataUrl) {
+        if (screenshotDataUrl || sentenceAudioDataUrl || usageNote) {
           draftKey = `${CARD_CREATOR_DRAFT_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2)}`;
           await chrome.storage.local.set({
             [draftKey]: {
@@ -1294,6 +1294,7 @@ onMessage(async (msg, sender) => {
               sourceUrl,
               sourceTitle,
               trMeaning,
+              usageNote,
               screenshotDataUrl,
               sentenceAudioDataUrl,
             }
@@ -1308,6 +1309,7 @@ onMessage(async (msg, sender) => {
           sourceUrl,
           sourceTitle,
           ...(trMeaning ? { trMeaning } : {}),
+          ...(usageNote ? { usageNote } : {}),
           ...(draftKey ? { draftKey } : {}),
         });
       }

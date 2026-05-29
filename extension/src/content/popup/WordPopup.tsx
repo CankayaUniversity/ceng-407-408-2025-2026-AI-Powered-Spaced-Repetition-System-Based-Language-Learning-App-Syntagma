@@ -395,6 +395,7 @@ function WordPopupInner({
         sourceUrl: window.location.href,
         sourceTitle: document.title,
         trMeaning: lexeme?.trMeaning ?? (translations[0] ?? ''),
+        usageNote: aiResult?.kind === 'explain-word' ? aiResult.data.usageNote : undefined,
         screenshotDataUrl: screenshot ?? undefined,
         sentenceAudioDataUrl,
         createdAt: Date.now(),
@@ -413,7 +414,7 @@ function WordPopupInner({
       setCardSaved('error');
       setTimeout(() => setCardSaved('idle'), 2000);
     }
-  }, [cardSaved, lemma, surface, sentence, lexeme, translations, screenshot, sentenceStartMs, sentenceEndMs, handleStatusChange]);
+  }, [cardSaved, lemma, surface, sentence, lexeme, translations, aiResult, screenshot, sentenceStartMs, sentenceEndMs, handleStatusChange]);
 
   const [openingCardCreator, setOpeningCardCreator] = useState(false);
 
@@ -457,6 +458,7 @@ function WordPopupInner({
           sourceUrl: window.location.href,
           sourceTitle: document.title,
           trMeaning: lexeme?.trMeaning ?? (translations[0] ?? ''),
+          usageNote: aiResult?.kind === 'explain-word' ? aiResult.data.usageNote : undefined,
           screenshotDataUrl: screenshot ?? undefined,
           sentenceAudioDataUrl,
         },
@@ -464,7 +466,7 @@ function WordPopupInner({
     } catch { /* best effort */ } finally {
       setOpeningCardCreator(false);
     }
-  }, [openingCardCreator, lemma, sentence, lexeme, translations, screenshot, sentenceStartMs, sentenceEndMs]);
+  }, [openingCardCreator, lemma, sentence, lexeme, translations, aiResult, screenshot, sentenceStartMs, sentenceEndMs]);
 
   const popupStyle: React.CSSProperties = {
     position: 'fixed',

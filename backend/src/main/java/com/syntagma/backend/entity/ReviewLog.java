@@ -4,6 +4,7 @@ import com.syntagma.backend.entity.enums.DeviceType;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Entity
@@ -24,10 +25,14 @@ public class ReviewLog {
 
     private LocalDateTime reviewedAt;
 
+    private LocalDate reviewedOn;
+
     private Integer result;
 
     @Enumerated(EnumType.STRING)
     private DeviceType device;
 
     private LocalDateTime clientTimestamp;
+
+    private String clientTimeZone;
 }

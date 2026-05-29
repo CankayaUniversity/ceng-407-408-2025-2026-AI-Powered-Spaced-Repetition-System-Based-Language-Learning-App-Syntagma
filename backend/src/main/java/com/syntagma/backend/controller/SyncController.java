@@ -2,6 +2,7 @@ package com.syntagma.backend.controller;
 
 import com.syntagma.backend.dto.request.SyncPushRequest;
 import com.syntagma.backend.dto.response.*;
+import com.syntagma.backend.security.SecurityUtils;
 import com.syntagma.backend.service.SyncService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -20,23 +21,23 @@ public class SyncController {
 
     @PostMapping("/push")
     public ResponseEntity<ApiResponse<SyncPushResponse>> push(
-            @RequestHeader("X-User-Id") Long userId,
             @Valid @RequestBody SyncPushRequest request) {
+        Long userId = SecurityUtils.getAuthenticatedUserId();
         SyncPushResponse response = syncService.pushEvents(userId, request.events());
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 
     @GetMapping("/pull")
     public ResponseEntity<ApiResponse<SyncPullResponse>> pull(
-            @RequestHeader("X-User-Id") Long userId,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime since) {
+        Long userId = SecurityUtils.getAuthenticatedUserId();
         SyncPullResponse response = syncService.pullEvents(userId, since);
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 
     @GetMapping("/status")
-    public ResponseEntity<ApiResponse<SyncStatusResponse>> status(
-            @RequestHeader("X-User-Id") Long userId) {
+    public ResponseEntity<ApiResponse<SyncStatusResponse>> status() {
+        Long userId = SecurityUtils.getAuthenticatedUserId();
         SyncStatusResponse response = syncService.getStatus(userId);
         return ResponseEntity.ok(ApiResponse.success(response));
     }

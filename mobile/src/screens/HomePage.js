@@ -191,7 +191,7 @@ export default function HomePage({ navigation }) {
 
   const mapFlashcardsToCards = useCallback((items) => {
     return items.map((item) => {
-      const sentence = item.exampleSentence || item.sourceSentence || item.sentence || '';
+      const sentence = item.sourceSentence || item.sentence || '';
       return {
         flashcardId: item.flashcardId ?? item.id,
         word: item.lemma || item.word || 'Unknown',
@@ -200,6 +200,7 @@ export default function HomePage({ navigation }) {
         exampleSentence: item.exampleSentence || '',
         sourceSentence: item.sourceSentence || item.sentence || '',
         translation: item.translation || item.trMeaning || '',
+        usageNote: item.usageNote || '',
         sentenceTranslation: item.sentenceTranslation || '',
         sourceTitle: item.sourceTitle || '',
         sourceUrl: item.sourceUrl || '',

@@ -9,5 +9,6 @@ public record ReviewSubmitRequest(
         Boolean known,
         Integer result,
         DeviceType device,
-        OffsetDateTime clientTimestamp
+        OffsetDateTime clientTimestamp,
+        String clientTimeZone
 ) {}

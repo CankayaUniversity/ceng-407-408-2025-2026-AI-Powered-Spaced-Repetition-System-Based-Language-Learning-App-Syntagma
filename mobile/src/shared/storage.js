@@ -1,18 +1,129 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const AUTH_KEY = 'syntagma.auth';
+const USER_SCOPE_PREFIX = 'syntagma.user';
+const USER_SCOPE_INDEX_PREFIX = 'syntagma.userScopedKeys';
+
 const STUDY_PREF_KEY = 'syntagma.study.pref';
 const CARRYOVER_KEY = 'syntagma.study.carryover';
 const THEME_KEY = 'syntagma.theme';
-const STUDY_DAYS_KEY = 'syntagma.study.days';
-const MAX_STUDY_DAYS = 120;
+const NOTIFICATIONS_KEY = 'syntagma.notifications';
+const REMINDER_HOUR_KEY = 'syntagma.reminder.hour';
+const BADGE_KEY = 'syntagma.cefr.badge';
+const REVIEW_DELTA_INDEX_KEY = 'syntagma.review.delta.index';
 
-const toDateKey = (date = new Date()) => date.toISOString().slice(0, 10);
+const LEGACY_SESSION_EXACT_KEYS = [
+  STUDY_PREF_KEY,
+  CARRYOVER_KEY,
+  BADGE_KEY,
+  REVIEW_DELTA_INDEX_KEY,
+  'syntagma.study.days',
+  'syntagma.study.longestStreak',
+];
 
-const parseDateKey = (dateKey) => new Date(`${dateKey}T00:00:00Z`);
+const LEGACY_SESSION_PREFIXES = [
+  'syntagma.cache.',
+  'syntagma.queue.',
+  'syntagma.review.delta.',
+  'syntagma.reviewed.today.',
+];
 
-const normalizeStudyDays = (days) =>
-  Array.from(new Set(days.filter((entry) => typeof entry === 'string' && entry.length >= 10))).sort();
+function safeScopeId(userId) {
+  if (userId == null || userId === '') {
+    return 'guest';
+  }
+  return String(userId).replace(/[^A-Za-z0-9_-]/g, '_');
+}
+
+function scopedKey(scopeId, key) {
+  return `${USER_SCOPE_PREFIX}.${scopeId}.${key}`;
+}
+
+function scopeIndexKey(scopeId) {
+  return `${USER_SCOPE_INDEX_PREFIX}.${scopeId}`;
+}
+
+async function readJson(key, fallback = null) {
+  const stored = await AsyncStorage.getItem(key);
+  if (!stored) {
+    return fallback;
+  }
+
+  try {
+    return JSON.parse(stored);
+  } catch {
+    return fallback;
+  }
+}
+
+async function getScopeId() {
+  const auth = await getAuth();
+  return safeScopeId(auth?.userId);
+}
+
+async function rememberScopedKey(scopeId, key) {
+  const indexKey = scopeIndexKey(scopeId);
+  const storedKeys = await readJson(indexKey, []);
+  const keys = Array.isArray(storedKeys) ? storedKeys : [];
+  if (keys.includes(key)) {
+    return;
+  }
+  await AsyncStorage.setItem(indexKey, JSON.stringify([...keys, key]));
+}
+
+async function getScopedStorageKey(key) {
+  const scopeId = await getScopeId();
+  return {
+    scopeId,
+    key: scopedKey(scopeId, key),
+  };
+}
+
+async function setScopedItem(key, value) {
+  const resolved = await getScopedStorageKey(key);
+  await AsyncStorage.setItem(resolved.key, value);
+  await rememberScopedKey(resolved.scopeId, resolved.key);
+}
+
+async function getScopedItem(key) {
+  const resolved = await getScopedStorageKey(key);
+  return AsyncStorage.getItem(resolved.key);
+}
+
+async function removeScopedItem(key) {
+  const resolved = await getScopedStorageKey(key);
+  await AsyncStorage.removeItem(resolved.key);
+}
+
+async function clearScopedStorageForScope(scopeId) {
+  const indexKey = scopeIndexKey(scopeId);
+  const indexedKeys = await readJson(indexKey, []);
+  const allKeys = await AsyncStorage.getAllKeys();
+  const prefix = `${USER_SCOPE_PREFIX}.${scopeId}.`;
+  const scopedKeys = allKeys.filter((key) => key.startsWith(prefix));
+  const keysToRemove = Array.from(new Set([
+    ...(Array.isArray(indexedKeys) ? indexedKeys : []),
+    ...scopedKeys,
+    indexKey,
+  ]));
+
+  if (keysToRemove.length) {
+    await AsyncStorage.multiRemove(keysToRemove);
+  }
+}
+
+async function clearLegacySessionData() {
+  const allKeys = await AsyncStorage.getAllKeys();
+  const keysToRemove = allKeys.filter(
+    (key) =>
+      LEGACY_SESSION_EXACT_KEYS.includes(key) ||
+      LEGACY_SESSION_PREFIXES.some((prefix) => key.startsWith(prefix))
+  );
+
+  if (keysToRemove.length) {
+    await AsyncStorage.multiRemove(keysToRemove);
+  }
+}
 
 export async function saveAuth(auth) {
   if (!auth) {
@@ -20,6 +131,19 @@ export async function saveAuth(auth) {
   }
 
   await AsyncStorage.setItem(AUTH_KEY, JSON.stringify(auth));
+}
+
+export async function updateAuthToken(token) {
+  if (!token) {
+    return;
+  }
+
+  const auth = await getAuth();
+  if (!auth?.token || auth.token === token) {
+    return;
+  }
+
+  await saveAuth({ ...auth, token });
 }
 
 export async function getAuth() {
@@ -30,7 +154,7 @@ export async function getAuth() {
 
   try {
     return JSON.parse(stored);
-  } catch (err) {
+  } catch {
     return null;
   }
 }
@@ -39,16 +163,26 @@ export async function clearAuth() {
   await AsyncStorage.removeItem(AUTH_KEY);
 }
 
+export async function clearSession() {
+  const auth = await getAuth();
+  if (auth?.userId != null) {
+    await clearScopedStorageForScope(safeScopeId(auth.userId));
+  }
+  await clearScopedStorageForScope('guest');
+  await clearLegacySessionData();
+  await clearAuth();
+}
+
 export async function saveLastStudyCount(count) {
   if (!Number.isFinite(count)) {
     return;
   }
 
-  await AsyncStorage.setItem(STUDY_PREF_KEY, JSON.stringify({ count }));
+  await setScopedItem(STUDY_PREF_KEY, JSON.stringify({ count }));
 }
 
 export async function getLastStudyCount() {
-  const stored = await AsyncStorage.getItem(STUDY_PREF_KEY);
+  const stored = await getScopedItem(STUDY_PREF_KEY);
   if (!stored) {
     return null;
   }
@@ -56,7 +190,7 @@ export async function getLastStudyCount() {
   try {
     const parsed = JSON.parse(stored);
     return Number.isFinite(parsed?.count) ? parsed.count : null;
-  } catch (err) {
+  } catch {
     return null;
   }
 }
@@ -66,24 +200,24 @@ export async function saveCarryover(carryover) {
     return;
   }
 
-  await AsyncStorage.setItem(CARRYOVER_KEY, JSON.stringify(carryover));
+  await setScopedItem(CARRYOVER_KEY, JSON.stringify(carryover));
 }
 
 export async function getCarryover() {
-  const stored = await AsyncStorage.getItem(CARRYOVER_KEY);
+  const stored = await getScopedItem(CARRYOVER_KEY);
   if (!stored) {
     return null;
   }
 
   try {
     return JSON.parse(stored);
-  } catch (err) {
+  } catch {
     return null;
   }
 }
 
 export async function clearCarryover() {
-  await AsyncStorage.removeItem(CARRYOVER_KEY);
+  await removeScopedItem(CARRYOVER_KEY);
 }
 
 export async function saveThemePreference(isDark) {
@@ -99,82 +233,10 @@ export async function getThemePreference() {
   try {
     const parsed = JSON.parse(stored);
     return typeof parsed?.isDark === 'boolean' ? parsed.isDark : null;
-  } catch (err) {
+  } catch {
     return null;
   }
 }
-
-export async function getStudyDays() {
-  const stored = await AsyncStorage.getItem(STUDY_DAYS_KEY);
-  if (!stored) {
-    return [];
-  }
-
-  try {
-    const parsed = JSON.parse(stored);
-    return normalizeStudyDays(Array.isArray(parsed) ? parsed : []);
-  } catch (err) {
-    return [];
-  }
-}
-
-export async function markStudyDay(dateStr = toDateKey()) {
-  const days = await getStudyDays();
-  const next = normalizeStudyDays([...days, dateStr]);
-
-  const cutoff = new Date();
-  cutoff.setUTCDate(cutoff.getUTCDate() - MAX_STUDY_DAYS);
-
-  const pruned = next.filter((entry) => {
-    const parsed = parseDateKey(entry);
-    return !Number.isNaN(parsed.getTime()) && parsed >= cutoff;
-  });
-
-  await AsyncStorage.setItem(STUDY_DAYS_KEY, JSON.stringify(pruned));
-}
-
-export function computeStudyStreakFromDays(days, todayStr = toDateKey()) {
-  if (!Array.isArray(days) || days.length === 0) {
-    return 0;
-  }
-
-  const daySet = new Set(days);
-
-  const yesterdayDate = parseDateKey(todayStr);
-  yesterdayDate.setUTCDate(yesterdayDate.getUTCDate() - 1);
-  const yesterdayStr = toDateKey(yesterdayDate);
-
-  let startStr;
-  if (daySet.has(todayStr)) {
-    startStr = todayStr;
-  } else if (daySet.has(yesterdayStr)) {
-    startStr = yesterdayStr;
-  } else {
-    return 0;
-  }
-
-  let streak = 0;
-  const cursor = parseDateKey(startStr);
-
-  while (!Number.isNaN(cursor.getTime())) {
-    const key = toDateKey(cursor);
-    if (!daySet.has(key)) {
-      break;
-    }
-    streak += 1;
-    cursor.setUTCDate(cursor.getUTCDate() - 1);
-  }
-
-  return streak;
-}
-
-export async function getStudyStreak() {
-  const days = await getStudyDays();
-  return computeStudyStreakFromDays(days);
-}
-
-const NOTIFICATIONS_KEY = 'syntagma.notifications';
-const REMINDER_HOUR_KEY = 'syntagma.reminder.hour';
 
 export async function saveNotificationPreference(enabled) {
   await AsyncStorage.setItem(NOTIFICATIONS_KEY, JSON.stringify({ enabled: !!enabled }));
@@ -189,7 +251,7 @@ export async function getNotificationPreference() {
   try {
     const parsed = JSON.parse(stored);
     return typeof parsed?.enabled === 'boolean' ? parsed.enabled : null;
-  } catch (err) {
+  } catch {
     return null;
   }
 }
@@ -201,29 +263,27 @@ export async function saveReminderHour(hour) {
 export async function getReminderHour() {
   const stored = await AsyncStorage.getItem(REMINDER_HOUR_KEY);
   if (!stored) {
-    return 9; // default 09:00
+    return 9;
   }
 
   try {
     const parsed = JSON.parse(stored);
     return Number.isFinite(parsed?.hour) ? parsed.hour : 9;
-  } catch (err) {
+  } catch {
     return 9;
   }
 }
-
-const BADGE_KEY = 'syntagma.cefr.badge';
 
 export async function saveBadgeState({ knownWords }) {
   if (!Number.isFinite(knownWords)) {
     return;
   }
 
-  await AsyncStorage.setItem(BADGE_KEY, JSON.stringify({ knownWords }));
+  await setScopedItem(BADGE_KEY, JSON.stringify({ knownWords }));
 }
 
 export async function getBadgeState() {
-  const stored = await AsyncStorage.getItem(BADGE_KEY);
+  const stored = await getScopedItem(BADGE_KEY);
   if (!stored) {
     return null;
   }
@@ -231,17 +291,17 @@ export async function getBadgeState() {
   try {
     const parsed = JSON.parse(stored);
     return Number.isFinite(parsed?.knownWords) ? parsed : null;
-  } catch (err) {
+  } catch {
     return null;
   }
 }
 
 export async function saveCache(key, data) {
-  await AsyncStorage.setItem(key, JSON.stringify({ data, savedAt: Date.now() }));
+  await setScopedItem(key, JSON.stringify({ data, savedAt: Date.now() }));
 }
 
 export async function getCache(key, maxAgeMs = Infinity) {
-  const stored = await AsyncStorage.getItem(key);
+  const stored = await getScopedItem(key);
   if (!stored) {
     return null;
   }
@@ -257,7 +317,7 @@ export async function getCache(key, maxAgeMs = Infinity) {
 }
 
 export async function getQueue(key) {
-  const stored = await AsyncStorage.getItem(key);
+  const stored = await getScopedItem(key);
   if (!stored) {
     return [];
   }
@@ -272,7 +332,7 @@ export async function getQueue(key) {
 export async function appendToQueue(key, item) {
   const queue = await getQueue(key);
   queue.push(item);
-  await AsyncStorage.setItem(key, JSON.stringify(queue));
+  await setScopedItem(key, JSON.stringify(queue));
 }
 
 export async function shiftQueue(key) {
@@ -281,18 +341,16 @@ export async function shiftQueue(key) {
     return null;
   }
   const item = queue.shift();
-  await AsyncStorage.setItem(key, JSON.stringify(queue));
+  await setScopedItem(key, JSON.stringify(queue));
   return item;
 }
 
 export async function clearQueue(key) {
-  await AsyncStorage.removeItem(key);
+  await removeScopedItem(key);
 }
 
-const REVIEW_DELTA_INDEX_KEY = 'syntagma.review.delta.index';
-
 async function getReviewDeltaIndex() {
-  const stored = await AsyncStorage.getItem(REVIEW_DELTA_INDEX_KEY);
+  const stored = await getScopedItem(REVIEW_DELTA_INDEX_KEY);
   if (!stored) {
     return [];
   }
@@ -306,7 +364,7 @@ async function getReviewDeltaIndex() {
 }
 
 async function saveReviewDeltaIndex(dates) {
-  await AsyncStorage.setItem(REVIEW_DELTA_INDEX_KEY, JSON.stringify(dates));
+  await setScopedItem(REVIEW_DELTA_INDEX_KEY, JSON.stringify(dates));
 }
 
 export async function getReviewDeltaDates() {
@@ -314,24 +372,24 @@ export async function getReviewDeltaDates() {
 }
 
 export async function clearReviewDelta(dateStr) {
-  await AsyncStorage.removeItem(`syntagma.review.delta.${dateStr}`);
+  await removeScopedItem(`syntagma.review.delta.${dateStr}`);
   const dates = await getReviewDeltaIndex();
   const next = dates.filter((d) => d !== dateStr);
   if (next.length) {
     await saveReviewDeltaIndex(next);
   } else {
-    await AsyncStorage.removeItem(REVIEW_DELTA_INDEX_KEY);
+    await removeScopedItem(REVIEW_DELTA_INDEX_KEY);
   }
 }
 
 export async function clearAllReviewDeltas() {
   const dates = await getReviewDeltaIndex();
-  await Promise.all(dates.map((dateStr) => AsyncStorage.removeItem(`syntagma.review.delta.${dateStr}`)));
-  await AsyncStorage.removeItem(REVIEW_DELTA_INDEX_KEY);
+  await Promise.all(dates.map((dateStr) => removeScopedItem(`syntagma.review.delta.${dateStr}`)));
+  await removeScopedItem(REVIEW_DELTA_INDEX_KEY);
 }
 
 export async function getReviewDelta(dateStr) {
-  const stored = await AsyncStorage.getItem(`syntagma.review.delta.${dateStr}`);
+  const stored = await getScopedItem(`syntagma.review.delta.${dateStr}`);
   if (!stored) {
     return 0;
   }
@@ -345,7 +403,7 @@ export async function getReviewDelta(dateStr) {
 
 export async function incrementReviewDelta(dateStr) {
   const current = await getReviewDelta(dateStr);
-  await AsyncStorage.setItem(
+  await setScopedItem(
     `syntagma.review.delta.${dateStr}`,
     JSON.stringify({ count: current + 1 })
   );
@@ -357,7 +415,7 @@ export async function incrementReviewDelta(dateStr) {
 }
 
 export async function getReviewedIds(dateStr) {
-  const stored = await AsyncStorage.getItem(`syntagma.reviewed.today.${dateStr}`);
+  const stored = await getScopedItem(`syntagma.reviewed.today.${dateStr}`);
   if (!stored) {
     return [];
   }
@@ -374,6 +432,6 @@ export async function addReviewedId(dateStr, id) {
   const strId = String(id);
   if (!ids.includes(strId)) {
     ids.push(strId);
-    await AsyncStorage.setItem(`syntagma.reviewed.today.${dateStr}`, JSON.stringify(ids));
+    await setScopedItem(`syntagma.reviewed.today.${dateStr}`, JSON.stringify(ids));
   }
 }

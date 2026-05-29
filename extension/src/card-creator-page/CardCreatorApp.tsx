@@ -85,6 +85,7 @@ export function CardCreatorApp() {
   const initialSourceUrl = params.get('sourceUrl') ?? '';
   const initialSourceTitle = params.get('sourceTitle') ?? '';
   const initialTranslation = params.get('trMeaning') ?? '';
+  const initialUsageNote = params.get('usageNote') ?? '';
 
   const [loading, setLoading] = useState(true);
   const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
@@ -107,6 +108,7 @@ export function CardCreatorApp() {
   const [sentence, setSentence] = useState(initialSentence);
   const [exampleSentence, setExampleSentence] = useState('');
   const [translation, setTranslation] = useState(initialTranslation);
+  const [usageNote, setUsageNote] = useState(initialUsageNote);
   const [knowledgeStatus, setKnowledgeStatus] = useState<KnowledgeStatusValue>('LEARNING');
   const [selectedCollectionId, setSelectedCollectionId] = useState<number | null>(null);
   const [sourceUrl, setSourceUrl] = useState(initialSourceUrl);
@@ -209,6 +211,7 @@ export function CardCreatorApp() {
     setSentence(card.sentence || '');
     setExampleSentence(card.exampleSentence || '');
     setTranslation(card.trMeaning || '');
+    setUsageNote(card.usageNote || '');
     setKnowledgeStatus(card.knowledgeStatus ?? 'LEARNING');
     setSourceUrl(card.sourceUrl || '');
     setSourceTitle(card.sourceTitle || '');
@@ -226,6 +229,7 @@ export function CardCreatorApp() {
     setEditorMode('create');
     setEditingCard(null);
     setExampleSentence('');
+    setUsageNote('');
     setKnowledgeStatus('LEARNING');
     setSelectedCollectionId(settings.activeCollectionId);
     setScreenshotPreview(undefined);
@@ -266,6 +270,7 @@ export function CardCreatorApp() {
               setTargetWord(draft.surfaceForm || draft.lemma || '');
               setSentence(draft.sentence || '');
               setTranslation(draft.trMeaning || '');
+              setUsageNote(draft.usageNote || '');
               setSourceUrl(draft.sourceUrl || '');
               setSourceTitle(draft.sourceTitle || '');
               if (draft.screenshotDataUrl) {
@@ -406,6 +411,7 @@ export function CardCreatorApp() {
       sourceUrl,
       sourceTitle,
       trMeaning: translation.trim() || dictionaryResults[0] || '',
+      usageNote: usageNote.trim(),
       knowledgeStatus,
       createdAt: editingCard?.createdAt ?? Date.now(),
       updatedAt: Date.now(),
@@ -484,6 +490,7 @@ export function CardCreatorApp() {
     sourceUrl,
     targetWord,
     translation,
+    usageNote,
     updateWordStatus,
   ]);
 
@@ -1264,6 +1271,17 @@ export function CardCreatorApp() {
                     rows={2}
                     style={{ ...inputStyle, resize: 'vertical' }}
                     placeholder={_('ws.translationPlaceholder')}
+                  />
+                </div>
+
+                <div style={{ marginBottom: '14px' }}>
+                  <span style={sectionLabelStyle}>AI Usage Note</span>
+                  <textarea
+                    value={usageNote}
+                    onChange={event => setUsageNote(event.target.value)}
+                    rows={2}
+                    style={{ ...inputStyle, resize: 'vertical' }}
+                    placeholder="Optional AI note about how this word is used"
                   />
                 </div>
 

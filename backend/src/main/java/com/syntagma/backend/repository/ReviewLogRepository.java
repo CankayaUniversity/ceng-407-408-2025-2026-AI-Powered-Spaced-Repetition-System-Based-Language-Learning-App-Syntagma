@@ -7,10 +7,13 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import java.time.LocalDateTime;
+import java.util.List;
 
 public interface ReviewLogRepository extends JpaRepository<ReviewLog, Long> {
 
     Page<ReviewLog> findByUser_UserId(Long userId, Pageable pageable);
+
+    List<ReviewLog> findAllByUser_UserId(Long userId);
 
     Page<ReviewLog> findByUser_UserIdAndFlashcard_FlashcardId(Long userId, Long flashcardId, Pageable pageable);
 

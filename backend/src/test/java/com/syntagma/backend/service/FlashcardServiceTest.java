@@ -47,6 +47,7 @@ class FlashcardServiceTest {
         f.setTranslation("merhaba");
         f.setSourceSentence("Hello world");
         f.setExampleSentence("Merhaba dünya");
+        f.setUsageNote("Used as a friendly greeting.");
         f.setKnowledgeStatus(KnowledgeStatus.UNKNOWN);
         f.setCreatedAt(LocalDateTime.now());
         f.setUpdatedAt(LocalDateTime.now());
@@ -57,7 +58,7 @@ class FlashcardServiceTest {
     void create_Success() {
         User user = mockUser();
         FlashcardCreateRequest request = new FlashcardCreateRequest(
-                "hello", "merhaba", "Hello world", "Merhaba dünya", null, false, KnowledgeStatus.UNKNOWN);
+                "hello", "merhaba", "Hello world", "Merhaba dünya", "Used as a friendly greeting.", null, false, KnowledgeStatus.UNKNOWN);
 
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
         when(collectionItemRepository.findCollectionIdsByFlashcardId(anyLong())).thenReturn(List.of());
@@ -72,6 +73,7 @@ class FlashcardServiceTest {
         assertNotNull(response);
         assertEquals("hello", response.lemma());
         assertEquals("merhaba", response.translation());
+        assertEquals("Used as a friendly greeting.", response.usageNote());
         verify(flashcardRepository).save(any(Flashcard.class));
     }
 
@@ -79,7 +81,7 @@ class FlashcardServiceTest {
     void create_UserNotFound_ThrowsException() {
         when(userRepository.findById(99L)).thenReturn(Optional.empty());
         FlashcardCreateRequest request = new FlashcardCreateRequest(
-                "hello", "merhaba", null, null, null, false, KnowledgeStatus.UNKNOWN);
+                "hello", "merhaba", null, null, null, null, false, KnowledgeStatus.UNKNOWN);
 
         assertThrows(EntityNotFoundException.class, () -> flashcardService.create(99L, request));
     }
@@ -113,7 +115,7 @@ class FlashcardServiceTest {
         User user = mockUser();
         Flashcard flashcard = mockFlashcard(user);
         FlashcardUpdateRequest request = new FlashcardUpdateRequest(
-                null, "günaydın", null, null, null, false, null);
+                null, "günaydın", null, null, "Used in the morning.", null, false, null);
 
         when(flashcardRepository.findById(10L)).thenReturn(Optional.of(flashcard));
         when(flashcardRepository.save(any(Flashcard.class))).thenReturn(flashcard);
@@ -121,6 +123,7 @@ class FlashcardServiceTest {
         FlashcardResponse response = flashcardService.update(1L, 10L, request);
 
         assertEquals("günaydın", response.translation());
+        assertEquals("Used in the morning.", response.usageNote());
         verify(flashcardRepository).save(flashcard);
     }
 

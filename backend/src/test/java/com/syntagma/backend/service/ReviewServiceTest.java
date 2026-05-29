@@ -20,8 +20,10 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -37,6 +39,7 @@ class ReviewServiceTest {
     @Mock private UserRepository userRepository;
     @Mock private SrsService srsService;
     @Mock private FsrsAlgorithm fsrsAlgorithm;
+    @Mock private WordKnowledgeService wordKnowledgeService;
     @InjectMocks private ReviewService reviewService;
 
     @Test
@@ -61,7 +64,14 @@ class ReviewServiceTest {
         savedLog.setResult(4);
         savedLog.setReviewedAt(LocalDateTime.now());
 
-        ReviewSubmitRequest request = new ReviewSubmitRequest(10L, null, 4, DeviceType.MOBILE, OffsetDateTime.now());
+        ReviewSubmitRequest request = new ReviewSubmitRequest(
+                10L,
+                null,
+                4,
+                DeviceType.MOBILE,
+                OffsetDateTime.parse("2026-05-16T22:30:00Z"),
+                "Europe/Istanbul"
+        );
 
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
         when(flashcardRepository.findById(10L)).thenReturn(Optional.of(flashcard));
@@ -76,7 +86,10 @@ class ReviewServiceTest {
         assertNotNull(response);
         assertEquals(100L, response.reviewId());
         assertEquals(4, response.result());
-        verify(reviewLogRepository).save(any(ReviewLog.class));
+        var reviewCaptor = org.mockito.ArgumentCaptor.forClass(ReviewLog.class);
+        verify(reviewLogRepository).save(reviewCaptor.capture());
+        assertEquals(LocalDate.of(2026, 5, 17), reviewCaptor.getValue().getReviewedOn());
+        assertEquals("Europe/Istanbul", reviewCaptor.getValue().getClientTimeZone());
         verify(srsStateRepository).save(any(SrsState.class));
     }
 
@@ -92,7 +105,7 @@ class ReviewServiceTest {
         flashcard.setFlashcardId(10L);
         flashcard.setUser(otherUser);
 
-        ReviewSubmitRequest request = new ReviewSubmitRequest(10L, null, 4, DeviceType.MOBILE, OffsetDateTime.now());
+        ReviewSubmitRequest request = new ReviewSubmitRequest(10L, null, 4, DeviceType.MOBILE, OffsetDateTime.now(), "Europe/Istanbul");
 
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
         when(flashcardRepository.findById(10L)).thenReturn(Optional.of(flashcard));
@@ -117,7 +130,7 @@ class ReviewServiceTest {
         savedLog.setResult(3);
         savedLog.setReviewedAt(LocalDateTime.now());
 
-        ReviewSubmitRequest request = new ReviewSubmitRequest(10L, null, 3, DeviceType.EXTENSION, OffsetDateTime.now());
+        ReviewSubmitRequest request = new ReviewSubmitRequest(10L, null, 3, DeviceType.EXTENSION, OffsetDateTime.now(), "Europe/Istanbul");
 
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
         when(flashcardRepository.findById(10L)).thenReturn(Optional.of(flashcard));
@@ -137,37 +150,116 @@ class ReviewServiceTest {
     void getStats_ReturnsWeeklyMonthlyYearlyCounts() {
         User user = new User();
         user.setUserId(1L);
-        user.setStreakCount(3);
 
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
-        when(reviewLogRepository.countByUser_UserId(1L)).thenReturn(50L);
-        when(reviewLogRepository.findAverageResultByUserId(1L)).thenReturn(3.5);
-        when(reviewLogRepository.countByUserIdSince(eq(1L), any(LocalDateTime.class)))
-                .thenReturn(10L)  // weekly
-                .thenReturn(30L)  // monthly
-                .thenReturn(50L); // yearly
-        when(reviewLogRepository.countReviewsByDay(eq(1L), any(LocalDateTime.class)))
-                .thenReturn(java.util.List.of());
+        when(reviewLogRepository.findAllByUser_UserId(1L)).thenReturn(java.util.List.of(
+                reviewOn(LocalDate.now(ZoneId.of("Europe/Istanbul")).minusDays(1), 4),
+                reviewOn(LocalDate.now(ZoneId.of("Europe/Istanbul")).minusDays(10), 3),
+                reviewOn(LocalDate.now(ZoneId.of("Europe/Istanbul")).minusDays(40), 2)
+        ));
 
-        ReviewStatsResponse stats = reviewService.getStats(1L, "week");
+        ReviewStatsResponse stats = reviewService.getStats(1L, "all", "Europe/Istanbul");
 
         assertNotNull(stats);
-        assertEquals(50L, stats.totalReviews());
-        assertEquals(10L, stats.weeklyCount());
-        assertEquals(30L, stats.monthlyCount());
-        assertEquals(50L, stats.yearlyCount());
-        assertEquals(3,   stats.streakCount());
-        assertEquals(3.5, stats.averageResult());
+        assertEquals(3L, stats.totalReviews());
+        assertEquals(1L, stats.weeklyCount());
+        assertEquals(2L, stats.monthlyCount());
+        assertEquals(3L, stats.yearlyCount());
+        assertEquals(1, stats.streakCount());
+        assertEquals(1, stats.longestStreakCount());
+        assertEquals(3.0, stats.averageResult());
+        assertEquals(3, stats.reviewsByDay().size());
     }
 
     @Test
     void getStats_UserNotFound_ThrowsException() {
-        when(reviewLogRepository.countByUser_UserId(99L)).thenReturn(0L);
-        when(reviewLogRepository.findAverageResultByUserId(99L)).thenReturn(null);
-        lenient().when(reviewLogRepository.countByUserIdSince(eq(99L), any(LocalDateTime.class))).thenReturn(0L);
         when(userRepository.findById(99L)).thenReturn(Optional.empty());
 
         assertThrows(jakarta.persistence.EntityNotFoundException.class,
-                () -> reviewService.getStats(99L, "week"));
+                () -> reviewService.getStats(99L, "week", "Europe/Istanbul"));
+    }
+
+    @Test
+    void getStats_CurrentStreakCountsTodayAndPreviousDays() {
+        User user = new User();
+        user.setUserId(1L);
+        LocalDate today = LocalDate.now(ZoneId.of("Europe/Istanbul"));
+
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        when(reviewLogRepository.findAllByUser_UserId(1L)).thenReturn(java.util.List.of(
+                reviewOn(today, 4),
+                reviewOn(today.minusDays(1), 3),
+                reviewOn(today.minusDays(2), 3)
+        ));
+
+        ReviewStatsResponse stats = reviewService.getStats(1L, "week", "Europe/Istanbul");
+
+        assertEquals(3, stats.streakCount());
+        assertEquals(3, stats.longestStreakCount());
+    }
+
+    @Test
+    void getStats_CurrentStreakAllowsYesterdayWhenTodayHasNoReview() {
+        User user = new User();
+        user.setUserId(1L);
+        LocalDate today = LocalDate.now(ZoneId.of("Europe/Istanbul"));
+
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        when(reviewLogRepository.findAllByUser_UserId(1L)).thenReturn(java.util.List.of(
+                reviewOn(today.minusDays(1), 4),
+                reviewOn(today.minusDays(2), 3)
+        ));
+
+        ReviewStatsResponse stats = reviewService.getStats(1L, "week", "Europe/Istanbul");
+
+        assertEquals(2, stats.streakCount());
+        assertEquals(2, stats.longestStreakCount());
+    }
+
+    @Test
+    void getStats_CurrentStreakReturnsZeroAfterGap() {
+        User user = new User();
+        user.setUserId(1L);
+        LocalDate today = LocalDate.now(ZoneId.of("Europe/Istanbul"));
+
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        when(reviewLogRepository.findAllByUser_UserId(1L)).thenReturn(java.util.List.of(
+                reviewOn(today.minusDays(2), 4),
+                reviewOn(today.minusDays(3), 3)
+        ));
+
+        ReviewStatsResponse stats = reviewService.getStats(1L, "week", "Europe/Istanbul");
+
+        assertEquals(0, stats.streakCount());
+        assertEquals(2, stats.longestStreakCount());
+    }
+
+    @Test
+    void getStats_LongestStreakFindsHistoricalRunAndDeduplicatesDays() {
+        User user = new User();
+        user.setUserId(1L);
+
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        when(reviewLogRepository.findAllByUser_UserId(1L)).thenReturn(java.util.List.of(
+                reviewOn(LocalDate.of(2026, 5, 17), 4),
+                reviewOn(LocalDate.of(2026, 5, 18), 3),
+                reviewOn(LocalDate.of(2026, 5, 18), 2),
+                reviewOn(LocalDate.of(2026, 5, 19), 4),
+                reviewOn(LocalDate.of(2026, 5, 20), 3),
+                reviewOn(LocalDate.of(2026, 5, 25), 4)
+        ));
+
+        ReviewStatsResponse stats = reviewService.getStats(1L, "all", "Europe/Istanbul");
+
+        assertEquals(4, stats.longestStreakCount());
+        assertEquals(5, stats.reviewsByDay().size());
+    }
+
+    private ReviewLog reviewOn(LocalDate reviewedOn, Integer result) {
+        ReviewLog log = new ReviewLog();
+        log.setReviewedOn(reviewedOn);
+        log.setReviewedAt(reviewedOn.atStartOfDay());
+        log.setResult(result);
+        return log;
     }
 }

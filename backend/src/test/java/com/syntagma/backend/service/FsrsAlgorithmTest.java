@@ -47,6 +47,22 @@ class FsrsAlgorithmTest {
     }
 
     @Test
+    void testNewCardWithAgainRatingIsImmediatelyDue() {
+        // Arrange
+        SrsState state = SrsState.createNew(mockFlashcard);
+
+        // Act
+        fsrs.processReview(state, Rating.AGAIN, now);
+
+        // Assert
+        assertEquals(CardState.LEARNING.name(), state.getState());
+        assertEquals(1, state.getReps());
+        assertEquals(1, state.getLapses());
+        assertEquals(0, state.getScheduledDays());
+        assertEquals(now, state.getNextReviewAt());
+    }
+
+    @Test
     void testNewCardWithEasyRating() {
         // Arrange
         SrsState state = SrsState.createNew(mockFlashcard);
@@ -101,7 +117,7 @@ class FsrsAlgorithmTest {
         assertEquals(2, state.getReps());
         assertEquals(1, state.getLapses(), "Lapses should increment on AGAIN for a REVIEW card");
         assertEquals(0, state.getScheduledDays());
-        assertEquals(muchLater.plusMinutes(5), state.getNextReviewAt());
+        assertEquals(muchLater, state.getNextReviewAt());
         
         // Stability should drop significantly after forgetting
         assertTrue(state.getStability() < 5.0f, "Stability should drop after lapse");

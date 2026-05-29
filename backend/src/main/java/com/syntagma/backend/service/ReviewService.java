@@ -16,8 +16,16 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import java.time.DateTimeException;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 
 @Slf4j
 @Service
@@ -62,16 +70,21 @@ public class ReviewService {
                 log.info("Submitting review for userId={}, flashcardId={}, result={}",
                                 userId, request.flashcardId(), resultValue);
 
+        LocalDateTime serverNow = LocalDateTime.now();
+        ReviewDateContext reviewDate = resolveReviewDate(request, serverNow);
+
         // Create review log
         ReviewLog reviewLog = new ReviewLog();
         reviewLog.setFlashcard(flashcard);
         reviewLog.setUser(user);
-        reviewLog.setReviewedAt(LocalDateTime.now());
+        reviewLog.setReviewedAt(serverNow);
+        reviewLog.setReviewedOn(reviewDate.reviewedOn());
         reviewLog.setResult(resultValue);
         reviewLog.setDevice(request.device());
-                if (request.clientTimestamp() != null) {
-                        reviewLog.setClientTimestamp(request.clientTimestamp().toLocalDateTime());
-                }
+        reviewLog.setClientTimeZone(reviewDate.clientTimeZone());
+        if (request.clientTimestamp() != null) {
+            reviewLog.setClientTimestamp(reviewDate.clientTimestamp());
+        }
         ReviewLog savedLog = reviewLogRepository.save(reviewLog);
 
         // Get or create SRS state
@@ -79,7 +92,7 @@ public class ReviewService {
                 .orElseGet(() -> SrsState.createNew(flashcard));
 
         // Apply the FSRS algorithm
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = serverNow;
         log.debug("Applying FSRS for flashcardId={}, rating={}", flashcard.getFlashcardId(), rating);
         fsrsAlgorithm.processReview(srsState, rating, now);
 
@@ -136,43 +149,162 @@ public class ReviewService {
         return reviewLogRepository.findByUser_UserId(userId, pageable).map(this::toResponse);
     }
 
-    public ReviewStatsResponse getStats(Long userId, String period) {
+    public ReviewStatsResponse getStats(Long userId, String period, String clientTimeZone) {
         log.info("Fetching review stats for userId={}, period={}", userId, period);
-        long totalReviews = reviewLogRepository.countByUser_UserId(userId);
-        Double avgResult = reviewLogRepository.findAverageResultByUserId(userId);
-        User user = userRepository.findById(userId)
+        userRepository.findById(userId)
                 .orElseThrow(() -> new EntityNotFoundException("User not found: " + userId));
 
-        LocalDateTime now = LocalDateTime.now();
-        long weeklyCount  = reviewLogRepository.countByUserIdSince(userId, now.minusWeeks(1));
-        long monthlyCount = reviewLogRepository.countByUserIdSince(userId, now.minusMonths(1));
-        long yearlyCount  = reviewLogRepository.countByUserIdSince(userId, now.minusYears(1));
+        ZoneId zone = resolveZoneOrDefault(clientTimeZone);
+        LocalDate today = LocalDate.now(zone);
+        List<ReviewLog> reviews = reviewLogRepository.findAllByUser_UserId(userId);
+        Map<LocalDate, Long> countsByDay = buildCountsByDay(reviews);
+        Set<LocalDate> studyDays = new TreeSet<>(countsByDay.keySet());
+        LocalDate periodStart = resolvePeriodStart(period, today);
 
-        int days = switch (period) {
-            case "day"   -> 1;
-            case "month" -> 30;
-            default      -> 7; // week
-        };
+        long weeklyCount = countReviewsOnOrAfter(countsByDay, today.minusDays(6));
+        long monthlyCount = countReviewsOnOrAfter(countsByDay, today.minusDays(29));
+        long yearlyCount = countReviewsOnOrAfter(countsByDay, today.minusDays(364));
+        double avgResult = reviews.stream()
+                .map(ReviewLog::getResult)
+                .filter(result -> result != null)
+                .mapToInt(Integer::intValue)
+                .average()
+                .orElse(0.0);
 
-        LocalDateTime since = now.minusDays(days);
-        List<Object[]> rawCounts = reviewLogRepository.countReviewsByDay(userId, since);
-        List<ReviewStatsResponse.DailyReviewCount> dailyCounts = rawCounts.stream()
-                .map(row -> new ReviewStatsResponse.DailyReviewCount(
-                        row[0].toString(),
-                        ((Number) row[1]).longValue()
+        List<ReviewStatsResponse.DailyReviewCount> dailyCounts = countsByDay.entrySet().stream()
+                .filter(entry -> periodStart == null || !entry.getKey().isBefore(periodStart))
+                .sorted(Map.Entry.<LocalDate, Long>comparingByKey(Comparator.reverseOrder()))
+                .map(entry -> new ReviewStatsResponse.DailyReviewCount(
+                        entry.getKey().toString(),
+                        entry.getValue()
                 ))
                 .toList();
 
         return new ReviewStatsResponse(
-                totalReviews,
+                reviews.size(),
                 weeklyCount,
                 monthlyCount,
                 yearlyCount,
-                user.getStreakCount(),
-                avgResult != null ? avgResult : 0.0,
+                computeCurrentStreak(studyDays, today),
+                computeLongestStreak(studyDays),
+                avgResult,
                 dailyCounts
         );
     }
+
+    private ReviewDateContext resolveReviewDate(ReviewSubmitRequest request, LocalDateTime serverNow) {
+        ZoneId zone = resolveZone(request.clientTimeZone());
+        if (zone == null || request.clientTimestamp() == null) {
+            return new ReviewDateContext(serverNow.toLocalDate(), serverNow, null);
+        }
+
+        LocalDateTime clientLocalTime = request.clientTimestamp().atZoneSameInstant(zone).toLocalDateTime();
+        return new ReviewDateContext(clientLocalTime.toLocalDate(), clientLocalTime, zone.getId());
+    }
+
+    private ZoneId resolveZone(String clientTimeZone) {
+        if (clientTimeZone == null || clientTimeZone.isBlank()) {
+            return null;
+        }
+
+        try {
+            return ZoneId.of(clientTimeZone);
+        } catch (DateTimeException err) {
+            return null;
+        }
+    }
+
+    private ZoneId resolveZoneOrDefault(String clientTimeZone) {
+        ZoneId zone = resolveZone(clientTimeZone);
+        return zone != null ? zone : ZoneId.systemDefault();
+    }
+
+    private Map<LocalDate, Long> buildCountsByDay(List<ReviewLog> reviews) {
+        Map<LocalDate, Long> countsByDay = new HashMap<>();
+        for (ReviewLog review : reviews) {
+            LocalDate reviewedOn = getEffectiveReviewDate(review);
+            if (reviewedOn != null) {
+                countsByDay.merge(reviewedOn, 1L, Long::sum);
+            }
+        }
+        return countsByDay;
+    }
+
+    private LocalDate getEffectiveReviewDate(ReviewLog review) {
+        if (review.getReviewedOn() != null) {
+            return review.getReviewedOn();
+        }
+        if (review.getClientTimestamp() != null) {
+            return review.getClientTimestamp().toLocalDate();
+        }
+        if (review.getReviewedAt() != null) {
+            return review.getReviewedAt().toLocalDate();
+        }
+        return null;
+    }
+
+    private LocalDate resolvePeriodStart(String period, LocalDate today) {
+        return switch (period == null ? "week" : period.toLowerCase()) {
+            case "day" -> today;
+            case "month" -> today.minusDays(29);
+            case "year" -> today.minusDays(364);
+            case "all" -> null;
+            default -> today.minusDays(6);
+        };
+    }
+
+    private long countReviewsOnOrAfter(Map<LocalDate, Long> countsByDay, LocalDate start) {
+        return countsByDay.entrySet().stream()
+                .filter(entry -> !entry.getKey().isBefore(start))
+                .mapToLong(Map.Entry::getValue)
+                .sum();
+    }
+
+    private int computeCurrentStreak(Set<LocalDate> studyDays, LocalDate today) {
+        if (studyDays.isEmpty()) {
+            return 0;
+        }
+
+        LocalDate cursor;
+        if (studyDays.contains(today)) {
+            cursor = today;
+        } else if (studyDays.contains(today.minusDays(1))) {
+            cursor = today.minusDays(1);
+        } else {
+            return 0;
+        }
+
+        int streak = 0;
+        while (studyDays.contains(cursor)) {
+            streak += 1;
+            cursor = cursor.minusDays(1);
+        }
+        return streak;
+    }
+
+    private int computeLongestStreak(Set<LocalDate> studyDays) {
+        int longest = 0;
+        int current = 0;
+        LocalDate previous = null;
+
+        for (LocalDate day : studyDays) {
+            if (previous == null || day.equals(previous.plusDays(1))) {
+                current += 1;
+            } else {
+                current = 1;
+            }
+            longest = Math.max(longest, current);
+            previous = day;
+        }
+
+        return longest;
+    }
+
+    private record ReviewDateContext(
+            LocalDate reviewedOn,
+            LocalDateTime clientTimestamp,
+            String clientTimeZone
+    ) {}
 
     private ReviewLogResponse toResponse(ReviewLog r) {
         return new ReviewLogResponse(

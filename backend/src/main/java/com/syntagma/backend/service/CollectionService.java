@@ -237,6 +237,7 @@ public class CollectionService {
                 flashcard.getTranslation(),
                 flashcard.getSourceSentence(),
                 flashcard.getExampleSentence(),
+                flashcard.getUsageNote(),
                 flashcard.getCollection() != null ? flashcard.getCollection().getCollectionId() : null,
                 flashcard.getKnowledgeStatus(),
                 collectionIds,

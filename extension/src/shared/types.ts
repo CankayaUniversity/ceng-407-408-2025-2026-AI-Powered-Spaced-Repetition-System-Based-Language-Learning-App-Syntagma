@@ -44,6 +44,7 @@ export interface FlashcardPayload {
   sourceUrl: string;
   sourceTitle: string;
   trMeaning: string;
+  usageNote?: string;
   knowledgeStatus?: 'KNOWN' | 'LEARNING' | 'UNKNOWN' | 'IGNORED';
   audioUrl?: string;
   screenshotDataUrl?: string;

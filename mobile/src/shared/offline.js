@@ -29,7 +29,11 @@ const cacheCollectionKey = (id) => `syntagma.cache.collection.${id}`;
 const cacheStatsKey = (period) => `syntagma.cache.reviewstats.${period}`;
 
 function todayStr() {
-  return new Date().toISOString().slice(0, 10);
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, '0');
+  const day = String(today.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 export async function enqueueReview(review, lemma) {
@@ -89,7 +93,7 @@ const normalizeCollections = (data) =>
 
 const mapFlashcardsToCards = (items) =>
   items.map((item) => {
-    const sentence = item.exampleSentence || item.sourceSentence || item.sentence || '';
+    const sentence = item.sourceSentence || item.sentence || '';
     return {
       flashcardId: item.flashcardId ?? item.id,
       word: item.lemma || item.word || 'Unknown',
@@ -98,6 +102,7 @@ const mapFlashcardsToCards = (items) =>
       exampleSentence: item.exampleSentence || '',
       sourceSentence: item.sourceSentence || item.sentence || '',
       translation: item.translation || item.trMeaning || '',
+      usageNote: item.usageNote || '',
       sentenceTranslation: item.sentenceTranslation || '',
       sourceTitle: item.sourceTitle || '',
       sourceUrl: item.sourceUrl || '',

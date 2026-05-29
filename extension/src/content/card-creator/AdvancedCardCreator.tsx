@@ -85,6 +85,7 @@ function AdvancedCardCreatorInner({ initialWord = '', initialSentence = '', sett
         sourceUrl: window.location.href,
         sourceTitle: document.title,
         trMeaning: definition.trim() || dictResults[0] || '',
+        usageNote: notes.trim(),
         createdAt: Date.now(),
         deckName: deck,
         tags: ['syntagma', 'advanced-creator'],
@@ -101,7 +102,7 @@ function AdvancedCardCreatorInner({ initialWord = '', initialSentence = '', sett
       setSaveMsg({ text: (err as Error).message, ok: false });
     }
     setSaving(false);
-  }, [targetWord, sentence, definition, deck, dictResults, onCreated]);
+  }, [targetWord, sentence, definition, notes, deck, dictResults, onCreated]);
 
   // Escape closes
   useEffect(() => {
