@@ -43,6 +43,7 @@ public class FlashcardService {
         flashcard.setTranslation(request.translation());
         flashcard.setSourceSentence(request.sourceSentence());
         flashcard.setExampleSentence(request.exampleSentence());
+        flashcard.setUsageNote(request.usageNote());
         if (request.collectionId() != null) {
             flashcard.setCollection(findOwnedCollection(userId, request.collectionId()));
         }
@@ -81,6 +82,7 @@ public class FlashcardService {
         if (request.translation() != null) flashcard.setTranslation(request.translation());
         if (request.sourceSentence() != null) flashcard.setSourceSentence(request.sourceSentence());
         if (request.exampleSentence() != null) flashcard.setExampleSentence(request.exampleSentence());
+        if (request.usageNote() != null) flashcard.setUsageNote(request.usageNote());
         if (Boolean.TRUE.equals(request.clearCollection())) {
             flashcard.setCollection(null);
         } else if (request.collectionId() != null) {
@@ -121,6 +123,7 @@ public class FlashcardService {
                 f.getTranslation(),
                 f.getSourceSentence(),
                 f.getExampleSentence(),
+                f.getUsageNote(),
                 f.getCollection() != null ? f.getCollection().getCollectionId() : null,
                 f.getKnowledgeStatus(),
                 collectionIds,

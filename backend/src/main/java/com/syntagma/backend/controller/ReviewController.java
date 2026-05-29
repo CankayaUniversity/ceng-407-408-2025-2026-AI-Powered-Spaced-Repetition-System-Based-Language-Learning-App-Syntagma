@@ -47,9 +47,10 @@ public class ReviewController {
 
     @GetMapping("/stats")
     public ResponseEntity<ApiResponse<ReviewStatsResponse>> getStats(
-            @RequestParam(defaultValue = "week") String period) {
+            @RequestParam(defaultValue = "week") String period,
+            @RequestParam(required = false) String clientTimeZone) {
         Long userId = SecurityUtils.getAuthenticatedUserId();
-        ReviewStatsResponse stats = reviewService.getStats(userId, period);
+        ReviewStatsResponse stats = reviewService.getStats(userId, period, clientTimeZone);
         return ResponseEntity.ok(ApiResponse.success(stats));
     }
 }

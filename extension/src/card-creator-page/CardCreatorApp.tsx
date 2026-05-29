@@ -85,6 +85,8 @@ export function CardCreatorApp() {
   const initialSourceUrl = params.get('sourceUrl') ?? '';
   const initialSourceTitle = params.get('sourceTitle') ?? '';
   const initialTranslation = params.get('trMeaning') ?? '';
+  const initialExampleSentence = params.get('exampleSentence') ?? '';
+  const initialUsageNote = params.get('usageNote') ?? '';
 
   const [loading, setLoading] = useState(true);
   const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
@@ -105,8 +107,9 @@ export function CardCreatorApp() {
   const [search, setSearch] = useState(initialWord);
   const [targetWord, setTargetWord] = useState(initialWord);
   const [sentence, setSentence] = useState(initialSentence);
-  const [exampleSentence, setExampleSentence] = useState('');
+  const [exampleSentence, setExampleSentence] = useState(initialExampleSentence);
   const [translation, setTranslation] = useState(initialTranslation);
+  const [usageNote, setUsageNote] = useState(initialUsageNote);
   const [knowledgeStatus, setKnowledgeStatus] = useState<KnowledgeStatusValue>('LEARNING');
   const [selectedCollectionId, setSelectedCollectionId] = useState<number | null>(null);
   const [sourceUrl, setSourceUrl] = useState(initialSourceUrl);
@@ -209,6 +212,7 @@ export function CardCreatorApp() {
     setSentence(card.sentence || '');
     setExampleSentence(card.exampleSentence || '');
     setTranslation(card.trMeaning || '');
+    setUsageNote(card.usageNote || '');
     setKnowledgeStatus(card.knowledgeStatus ?? 'LEARNING');
     setSourceUrl(card.sourceUrl || '');
     setSourceTitle(card.sourceTitle || '');
@@ -226,6 +230,7 @@ export function CardCreatorApp() {
     setEditorMode('create');
     setEditingCard(null);
     setExampleSentence('');
+    setUsageNote('');
     setKnowledgeStatus('LEARNING');
     setSelectedCollectionId(settings.activeCollectionId);
     setScreenshotPreview(undefined);
@@ -265,7 +270,9 @@ export function CardCreatorApp() {
               setSearch(draft.surfaceForm || draft.lemma || '');
               setTargetWord(draft.surfaceForm || draft.lemma || '');
               setSentence(draft.sentence || '');
+              setExampleSentence(draft.exampleSentence || '');
               setTranslation(draft.trMeaning || '');
+              setUsageNote(draft.usageNote || '');
               setSourceUrl(draft.sourceUrl || '');
               setSourceTitle(draft.sourceTitle || '');
               if (draft.screenshotDataUrl) {
@@ -397,7 +404,7 @@ export function CardCreatorApp() {
     setSaveMsg(null);
 
     const normalizedWord = targetWord.trim();
-    const card: FlashcardPayload = {
+    let card: FlashcardPayload = {
       id: editingCard?.id ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       lemma: normalizedWord.toLowerCase(),
       surfaceForm: normalizedWord,
@@ -406,6 +413,7 @@ export function CardCreatorApp() {
       sourceUrl,
       sourceTitle,
       trMeaning: translation.trim() || dictionaryResults[0] || '',
+      usageNote: usageNote.trim(),
       knowledgeStatus,
       createdAt: editingCard?.createdAt ?? Date.now(),
       updatedAt: Date.now(),
@@ -441,6 +449,24 @@ export function CardCreatorApp() {
         }
         setSaveMsg({ text: _('ws.flashcardUpdated'), ok: true });
       } else {
+        if (!card.exampleSentence?.trim() || !card.usageNote?.trim()) {
+          const enriched = await sendMessage<{ ok: boolean; card?: FlashcardPayload; error?: string }>({
+            type: 'ENRICH_FLASHCARD',
+            payload: card,
+          });
+          if (!enriched.ok) throw new Error(enriched.error ?? 'Could not generate AI fields');
+          if (enriched.card) {
+            card = {
+              ...card,
+              ...enriched.card,
+              id: card.id,
+              createdAt: card.createdAt,
+              updatedAt: Date.now(),
+            };
+            setExampleSentence(card.exampleSentence || '');
+            setUsageNote(card.usageNote || '');
+          }
+        }
         const result = await sendMessage<{ ok: boolean; card?: FlashcardPayload; error?: string }>({
           type: 'CREATE_FLASHCARD',
           payload: card,
@@ -484,6 +510,7 @@ export function CardCreatorApp() {
     sourceUrl,
     targetWord,
     translation,
+    usageNote,
     updateWordStatus,
   ]);
 
@@ -1264,6 +1291,17 @@ export function CardCreatorApp() {
                     rows={2}
                     style={{ ...inputStyle, resize: 'vertical' }}
                     placeholder={_('ws.translationPlaceholder')}
+                  />
+                </div>
+
+                <div style={{ marginBottom: '14px' }}>
+                  <span style={sectionLabelStyle}>AI Usage Note</span>
+                  <textarea
+                    value={usageNote}
+                    onChange={event => setUsageNote(event.target.value)}
+                    rows={2}
+                    style={{ ...inputStyle, resize: 'vertical' }}
+                    placeholder="Optional AI note about how this word is used"
                   />
                 </div>
 

@@ -8,12 +8,18 @@ export default function SessionSummaryScreen({ route, navigation }) {
   const styles = useMemo(() => createStyles(colors), [colors]);
   const reviewedCount = route.params?.reviewedCount ?? 0;
   const targetCount = route.params?.targetCount ?? reviewedCount;
+  const retryCount = route.params?.retryCount ?? 0;
 
   return (
     <SafeAreaView style={styles.screen}>
       <View style={styles.card}>
         <Text style={styles.title}>Session Summary</Text>
         <Text style={styles.subtitle}>{`You reviewed ${reviewedCount} of ${targetCount} cards.`}</Text>
+        {retryCount > 0 ? (
+          <Text style={styles.retryText}>
+            {`${retryCount} ${retryCount === 1 ? 'retry was' : 'retries were'} completed for cards you did not know yet.`}
+          </Text>
+        ) : null}
 
         <Pressable style={styles.button} onPress={() => navigation.navigate('MainTabs')}>
           <Text style={styles.buttonText}>Back to Library</Text>
@@ -49,6 +55,13 @@ const createStyles = (colors) => StyleSheet.create({
     fontSize: 16,
     fontFamily: 'DMSans_400Regular',
     marginBottom: 4,
+  },
+  retryText: {
+    color: colors.textSecondary,
+    fontSize: 14,
+    fontFamily: 'DMSans_400Regular',
+    textAlign: 'center',
+    marginTop: 6,
   },
   button: {
     marginTop: 18,

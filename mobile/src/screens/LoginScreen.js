@@ -13,23 +13,17 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { loginUser, registerUser } from '../shared/api';
+import { loginUser } from '../shared/api';
 import { useTheme } from '../shared/theme';
 
 export default function LoginScreen({ navigation }) {
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const [activeTab, setActiveTab] = useState('login');
   const [showPassword, setShowPassword] = useState(false);
   const [loginUsername, setLoginUsername] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
-  const [signupName, setSignupName] = useState('');
-  const [signupEmail, setSignupEmail] = useState('');
-  const [signupPassword, setSignupPassword] = useState('');
   const [authError, setAuthError] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
-
-  const isLogin = activeTab === 'login';
 
   const submitAuth = async () => {
     setAuthError('');
@@ -38,37 +32,17 @@ export default function LoginScreen({ navigation }) {
       return;
     }
 
-    if (isLogin) {
-      if (!loginUsername || !loginPassword) {
-        setAuthError('Please enter your email and password.');
-        return;
-      }
-
-      try {
-        setAuthLoading(true);
-        await loginUser(loginUsername.trim(), loginPassword);
-        navigation.replace('MainTabs');
-      } catch (err) {
-        setAuthError(err?.message || 'Login failed.');
-      } finally {
-        setAuthLoading(false);
-      }
-
-      return;
-    }
-
-    if (!signupEmail || !signupPassword) {
+    if (!loginUsername || !loginPassword) {
       setAuthError('Please enter your email and password.');
       return;
     }
 
     try {
       setAuthLoading(true);
-      await registerUser(signupEmail.trim(), signupPassword);
-      await loginUser(signupEmail.trim(), signupPassword);
+      await loginUser(loginUsername.trim(), loginPassword);
       navigation.replace('MainTabs');
     } catch (err) {
-      setAuthError(err?.message || 'Sign up failed.');
+      setAuthError(err?.message || 'Login failed.');
     } finally {
       setAuthLoading(false);
     }
@@ -98,98 +72,31 @@ export default function LoginScreen({ navigation }) {
 
           <Text style={styles.welcome}>Welcome</Text>
 
-          <View style={styles.tabsRow}>
-            <Pressable onPress={() => setActiveTab('login')}>
-              <Text
-                style={[
-                  styles.tabLabel,
-                  isLogin ? styles.tabLabelActive : styles.tabLabelMuted,
-                ]}
-              >
-                Login
-              </Text>
-            </Pressable>
-            <Pressable onPress={() => setActiveTab('signup')}>
-              <Text
-                style={[
-                  styles.tabLabel,
-                  !isLogin ? styles.tabLabelActive : styles.tabLabelMuted,
-                ]}
-              >
-                Sign up
-              </Text>
+          <Text style={styles.label}>email</Text>
+          <TextInput
+            value={loginUsername}
+            onChangeText={setLoginUsername}
+            placeholder="you@example.com"
+            placeholderTextColor={colors.textMuted}
+            style={styles.input}
+            autoCapitalize="none"
+            keyboardType="email-address"
+          />
+          <Text style={styles.label}>password</Text>
+          <View style={styles.passwordWrap}>
+            <TextInput
+              value={loginPassword}
+              onChangeText={setLoginPassword}
+              placeholder="••••••••"
+              placeholderTextColor={colors.textMuted}
+              style={styles.passwordInput}
+              secureTextEntry={!showPassword}
+              autoCapitalize="none"
+            />
+            <Pressable onPress={() => setShowPassword((value) => !value)} hitSlop={8}>
+              <Text style={styles.eye}>👁</Text>
             </Pressable>
           </View>
-
-          {isLogin ? (
-            <>
-              <Text style={styles.label}>email</Text>
-              <TextInput
-                value={loginUsername}
-                onChangeText={setLoginUsername}
-                placeholder="you@example.com"
-                placeholderTextColor={colors.textMuted}
-                style={styles.input}
-                autoCapitalize="none"
-                keyboardType="email-address"
-              />
-              <Text style={styles.label}>password</Text>
-              <View style={styles.passwordWrap}>
-                <TextInput
-                  value={loginPassword}
-                  onChangeText={setLoginPassword}
-                  placeholder="••••••••"
-                  placeholderTextColor={colors.textMuted}
-                  style={styles.passwordInput}
-                  secureTextEntry={!showPassword}
-                  autoCapitalize="none"
-                />
-                <Pressable onPress={() => setShowPassword((value) => !value)} hitSlop={8}>
-                  <Text style={styles.eye}>👁</Text>
-                </Pressable>
-              </View>
-            </>
-          ) : (
-            <>
-              <Text style={styles.label}>name</Text>
-              <TextInput
-                value={signupName}
-                onChangeText={setSignupName}
-                placeholder="Capybara Learner"
-                placeholderTextColor={colors.textMuted}
-                style={styles.input}
-              />
-              <Text style={styles.label}>email</Text>
-              <TextInput
-                value={signupEmail}
-                onChangeText={setSignupEmail}
-                placeholder="you@example.com"
-                placeholderTextColor={colors.textMuted}
-                style={styles.input}
-                autoCapitalize="none"
-                keyboardType="email-address"
-              />
-              <Text style={styles.label}>password</Text>
-              <View style={styles.passwordWrap}>
-                <TextInput
-                  value={signupPassword}
-                  onChangeText={setSignupPassword}
-                  placeholder="••••••••"
-                  placeholderTextColor={colors.textMuted}
-                  style={styles.passwordInput}
-                  secureTextEntry={!showPassword}
-                  autoCapitalize="none"
-                />
-                <Pressable onPress={() => setShowPassword((value) => !value)} hitSlop={8}>
-                  <Text style={styles.eye}>👁</Text>
-                </Pressable>
-              </View>
-            </>
-          )}
-
-          <Pressable>
-            <Text style={styles.forgot}>Forgot password?</Text>
-          </Pressable>
 
           {authError ? <Text style={styles.errorText}>{authError}</Text> : null}
 
@@ -201,16 +108,10 @@ export default function LoginScreen({ navigation }) {
               style={styles.submitButton}
             >
               <Text style={styles.submitText}>
-                {authLoading ? 'loading...' : isLogin ? 'login' : 'create account'}
+                {authLoading ? 'loading...' : 'login'}
               </Text>
             </LinearGradient>
           </Pressable>
-
-          <View style={styles.orSection}>
-            <View style={styles.rule} />
-            <Text style={styles.orText}>OR CONTINUE WITH</Text>
-            <View style={styles.rule} />
-          </View>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -272,22 +173,6 @@ const createStyles = (colors) =>
       fontSize: 13,
       fontFamily: 'DMSans_400Regular',
     },
-    tabsRow: {
-      flexDirection: 'row',
-      justifyContent: 'center',
-      gap: 26,
-      marginBottom: 18,
-    },
-    tabLabel: {
-      fontSize: 18,
-      fontFamily: 'DMSans_600SemiBold',
-    },
-    tabLabelActive: {
-      color: colors.textPrimary,
-    },
-    tabLabelMuted: {
-      color: colors.textSecondary,
-    },
     label: {
       marginBottom: 8,
       color: colors.textSecondary,
@@ -327,13 +212,6 @@ const createStyles = (colors) =>
       fontSize: 16,
       color: colors.accent,
     },
-    forgot: {
-      marginTop: 10,
-      textAlign: 'center',
-      color: colors.textSecondary,
-      fontSize: 14,
-      fontFamily: 'DMSans_400Regular',
-    },
     submitPressable: {
       marginTop: 6,
     },
@@ -349,23 +227,5 @@ const createStyles = (colors) =>
       fontSize: 15,
       fontFamily: 'DMSans_600SemiBold',
       textTransform: 'lowercase',
-    },
-    orSection: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 10,
-      marginTop: 20,
-    },
-    rule: {
-      flex: 1,
-      height: 1,
-      backgroundColor: colors.border,
-    },
-    orText: {
-      color: colors.textMuted,
-      fontSize: 11,
-      letterSpacing: 1,
-      fontFamily: 'DMSans_600SemiBold',
     },
   });

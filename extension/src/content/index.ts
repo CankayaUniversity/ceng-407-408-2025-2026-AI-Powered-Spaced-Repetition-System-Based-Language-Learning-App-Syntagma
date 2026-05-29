@@ -209,9 +209,17 @@ async function handleQuickAddCard(lemma: string, sentence: string): Promise<void
     tags: ['syntagma', 'quick-add'],
   };
 
+  const enriched = await sendMessage<{ ok: boolean; card?: FlashcardPayload; error?: string }>({
+    type: 'ENRICH_FLASHCARD',
+    payload: card,
+  });
+  if (!enriched.ok || !enriched.card) {
+    throw new Error(enriched.error ?? 'Could not generate AI flashcard fields');
+  }
+
   const result = await sendMessage<{ ok: boolean; error?: string }>({
     type: 'CREATE_FLASHCARD',
-    payload: card,
+    payload: enriched.card,
   });
   if (!result.ok) throw new Error(result.error ?? 'Could not create flashcard');
 }

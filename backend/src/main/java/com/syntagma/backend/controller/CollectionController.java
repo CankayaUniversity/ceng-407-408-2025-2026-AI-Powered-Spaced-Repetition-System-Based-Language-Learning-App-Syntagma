@@ -5,6 +5,8 @@ import com.syntagma.backend.dto.request.CollectionItemRequest;
 import com.syntagma.backend.dto.response.ApiResponse;
 import com.syntagma.backend.dto.response.CollectionItemResponse;
 import com.syntagma.backend.dto.response.CollectionResponse;
+import com.syntagma.backend.dto.response.FlashcardResponse;
+import com.syntagma.backend.security.SecurityUtils;
 import com.syntagma.backend.service.CollectionService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -15,6 +17,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/api/collections")
 @RequiredArgsConstructor
@@ -24,59 +28,67 @@ public class CollectionController {
 
     @PostMapping
     public ResponseEntity<ApiResponse<CollectionResponse>> create(
-            @RequestHeader("X-User-Id") Long userId,
             @Valid @RequestBody CollectionCreateRequest request) {
+        Long userId = SecurityUtils.getAuthenticatedUserId();
         CollectionResponse response = collectionService.create(userId, request);
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(response));
     }
 
     @GetMapping
     public ResponseEntity<ApiResponse<Page<CollectionResponse>>> getAll(
-            @RequestHeader("X-User-Id") Long userId,
             @PageableDefault(size = 20, sort = "createdAt") Pageable pageable) {
+        Long userId = SecurityUtils.getAuthenticatedUserId();
         Page<CollectionResponse> page = collectionService.getAll(userId, pageable);
         return ResponseEntity.ok(ApiResponse.success(page));
     }
 
     @GetMapping("/{collectionId}")
     public ResponseEntity<ApiResponse<CollectionResponse>> getById(
-            @RequestHeader("X-User-Id") Long userId,
             @PathVariable Long collectionId) {
+        Long userId = SecurityUtils.getAuthenticatedUserId();
         CollectionResponse response = collectionService.getById(userId, collectionId);
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
+    @GetMapping("/{collectionId}/reviewable-cards")
+    public ResponseEntity<ApiResponse<List<FlashcardResponse>>> getReviewableCards(
+            @PathVariable Long collectionId) {
+        Long userId = SecurityUtils.getAuthenticatedUserId();
+        List<FlashcardResponse> response = collectionService.getReviewableCards(userId, collectionId);
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 
     @PutMapping("/{collectionId}")
     public ResponseEntity<ApiResponse<CollectionResponse>> update(
-            @RequestHeader("X-User-Id") Long userId,
             @PathVariable Long collectionId,
             @Valid @RequestBody CollectionCreateRequest request) {
+        Long userId = SecurityUtils.getAuthenticatedUserId();
         CollectionResponse response = collectionService.update(userId, collectionId, request);
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 
     @DeleteMapping("/{collectionId}")
     public ResponseEntity<Void> delete(
-            @RequestHeader("X-User-Id") Long userId,
             @PathVariable Long collectionId) {
+        Long userId = SecurityUtils.getAuthenticatedUserId();
         collectionService.delete(userId, collectionId);
         return ResponseEntity.noContent().build();
     }
 
     @PostMapping("/{collectionId}/items")
     public ResponseEntity<ApiResponse<CollectionItemResponse>> addItem(
-            @RequestHeader("X-User-Id") Long userId,
             @PathVariable Long collectionId,
             @Valid @RequestBody CollectionItemRequest request) {
+        Long userId = SecurityUtils.getAuthenticatedUserId();
         CollectionItemResponse response = collectionService.addItem(userId, collectionId, request.flashcardId());
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(response));
     }
 
     @DeleteMapping("/{collectionId}/items/{flashcardId}")
     public ResponseEntity<Void> removeItem(
-            @RequestHeader("X-User-Id") Long userId,
             @PathVariable Long collectionId,
             @PathVariable Long flashcardId) {
+        Long userId = SecurityUtils.getAuthenticatedUserId();
         collectionService.removeItem(userId, collectionId, flashcardId);
         return ResponseEntity.noContent().build();
     }

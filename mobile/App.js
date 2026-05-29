@@ -13,7 +13,8 @@ import LoginScreen from './src/screens/LoginScreen';
 import MainTabs from './src/navigation/MainTabs';
 import SessionSummaryScreen from './src/screens/SessionSummaryScreen';
 import { ThemeProvider } from './src/shared/theme';
-import { getAuth } from './src/shared/storage';
+import { clearSession, getAuth } from './src/shared/storage';
+import { fetchCurrentUser } from './src/shared/api';
 
 const AppStack = createNativeStackNavigator();
 
@@ -42,10 +43,21 @@ export default function App() {
     const loadAuth = async () => {
       try {
         const auth = await getAuth();
+        if (!auth?.token) {
+          if (isMounted) {
+            setInitialRoute('Login');
+          }
+          return;
+        }
+
+        await fetchCurrentUser();
         if (isMounted) {
-          setInitialRoute(auth?.token ? 'MainTabs' : 'Login');
+          setInitialRoute('MainTabs');
         }
       } catch (err) {
+        if (err?.status === 401 || err?.status === 403) {
+          await clearSession().catch(() => {});
+        }
         if (isMounted) {
           setInitialRoute('Login');
         }

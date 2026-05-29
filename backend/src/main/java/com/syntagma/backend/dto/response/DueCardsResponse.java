@@ -10,6 +10,7 @@ public record DueCardsResponse(
             Long flashcardId,
             String lemma,
             String translation,
+            String usageNote,
             java.time.LocalDateTime nextReviewAt,
             Float stability,
             Float difficulty,

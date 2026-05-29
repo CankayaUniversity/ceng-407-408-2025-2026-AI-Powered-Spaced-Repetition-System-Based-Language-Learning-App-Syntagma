@@ -11,6 +11,7 @@ public record FlashcardResponse(
         String translation,
         String sourceSentence,
         String exampleSentence,
+        String usageNote,
         Long collectionId,
         KnowledgeStatus knowledgeStatus,
         List<Long> collectionIds,

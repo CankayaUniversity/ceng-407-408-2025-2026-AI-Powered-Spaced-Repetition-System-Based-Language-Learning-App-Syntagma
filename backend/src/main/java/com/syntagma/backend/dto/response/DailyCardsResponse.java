@@ -12,6 +12,7 @@ public record DailyCardsResponse(
             Long flashcardId,
             String lemma,
             String translation,
+            String usageNote,
             String type,
             LocalDateTime nextReviewAt,
             Float stability,

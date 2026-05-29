@@ -14,4 +14,7 @@ public interface CollectionItemRepository extends JpaRepository<CollectionItem, 
 
     @Query("SELECT ci.collectionId FROM CollectionItem ci WHERE ci.flashcardId = :flashcardId")
     List<Long> findCollectionIdsByFlashcardId(@Param("flashcardId") Long flashcardId);
+
+    @Query("SELECT ci.flashcardId FROM CollectionItem ci WHERE ci.collectionId = :collectionId")
+    List<Long> findFlashcardIdsByCollectionId(@Param("collectionId") Long collectionId);
 }

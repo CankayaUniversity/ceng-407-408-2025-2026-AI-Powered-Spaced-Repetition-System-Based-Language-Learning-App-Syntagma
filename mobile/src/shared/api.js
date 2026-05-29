@@ -1,6 +1,14 @@
-import { getAuth, saveAuth } from './storage';
+import { getAuth, saveAuth, updateAuthToken } from './storage';
 
 const API_BASE_URL = 'https://syntagma.omerhanyigit.online';
+
+export function getDeviceTimeZone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+}
 
 async function parseJsonSafely(response) {
   const text = await response.text();
@@ -16,7 +24,7 @@ async function parseJsonSafely(response) {
 }
 
 async function apiRequest(path, options = {}) {
-  const auth = await getAuth();
+  const auth = options.skipAuth ? null : await getAuth();
   const headers = {
     'Content-Type': 'application/json',
     ...(options.headers || {}),
@@ -25,8 +33,7 @@ async function apiRequest(path, options = {}) {
   if (auth?.token) {
     headers.Authorization = `Bearer ${auth.token}`;
   }
-
-  if (auth?.userId) {
+  if (auth?.userId != null) {
     headers['X-User-Id'] = String(auth.userId);
   }
 
@@ -36,11 +43,19 @@ async function apiRequest(path, options = {}) {
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
 
+  const refreshedToken = response.headers.get('X-Refreshed-Token');
+  if (refreshedToken) {
+    await updateAuthToken(refreshedToken);
+  }
+
   const payload = await parseJsonSafely(response);
 
   if (!response.ok) {
     const message = payload?.message || payload?.error || response.statusText || 'Request failed';
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = response.status;
+    error.payload = payload;
+    throw error;
   }
 
   return payload?.data ?? payload;
@@ -49,6 +64,7 @@ async function apiRequest(path, options = {}) {
 export async function loginUser(email, password) {
   const response = await apiRequest('/api/auth/login', {
     method: 'POST',
+    skipAuth: true,
     body: { email, password },
   });
 
@@ -66,6 +82,7 @@ export async function loginUser(email, password) {
 export async function registerUser(email, password) {
   return apiRequest('/api/auth/register', {
     method: 'POST',
+    skipAuth: true,
     body: { email, password },
   });
 }
@@ -78,18 +95,29 @@ export async function fetchCollectionById(collectionId) {
   return apiRequest(`/api/collections/${collectionId}`);
 }
 
+export async function fetchCollectionReviewableCards(collectionId) {
+  return apiRequest(`/api/collections/${collectionId}/reviewable-cards`);
+}
+
 export async function fetchCurrentUser() {
   return apiRequest('/api/users/me');
 }
 
 export async function fetchReviewStats(period = 'week') {
-  return apiRequest(`/api/reviews/stats?period=${encodeURIComponent(period)}`);
+  const params = new URLSearchParams({
+    period,
+    clientTimeZone: getDeviceTimeZone(),
+  });
+  return apiRequest(`/api/reviews/stats?${params.toString()}`);
 }
 
 export async function submitReview(review) {
   return apiRequest('/api/reviews', {
     method: 'POST',
-    body: review,
+    body: {
+      ...review,
+      clientTimeZone: review?.clientTimeZone || getDeviceTimeZone(),
+    },
   });
 }
 
@@ -111,6 +139,31 @@ export async function fetchWordKnowledgePage(page = 0, size = 100, status = null
   }
 
   return apiRequest(`/api/word-knowledge?${params.toString()}`);
+}
+
+export async function fetchVocabularyPage(page = 0, size = 50, status = 'ALL', search = '') {
+  const params = new URLSearchParams({
+    page: String(page),
+    size: String(size),
+    status: status || 'ALL',
+  });
+
+  if (search && search.trim()) {
+    params.set('search', search.trim());
+  }
+
+  return apiRequest(`/api/vocabulary?${params.toString()}`);
+}
+
+export async function fetchKnownVocabularyCount() {
+  const data = await fetchVocabularyPage(0, 1, 'KNOWN');
+  if (Number.isFinite(data?.totalElements)) {
+    return data.totalElements;
+  }
+  if (Array.isArray(data?.content)) {
+    return data.content.length;
+  }
+  return 0;
 }
 
 export async function fetchDueCards(limit = 20) {

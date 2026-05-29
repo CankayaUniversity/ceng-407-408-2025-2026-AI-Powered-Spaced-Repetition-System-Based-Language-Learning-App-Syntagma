@@ -16,32 +16,25 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Notifications from 'expo-notifications';
 import {
-  fetchAllFlashcards,
-  fetchAllWordKnowledge,
   fetchCurrentUser,
+  fetchKnownVocabularyCount,
   fetchReviewStats,
 } from '../shared/api';
 import {
   getAuth,
   getBadgeState,
-  getCache,
   getLastStudyCount,
   getNotificationPreference,
   getReminderHour,
-  getStudyStreak,
-  clearAuth,
+  clearSession,
   saveBadgeState,
   saveLastStudyCount,
   saveNotificationPreference,
   saveReminderHour,
-  saveCache,
 } from '../shared/storage';
 import { computeCefrState, getCefrMedal } from '../shared/badges';
-import { computeKnownWordsStats } from '../shared/known-words';
 import { useTheme } from '../shared/theme';
 
-const CACHE_ALL_FLASHCARDS = 'syntagma.cache.flashcards.all.v1';
-const CACHE_WORD_KNOWLEDGE = 'syntagma.cache.wordknowledge.all.v1';
 const DEFAULT_DAILY_COUNT = 10;
 
 // ── Small reusable components ──────────────────────────────────────
@@ -183,6 +176,7 @@ export default function SettingsScreen({ navigation }) {
   const [timePickerVisible, setTimePickerVisible] = useState(false);
   const [dailyPickerVisible, setDailyPickerVisible] = useState(false);
   const [streakCount, setStreakCount] = useState(null);
+  const [longestStreakCount, setLongestStreakCount] = useState(null);
   const [badgeState, setBadgeState] = useState(null);
   const [achievementsOpen, setAchievementsOpen] = useState(false);
 
@@ -259,56 +253,24 @@ export default function SettingsScreen({ navigation }) {
 
       // Fetch streak + badge
       try {
-        const localStreak = await getStudyStreak();
-        if (isMounted && localStreak != null) {
-          setStreakCount(localStreak);
-        } else {
-          const stats = await fetchReviewStats('week');
-          if (isMounted && stats?.streakCount != null) {
-            setStreakCount(stats.streakCount);
-          }
+        const stats = await fetchReviewStats('month').catch(() => null);
+
+        if (isMounted) {
+          setStreakCount(stats?.streakCount ?? 0);
+          setLongestStreakCount(stats?.longestStreakCount ?? 0);
         }
       } catch (err) {
         // Streak and badge are optional, don't fail
       }
 
       try {
-        const [flashcardsResult, knowledgeResult] = await Promise.allSettled([
-          fetchAllFlashcards(),
-          fetchAllWordKnowledge(),
-        ]);
-
-        const flashcards = flashcardsResult.status === 'fulfilled' ? flashcardsResult.value : [];
-        const knowledge = knowledgeResult.status === 'fulfilled' ? knowledgeResult.value : [];
-
-        if (flashcardsResult.status === 'fulfilled') {
-          saveCache(CACHE_ALL_FLASHCARDS, flashcards).catch(() => {});
-        }
-        if (knowledgeResult.status === 'fulfilled') {
-          saveCache(CACHE_WORD_KNOWLEDGE, knowledge).catch(() => {});
-        }
-
-        if (flashcardsResult.status === 'rejected' && knowledgeResult.status === 'rejected') {
-          throw flashcardsResult.reason || knowledgeResult.reason || new Error('Failed to load vocabulary.');
-        }
-
-        const { knownCount } = computeKnownWordsStats(flashcards, knowledge);
+        const knownCount = await fetchKnownVocabularyCount();
         if (isMounted) {
           await saveBadgeState({ knownWords: knownCount });
           setBadgeState(computeCefrState(knownCount));
         }
       } catch (err) {
-        const cachedFlashcards = await getCache(CACHE_ALL_FLASHCARDS).catch(() => []);
-        const cachedKnowledge = await getCache(CACHE_WORD_KNOWLEDGE).catch(() => []);
-        if ((cachedFlashcards?.length ?? 0) > 0 || (cachedKnowledge?.length ?? 0) > 0) {
-          const { knownCount } = computeKnownWordsStats(
-            Array.isArray(cachedFlashcards) ? cachedFlashcards : [],
-            Array.isArray(cachedKnowledge) ? cachedKnowledge : []
-          );
-          if (isMounted) {
-            setBadgeState(computeCefrState(knownCount));
-          }
-        }
+        // Keep the cached badge already shown above.
       }
     };
 
@@ -318,7 +280,7 @@ export default function SettingsScreen({ navigation }) {
 
   const handleSignOut = async () => {
     try {
-      await clearAuth();
+      await clearSession();
       await cancelAllReminders();
       await saveNotificationPreference(false);
       setIsNotificationsOn(false);
@@ -435,9 +397,7 @@ export default function SettingsScreen({ navigation }) {
 
           <Text style={styles.headerTitle}>Syntagma</Text>
 
-          <Pressable onPress={() => {}} hitSlop={10}>
-            <Ionicons name="settings-outline" size={24} color={colors.accent} />
-          </Pressable>
+          <View style={styles.headerSpacer} />
         </View>
 
         {/* Streak banner */}
@@ -446,7 +406,11 @@ export default function SettingsScreen({ navigation }) {
             <Text style={styles.streakEmoji}>🔥</Text>
             <View>
               <Text style={styles.streakCount}>{streakCount} day streak</Text>
-              <Text style={styles.streakHint}>Keep it going!</Text>
+              <Text style={styles.streakHint}>
+                {longestStreakCount != null
+                  ? `Longest streak: ${longestStreakCount} days`
+                  : 'Keep it going!'}
+              </Text>
             </View>
           </View>
         )}
@@ -717,6 +681,10 @@ const createStyles = (colors) => StyleSheet.create({
     color: colors.accent,
     fontSize: 30,
     fontFamily: 'PlayfairDisplay_700Bold',
+  },
+  headerSpacer: {
+    width: 24,
+    height: 24,
   },
   // Streak banner
   streakBanner: {

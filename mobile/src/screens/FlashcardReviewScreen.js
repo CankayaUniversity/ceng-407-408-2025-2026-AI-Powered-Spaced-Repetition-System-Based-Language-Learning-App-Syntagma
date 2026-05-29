@@ -21,10 +21,9 @@ import {
   clearCarryover,
   getCarryover,
   getLastStudyCount,
-  markStudyDay,
   saveCarryover,
 } from '../shared/storage';
-import { fetchFlashcardMedia, fetchMediaDownloadUrl, submitReview, updateWordKnowledge } from '../shared/api';
+import { fetchFlashcardMedia, fetchMediaDownloadUrl, getDeviceTimeZone, submitReview, updateWordKnowledge } from '../shared/api';
 import { bumpDelta, enqueueReview, enqueueWordKnowledge, markCardReviewed } from '../shared/offline';
 import { useTheme } from '../shared/theme';
 
@@ -69,6 +68,8 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
   const [fetchedImageUri, setFetchedImageUri] = useState('');
   const [dictAudioUri, setDictAudioUri] = useState('');
   const soundRef = useRef(null);
+  const audioRequestRef = useRef(0);
+  const autoplayedCardRef = useRef(null);
 
   const detailsAnim = useRef(new Animated.Value(0)).current;
   const cards = sessionCards.length ? sessionCards : rawCards;
@@ -77,16 +78,26 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
     activeCard?.sentenceAudioDataUrl || activeCard?.audioUrl || activeCard?.audioUri || '';
   const cardImageUri =
     activeCard?.imageUri || activeCard?.imageUrl || activeCard?.screenshotDataUrl || '';
-  const effectiveAudioUri = cardAudioUri || fetchedAudioUri || dictAudioUri;
+  const sentenceAudioUri = cardAudioUri || fetchedAudioUri;
+  const effectiveAudioUri = sentenceAudioUri || dictAudioUri;
   const effectiveImageUri = cardImageUri || fetchedImageUri;
-  const exampleSentence = activeCard?.exampleSentence || activeCard?.sentence || '';
-  const usageSentence = activeCard?.sourceSentence || '';
+  const sourceSentence = activeCard?.sourceSentence || activeCard?.sentence || '';
+  const exampleSentence = activeCard?.exampleSentence || '';
+  const usageNote = activeCard?.usageNote || '';
   const usageTitle = activeCard?.sourceTitle || '';
   const usageUrl = activeCard?.sourceUrl || '';
   const usageTimestamp =
     Number.isFinite(activeCard?.videoTimestamp) ? Number(activeCard.videoTimestamp) : null;
   const detailsOpen = cardState === 'isExpanded';
-  const cardsLeft = Math.max(cards.length - currentIndex, 0);
+  const plannedCardsCount = targetCount || cards.length;
+  const originalCardsLeft = Math.max(plannedCardsCount - currentIndex, 0);
+  const retryCardsLeft =
+    currentIndex < plannedCardsCount
+      ? Math.max(cards.length - plannedCardsCount, 0)
+      : Math.max(cards.length - currentIndex, 0);
+  const cardsLeftText = retryCardsLeft > 0
+    ? `${originalCardsLeft} CARDS LEFT + ${retryCardsLeft} ${retryCardsLeft === 1 ? 'RETRY' : 'RETRIES'}`
+    : `${originalCardsLeft} CARDS LEFT`;
   const cardHorizontalPadding = Math.max(16, Math.min(28, Math.round(width * 0.07)));
   const collectionName = route?.params?.collectionName;
   const todayKey = new Date().toISOString().slice(0, 10);
@@ -162,6 +173,21 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
     }).start();
   }, [detailsAnim, detailsOpen]);
 
+  const closeDetails = useCallback(() => {
+    if (!detailsOpen) {
+      return;
+    }
+
+    LayoutAnimation.configureNext(
+      LayoutAnimation.create(220, LayoutAnimation.Types.easeInEaseOut, LayoutAnimation.Properties.opacity)
+    );
+    Animated.timing(detailsAnim, {
+      toValue: 0,
+      duration: 180,
+      useNativeDriver: true,
+    }).start(() => setCardState('isCollapsed'));
+  }, [detailsAnim, detailsOpen]);
+
   const resetDetails = useCallback(() => {
     detailsAnim.setValue(0);
     LayoutAnimation.configureNext(
@@ -199,6 +225,7 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
   }, [formatTimestamp, usageTimestamp, usageTitle, usageUrl]);
 
   const stopCardAudio = useCallback(async () => {
+    audioRequestRef.current += 1;
     const sound = soundRef.current;
     soundRef.current = null;
 
@@ -223,6 +250,56 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
     );
   }, []);
 
+  const playAudioUri = useCallback(async (uri) => {
+    if (!uri) {
+      return false;
+    }
+
+    await stopCardAudio();
+    const audioRequestId = audioRequestRef.current + 1;
+    audioRequestRef.current = audioRequestId;
+    setAudioStatus({ isPlaying: false, isLoading: true });
+
+    try {
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        shouldDuckAndroid: true,
+        playThroughEarpieceAndroid: false,
+      });
+      const { sound } = await Audio.Sound.createAsync({ uri }, { shouldPlay: true });
+      if (audioRequestRef.current !== audioRequestId) {
+        try {
+          await sound.stopAsync();
+        } catch (err) {
+          // Ignore stop errors from stale audio loads.
+        }
+
+        try {
+          await sound.unloadAsync();
+        } catch (err) {
+          // Ignore unload errors from stale audio loads.
+        }
+
+        return false;
+      }
+
+      soundRef.current = sound;
+      sound.setOnPlaybackStatusUpdate((status) => {
+        if (audioRequestRef.current !== audioRequestId) return;
+        if (!status.isLoaded) return;
+        if (status.didJustFinish) { stopCardAudio(); return; }
+        setAudioStatus((prev) => ({ ...prev, isPlaying: status.isPlaying, isLoading: false }));
+      });
+      return true;
+    } catch {
+      if (audioRequestRef.current === audioRequestId) {
+        setAudioStatus({ isPlaying: false, isLoading: false });
+      }
+      return false;
+    }
+  }, [stopCardAudio]);
+
   const handleCardAudio = useCallback(async () => {
     if (!effectiveAudioUri) {
       return;
@@ -233,56 +310,56 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
       return;
     }
 
-    setAudioStatus({ isPlaying: false, isLoading: true });
-
-    const createSound = async (uri) => {
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
-        shouldDuckAndroid: true,
-        playThroughEarpieceAndroid: false,
-      });
-      const { sound } = await Audio.Sound.createAsync({ uri }, { shouldPlay: true });
-      soundRef.current = sound;
-      sound.setOnPlaybackStatusUpdate((status) => {
-        if (!status.isLoaded) return;
-        if (status.didJustFinish) { stopCardAudio(); return; }
-        setAudioStatus((prev) => ({ ...prev, isPlaying: status.isPlaying, isLoading: false }));
-      });
-    };
-
     try {
-      await createSound(effectiveAudioUri);
-    } catch {
-      // Primary URI failed (e.g. unplayable YouTube/expired URL) — retry with dict audio
-      if (dictAudioUri && dictAudioUri !== effectiveAudioUri) {
-        try {
-          await createSound(dictAudioUri);
-          setFetchedAudioUri(dictAudioUri);
-        } catch {
-          setAudioStatus({ isPlaying: false, isLoading: false });
-        }
-      } else {
-        setAudioStatus({ isPlaying: false, isLoading: false });
+      const played = await playAudioUri(effectiveAudioUri);
+      if (played) {
+        return;
       }
+    } catch {
+      // Fall through to the dictionary fallback below.
     }
-  }, [audioStatus.isLoading, audioStatus.isPlaying, effectiveAudioUri, dictAudioUri, stopCardAudio]);
 
-  const advanceToNextCard = useCallback(() => {
-    const isLastCard = currentIndex >= cards.length - 1;
+    if (dictAudioUri && dictAudioUri !== effectiveAudioUri) {
+      await playAudioUri(dictAudioUri);
+    }
+  }, [audioStatus.isLoading, audioStatus.isPlaying, dictAudioUri, effectiveAudioUri, playAudioUri, stopCardAudio]);
+
+  const handleCardPress = useCallback(() => {
+    if (detailsOpen) {
+      stopCardAudio();
+      closeDetails();
+      return;
+    }
+
+    openDetails();
+  }, [closeDetails, detailsOpen, openDetails, stopCardAudio]);
+
+  const advanceToNextCard = useCallback((cardToRequeue = null) => {
+    const nextCardCount = cards.length + (cardToRequeue ? 1 : 0);
+    const isLastCard = currentIndex >= nextCardCount - 1;
+
+    if (cardToRequeue) {
+      setSessionCards((prev) => {
+        const baseCards = prev.length ? prev : rawCards;
+        return [...baseCards, cardToRequeue];
+      });
+    }
+
     if (isLastCard) {
+      const finalTargetCount = targetCount || nextCardCount;
       setSessionCompleted(true);
       clearCarryover();
       navigation.navigate('SessionSummaryScreen', {
-        reviewedCount: cards.length,
-        targetCount: targetCount || cards.length,
+        reviewedCount: finalTargetCount,
+        targetCount: finalTargetCount,
+        retryCount: Math.max(nextCardCount - finalTargetCount, 0),
       });
       return;
     }
 
     resetDetails();
     setCurrentIndex((prev) => prev + 1);
-  }, [cards.length, currentIndex, navigation, resetDetails, targetCount]);
+  }, [cards.length, currentIndex, navigation, rawCards, resetDetails, targetCount]);
 
   const handleAnswer = useCallback(
     (rating) => {
@@ -291,16 +368,16 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
         reviewHandler(rating);
       }
 
-      markStudyDay(todayKey).catch(() => {});
-
       const lemma = activeCard?.word || activeCard?.lemma;
       const flashcardId = activeCard?.flashcardId;
       if (flashcardId != null) {
+        const clientTimestamp = new Date().toISOString();
         const review = {
           flashcardId: Number(flashcardId),
           result: rating,
           device: 'MOBILE',
-          clientTimestamp: new Date().toISOString(),
+          clientTimestamp,
+          clientTimeZone: getDeviceTimeZone(),
         };
         submitReview(review)
           .then((response) => {
@@ -318,7 +395,8 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
           });
       }
 
-      advanceToNextCard();
+      const cardToRequeue = rating === Rating.Again ? activeCard : null;
+      advanceToNextCard(cardToRequeue);
     },
     [activeCard, onReview, routeOnReview, advanceToNextCard, todayKey]
   );
@@ -345,8 +423,23 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
   );
 
   useEffect(() => {
+    autoplayedCardRef.current = null;
     stopCardAudio();
   }, [currentIndex, stopCardAudio]);
+
+  useEffect(() => {
+    if (!detailsOpen || !sentenceAudioUri) {
+      return;
+    }
+
+    const autoplayKey = String(activeCard?.flashcardId ?? `${currentIndex}:${activeCard?.word ?? ''}`);
+    if (autoplayedCardRef.current === autoplayKey) {
+      return;
+    }
+
+    autoplayedCardRef.current = autoplayKey;
+    playAudioUri(sentenceAudioUri);
+  }, [activeCard?.flashcardId, activeCard?.word, currentIndex, detailsOpen, playAudioUri, sentenceAudioUri]);
 
   useEffect(() => () => {
     stopCardAudio();
@@ -359,7 +452,12 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
       }
 
       const plannedCount = targetCount || cards.length;
-      const remaining = Math.max(plannedCount - currentIndex, 0);
+      const originalRemaining = Math.max(plannedCount - currentIndex, 0);
+      const retryRemaining =
+        currentIndex < plannedCount
+          ? Math.max(cards.length - plannedCount, 0)
+          : Math.max(cards.length - currentIndex, 0);
+      const remaining = originalRemaining + retryRemaining;
 
       if (remaining > 0) {
         saveCarryover({ date: todayKey, remaining });
@@ -389,7 +487,7 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
         if (cancelled) return;
 
         if (!Array.isArray(mediaList)) {
-          if (!cardAudioUri && word) fetchDictAudio(word, cancelled, setFetchedAudioUri);
+          if (!cardAudioUri && word) fetchDictAudio(word, cancelled, setDictAudioUri);
           return;
         }
 
@@ -401,11 +499,11 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
             fetchMediaDownloadUrl(audioAsset.mediaId)
               .then((res) => {
                 if (!cancelled && res?.downloadUrl) setFetchedAudioUri(res.downloadUrl);
-                else if (!cancelled && word) fetchDictAudio(word, cancelled, setFetchedAudioUri);
+                else if (!cancelled && word) fetchDictAudio(word, cancelled, setDictAudioUri);
               })
-              .catch(() => { if (!cancelled && word) fetchDictAudio(word, cancelled, setFetchedAudioUri); });
+              .catch(() => { if (!cancelled && word) fetchDictAudio(word, cancelled, setDictAudioUri); });
           } else if (word) {
-            fetchDictAudio(word, cancelled, setFetchedAudioUri);
+            fetchDictAudio(word, cancelled, setDictAudioUri);
           }
         }
 
@@ -414,9 +512,9 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
             .then((res) => { if (!cancelled && res?.downloadUrl) setFetchedImageUri(res.downloadUrl); })
             .catch(() => {});
         }
-      })
+    })
       .catch(() => {
-        if (!cancelled && !cardAudioUri && word) fetchDictAudio(word, cancelled, setFetchedAudioUri);
+        if (!cancelled && !cardAudioUri && word) fetchDictAudio(word, cancelled, setDictAudioUri);
       });
 
     return () => { cancelled = true; };
@@ -452,7 +550,7 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
         <View style={styles.progressBarTrack}>
           <View style={[styles.progressBarFill, { width: `${(currentIndex / Math.max(cards.length, 1)) * 100}%` }]} />
         </View>
-        <Text style={styles.cardsLeftText}>{`${cardsLeft} CARDS LEFT`}</Text>
+        <Text style={styles.cardsLeftText}>{cardsLeftText}</Text>
       </View>
 
       <View
@@ -465,8 +563,7 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
         ]}
       >
         <Pressable
-          onPress={openDetails}
-          disabled={detailsOpen}
+          onPress={handleCardPress}
           style={({ pressed }) => [
             styles.cardFrame,
             detailsOpen && styles.cardFrameExpanded,
@@ -474,7 +571,7 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
           ]}
         >
           <Text style={styles.wordText}>{activeCard.word}</Text>
-          <Text style={styles.sentenceText}>{`"${activeCard.sentence}"`}</Text>
+          {sourceSentence ? <Text style={styles.sentenceText}>{`"${sourceSentence}"`}</Text> : null}
           <Text style={styles.phoneticText}>{activeCard.phonetic}</Text>
 
           {!detailsOpen && <Text style={styles.detailsHintText}>Tap for details</Text>}
@@ -505,18 +602,27 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
                   </View>
                 ) : null}
 
-                {usageSentence || usageMeta ? (
+                {usageNote ? (
                   <View style={styles.detailBlock}>
-                    <Text style={styles.detailLabel}>Usage context</Text>
-                    {usageSentence ? <Text style={styles.detailText}>{usageSentence}</Text> : null}
-                    {usageMeta ? <Text style={styles.detailMeta}>{usageMeta}</Text> : null}
+                    <Text style={styles.detailLabel}>AI Usage Note</Text>
+                    <Text style={styles.detailText}>{usageNote}</Text>
+                  </View>
+                ) : null}
+
+                {usageMeta ? (
+                  <View style={styles.detailBlock}>
+                    <Text style={styles.detailLabel}>Source</Text>
+                    <Text style={styles.detailMeta}>{usageMeta}</Text>
                   </View>
                 ) : null}
 
                 {effectiveAudioUri ? (
                   <Pressable
                     style={styles.audioButton}
-                    onPress={handleCardAudio}
+                    onPress={(event) => {
+                      event?.stopPropagation?.();
+                      handleCardAudio();
+                    }}
                     disabled={audioStatus.isLoading}
                   >
                     <Ionicons
@@ -539,7 +645,10 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
                     {activeCard.englishPronunciationUri && (
                       <Pressable
                         style={styles.pronunciationButton}
-                        onPress={() => handlePronunciation('en', activeCard.englishPronunciationUri)}
+                        onPress={(event) => {
+                          event?.stopPropagation?.();
+                          handlePronunciation('en', activeCard.englishPronunciationUri);
+                        }}
                       >
                         <Ionicons name="volume-high-outline" size={18} color={colors.accent} />
                         <Text style={styles.pronunciationButtonText}>EN Pronunciation</Text>
@@ -548,7 +657,10 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
                     {activeCard.turkishPronunciationUri && (
                       <Pressable
                         style={styles.pronunciationButton}
-                        onPress={() => handlePronunciation('tr', activeCard.turkishPronunciationUri)}
+                        onPress={(event) => {
+                          event?.stopPropagation?.();
+                          handlePronunciation('tr', activeCard.turkishPronunciationUri);
+                        }}
                       >
                         <Ionicons name="volume-high-outline" size={18} color={colors.accent} />
                         <Text style={styles.pronunciationButtonText}>TR Pronunciation</Text>

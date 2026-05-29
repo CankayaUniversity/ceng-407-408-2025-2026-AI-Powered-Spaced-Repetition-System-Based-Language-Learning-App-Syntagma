@@ -102,7 +102,7 @@ public class FsrsAlgorithm {
             case AGAIN -> {
                 srsState.setState(CardState.LEARNING.name());
                 srsState.setScheduledDays(0);
-                srsState.setNextReviewAt(now.plusMinutes(1));
+                srsState.setNextReviewAt(now);
                 srsState.setLapses(srsState.getLapses() + 1);
             }
             case HARD -> {
@@ -137,7 +137,7 @@ public class FsrsAlgorithm {
             case AGAIN -> {
                 srsState.setState(CardState.LEARNING.name());
                 srsState.setScheduledDays(0);
-                srsState.setNextReviewAt(now.plusMinutes(5));
+                srsState.setNextReviewAt(now);
                 srsState.setLapses(srsState.getLapses() + 1);
             }
             case HARD -> {
@@ -182,7 +182,7 @@ public class FsrsAlgorithm {
             srsState.setStability((float) newS);
             srsState.setState(CardState.RELEARNING.name());
             srsState.setScheduledDays(0);
-            srsState.setNextReviewAt(now.plusMinutes(5));
+            srsState.setNextReviewAt(now);
             srsState.setLapses(srsState.getLapses() + 1);
         } else {
             // Successful recall — stay in Review state

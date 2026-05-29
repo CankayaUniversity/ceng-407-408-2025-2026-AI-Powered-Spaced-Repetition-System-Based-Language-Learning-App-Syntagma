@@ -15,6 +15,7 @@ describe('shared/flashcards mapping', () => {
       translation: 'merhaba',
       sourceSentence: 'hello world',
       exampleSentence: 'example sentence',
+      usageNote: 'Use this as a friendly greeting.',
       collectionId: 3,
       collectionIds: [3, 4],
       knowledgeStatus: 'LEARNING',
@@ -26,6 +27,7 @@ describe('shared/flashcards mapping', () => {
     expect(mapped.trMeaning).toBe('merhaba');
     expect(mapped.sentence).toBe('hello world');
     expect(mapped.exampleSentence).toBe('example sentence');
+    expect(mapped.usageNote).toBe('Use this as a friendly greeting.');
     expect(mapped.collectionId).toBe(3);
     expect(mapped.collectionIds).toEqual([3, 4]);
     expect(mapped.knowledgeStatus).toBe('LEARNING');
@@ -40,6 +42,7 @@ describe('shared/flashcards mapping', () => {
       surfaceForm: 'Hello',
       sentence: 'Hello world',
       exampleSentence: 'Example',
+      usageNote: 'Use this as a friendly greeting.',
       sourceUrl: 'https://example.com',
       sourceTitle: 'Example',
       trMeaning: 'Merhaba',
@@ -51,6 +54,7 @@ describe('shared/flashcards mapping', () => {
 
     const withDeck = buildBackendFlashcardPayload(card, 7);
     expect(withDeck.collectionId).toBe(7);
+    expect(withDeck.usageNote).toBe('Use this as a friendly greeting.');
     expect(withDeck.clearCollection).toBeUndefined();
 
     const unsorted = buildBackendFlashcardPayload(card, null);

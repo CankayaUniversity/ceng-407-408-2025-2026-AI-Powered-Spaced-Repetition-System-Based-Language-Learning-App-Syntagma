@@ -8,6 +8,7 @@ public record ReviewStatsResponse(
         long monthlyCount,
         long yearlyCount,
         Integer streakCount,
+        Integer longestStreakCount,
         double averageResult,
         List<DailyReviewCount> reviewsByDay
 ) {

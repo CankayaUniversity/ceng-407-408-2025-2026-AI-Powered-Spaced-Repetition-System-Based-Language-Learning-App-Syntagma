@@ -8,6 +8,7 @@ export interface BackendFlashcard {
   translation?: string | null;
   sourceSentence?: string | null;
   exampleSentence?: string | null;
+  usageNote?: string | null;
   collectionId?: number | null;
   collectionIds?: Array<number | null> | null;
   knowledgeStatus?: string | null;
@@ -20,6 +21,7 @@ export interface BackendFlashcardUpsertPayload {
   translation: string;
   sourceSentence: string;
   exampleSentence: string;
+  usageNote: string;
   knowledgeStatus: KnowledgeStatusValue;
   collectionId?: number;
   clearCollection?: boolean;
@@ -69,6 +71,7 @@ export function mapBackendFlashcard(fc: BackendFlashcard, defaultDeckName = 'Syn
     sourceTitle: '',
     trMeaning: fc.translation ?? '',
     exampleSentence: fc.exampleSentence ?? '',
+    usageNote: fc.usageNote ?? '',
     knowledgeStatus: toKnowledgeStatus(fc.knowledgeStatus),
     createdAt: toTimestamp(fc.createdAt),
     updatedAt: toTimestamp(fc.updatedAt),
@@ -88,6 +91,7 @@ export function buildBackendFlashcardPayload(
     translation: card.trMeaning ?? '',
     sourceSentence: card.sentence ?? '',
     exampleSentence: card.exampleSentence ?? '',
+    usageNote: card.usageNote ?? '',
     knowledgeStatus: card.knowledgeStatus ?? 'LEARNING',
   };
 
@@ -107,6 +111,8 @@ export function mergeFlashcardWithLocalFields(localCard: FlashcardPayload, serve
     sourceTitle: localCard.sourceTitle,
     tags: localCard.tags,
     deckName: localCard.deckName || serverCard.deckName,
+    exampleSentence: serverCard.exampleSentence || localCard.exampleSentence,
+    usageNote: serverCard.usageNote || localCard.usageNote,
     screenshotDataUrl: localCard.screenshotDataUrl,
     audioUrl: localCard.audioUrl,
     sentenceAudioDataUrl: localCard.sentenceAudioDataUrl,

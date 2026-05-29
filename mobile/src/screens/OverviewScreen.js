@@ -5,13 +5,90 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useIsFocused } from '@react-navigation/native';
 import { useNetInfo } from '@react-native-community/netinfo';
 import { fetchReviewStats } from '../shared/api';
-import { getCache, getStudyStreak, saveCache } from '../shared/storage';
+import { getCache, saveCache } from '../shared/storage';
 import { flushQueues, getReviewDeltaToday } from '../shared/offline';
 import { useTheme } from '../shared/theme';
 
 const TABS = ['WEEK', 'MONTH'];
 const cacheStatsKey = (period) => `syntagma.cache.reviewstats.${period}`;
-const todayStr = () => new Date().toISOString().slice(0, 10);
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+const todayStr = () => {
+  return formatLocalDateKey(new Date());
+};
+
+function formatLocalDateKey(date) {
+  const today = new Date();
+  const source = date || today;
+  const year = source.getFullYear();
+  const month = String(source.getMonth() + 1).padStart(2, '0');
+  const day = String(source.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function dateStrToDayNumber(dateStr) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr || '');
+  if (!match) {
+    return null;
+  }
+
+  const [, year, month, day] = match;
+  return Math.floor(Date.UTC(Number(year), Number(month) - 1, Number(day)) / MS_PER_DAY);
+}
+
+function todayDayNumber() {
+  const today = new Date();
+  return Math.floor(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()) / MS_PER_DAY);
+}
+
+function computeStreaksFromReviews(reviewsByDay) {
+  const studyDays = new Set();
+  (reviewsByDay ?? []).forEach((entry) => {
+    if ((entry?.count ?? 0) <= 0) {
+      return;
+    }
+    const dayNumber = dateStrToDayNumber(entry.date);
+    if (dayNumber != null) {
+      studyDays.add(dayNumber);
+    }
+  });
+
+  if (!studyDays.size) {
+    return { current: 0, longest: 0 };
+  }
+
+  const today = todayDayNumber();
+  let current = 0;
+  let cursor = studyDays.has(today) ? today : studyDays.has(today - 1) ? today - 1 : null;
+  while (cursor != null && studyDays.has(cursor)) {
+    current += 1;
+    cursor -= 1;
+  }
+
+  let longest = 0;
+  let run = 0;
+  let previous = null;
+  Array.from(studyDays).sort((a, b) => a - b).forEach((day) => {
+    run = previous == null || day === previous + 1 ? run + 1 : 1;
+    longest = Math.max(longest, run);
+    previous = day;
+  });
+
+  return { current, longest };
+}
+
+function normalizeStats(rawStats) {
+  if (!rawStats) {
+    return rawStats;
+  }
+
+  const derivedStreaks = computeStreaksFromReviews(rawStats.reviewsByDay);
+  return {
+    ...rawStats,
+    streakCount: rawStats.streakCount ?? derivedStreaks.current,
+    longestStreakCount: rawStats.longestStreakCount ?? derivedStreaks.longest,
+  };
+}
 
 const WEEK_DAYS = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 
@@ -30,6 +107,7 @@ function buildEmptyStats() {
   return {
     totalReviews: 0,
     streakCount: 0,
+    longestStreakCount: 0,
     weeklyCount: 0,
     monthlyCount: 0,
     reviewsByDay: [],
@@ -86,21 +164,18 @@ export default function OverviewScreen() {
         }
         const delta = await getReviewDeltaToday().catch(() => 0);
         const mergedStats = applyDeltaToStats(rawStats, delta);
-        const localStreak = await getStudyStreak().catch(() => null);
-        setStats(localStreak != null ? { ...mergedStats, streakCount: localStreak } : mergedStats);
+        setStats(normalizeStats(mergedStats));
         return;
       }
       const rawStats = await fetchReviewStats(period.toLowerCase());
       saveCache(cacheStatsKey(period), rawStats).catch(() => {});
-      const localStreak = await getStudyStreak().catch(() => null);
-      setStats(localStreak != null ? { ...rawStats, streakCount: localStreak } : rawStats);
+      setStats(normalizeStats(rawStats));
     } catch (err) {
       let rawStats = await getCache(cacheStatsKey(period)).catch(() => null);
       if (rawStats) {
         const delta = await getReviewDeltaToday().catch(() => 0);
         const mergedStats = applyDeltaToStats(rawStats, delta);
-        const localStreak = await getStudyStreak().catch(() => null);
-        setStats(localStreak != null ? { ...mergedStats, streakCount: localStreak } : mergedStats);
+        setStats(normalizeStats(mergedStats));
         setError('');
       } else {
         setError(err?.message || 'Stats could not be loaded.');
@@ -139,12 +214,9 @@ export default function OverviewScreen() {
         });
     }
 
-    // Always show Mon–Sun of the current week, filling 0 for missing days
+    // Show the last 7 days with today at the right edge, filling 0 for missing days.
     const today = new Date();
-    const dow = today.getDay(); // 0=Sun, 1=Mon, …
-    const monday = new Date(today);
-    monday.setDate(today.getDate() - (dow === 0 ? 6 : dow - 1));
-    monday.setHours(0, 0, 0, 0);
+    today.setHours(0, 0, 0, 0);
 
     const countMap = {};
     (stats?.reviewsByDay ?? []).forEach((entry) => {
@@ -152,12 +224,12 @@ export default function OverviewScreen() {
     });
 
     return Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(monday);
-      d.setDate(monday.getDate() + i);
-      const dateStr = d.toISOString().slice(0, 10);
+      const d = new Date(today);
+      d.setDate(today.getDate() - (6 - i));
+      const dateStr = formatLocalDateKey(d);
       return {
         date: dateStr,
-        label: WEEK_DAYS[i],
+        label: getDayLabel(dateStr),
         count: countMap[dateStr] || 0,
       };
     });
@@ -210,9 +282,20 @@ export default function OverviewScreen() {
           <View style={styles.divider} />
 
           <Text style={styles.mutedCaps}>STREAK</Text>
-          <Text style={styles.streakValue}>
-            {stats?.streakCount != null ? `🔥 ${stats.streakCount} days` : '-'}
-          </Text>
+          <View style={styles.streakRow}>
+            <View style={styles.streakMetric}>
+              <Text style={styles.streakValue}>
+                {stats?.streakCount != null ? `${stats.streakCount} days` : '-'}
+              </Text>
+              <Text style={styles.streakLabel}>Current</Text>
+            </View>
+            <View style={styles.streakMetric}>
+              <Text style={styles.streakValue}>
+                {stats?.longestStreakCount != null ? `${stats.longestStreakCount} days` : '-'}
+              </Text>
+              <Text style={styles.streakLabel}>Longest</Text>
+            </View>
+          </View>
         </View>
 
         <View style={styles.weeklyHeader}>
@@ -374,6 +457,22 @@ const createStyles = (colors) => StyleSheet.create({
     fontSize: 26,
     color: colors.textPrimary,
     textAlign: 'center',
+  },
+  streakRow: {
+    alignSelf: 'stretch',
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    gap: 16,
+  },
+  streakMetric: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  streakLabel: {
+    marginTop: 2,
+    fontFamily: 'DMSans_400Regular',
+    fontSize: 12,
+    color: colors.textSecondary,
   },
   weeklyHeader: {
     flexDirection: 'row',

@@ -13,6 +13,10 @@ public interface FlashcardRepository extends JpaRepository<Flashcard, Long> {
 
     Page<Flashcard> findByUser_UserId(Long userId, Pageable pageable);
 
+    List<Flashcard> findByUser_UserId(Long userId);
+
+    List<Flashcard> findByUser_UserIdAndFlashcardIdIn(Long userId, List<Long> flashcardIds);
+
     Page<Flashcard> findByUser_UserIdAndKnowledgeStatus(Long userId, KnowledgeStatus status, Pageable pageable);
 
     @Query("SELECT f FROM Flashcard f WHERE f.user.userId = :userId AND " +
@@ -28,4 +32,9 @@ public interface FlashcardRepository extends JpaRepository<Flashcard, Long> {
            "ORDER BY f.createdAt ASC")
     List<Flashcard> findNewCards(@Param("userId") Long userId,
                                  @Param("knownStatus") KnowledgeStatus knownStatus);
+
+    @Query("SELECT f.flashcardId FROM Flashcard f WHERE f.user.userId = :userId " +
+           "AND f.collection.collectionId = :collectionId")
+    List<Long> findIdsByUserIdAndCollectionId(@Param("userId") Long userId,
+                                              @Param("collectionId") Long collectionId);
 }

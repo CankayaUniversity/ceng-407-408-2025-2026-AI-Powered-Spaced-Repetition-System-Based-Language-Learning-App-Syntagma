@@ -546,6 +546,7 @@ function VideoWordPopup({
   const [aiResult, setAiResult] = useState<AiResultData | null>(null);
   const [aiLoading, setAiLoading] = useState<AIActionType | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
+  const usageNotePending = aiLoading === 'explain-word';
   const popupRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
@@ -716,7 +717,7 @@ function VideoWordPopup({
   }, [word, sentence, settings.learnerLevel]);
 
   const handleSaveCard = useCallback(async () => {
-    if (cardSaved !== 'idle') return;
+    if (cardSaved !== 'idle' || usageNotePending) return;
     setCardSaved('saving');
     try {
       let sentenceAudioDataUrl: string | undefined;
@@ -733,6 +734,7 @@ function VideoWordPopup({
         sourceUrl: `syntagma-video://${videoName}`,
         sourceTitle: videoName || 'Video',
         trMeaning: lexeme?.trMeaning ?? (translations[0] ?? ''),
+        usageNote: aiResult?.kind === 'explain-word' ? aiResult.data.usageNote : undefined,
         createdAt: Date.now(),
         deckName: settings.activeCollectionName || 'Syntagma',
         tags: ['syntagma', 'video-player'],
@@ -751,9 +753,10 @@ function VideoWordPopup({
       setCardSaved('error');
       setTimeout(() => setCardSaved('idle'), 3000);
     }
-  }, [cardSaved, word, surface, sentence, popup.startMs, popup.endMs, lexeme, translations, videoName, settings, handleStatusChange, captureAudio]);
+  }, [cardSaved, usageNotePending, word, surface, sentence, popup.startMs, popup.endMs, lexeme, translations, aiResult, videoName, settings, handleStatusChange, captureAudio]);
 
   const handleOpenCardCreator = useCallback(async () => {
+    if (usageNotePending) return;
     let screenshotDataUrl: string | undefined;
     if (videoRef.current) {
       try {
@@ -783,11 +786,12 @@ function VideoWordPopup({
         sourceUrl: `syntagma-video://${videoName}`,
         sourceTitle: videoName || 'Video',
         trMeaning: lexeme?.trMeaning ?? (translations[0] ?? ''),
+        usageNote: aiResult?.kind === 'explain-word' ? aiResult.data.usageNote : undefined,
         screenshotDataUrl,
         sentenceAudioDataUrl,
       },
     }).catch(() => {});
-  }, [word, sentence, popup.startMs, popup.endMs, videoName, lexeme, translations, videoRef, captureAudio]);
+  }, [usageNotePending, word, sentence, popup.startMs, popup.endMs, videoName, lexeme, translations, aiResult, videoRef, captureAudio]);
 
   return (
     <div ref={popupRef} style={{
@@ -833,8 +837,8 @@ function VideoWordPopup({
         <div style={{ display: 'flex', gap: '6px' }}>
           <button
             onClick={handleSaveCard}
-            title={!settings.authToken ? 'Log in to save cards' : cardSaved === 'done' ? 'Card saved!' : cardSaved === 'error' ? 'Save failed' : 'Quick add to flashcards'}
-            disabled={!settings.authToken || cardSaved === 'saving'}
+            title={!settings.authToken ? 'Log in to save cards' : usageNotePending ? 'Waiting for AI usage note' : cardSaved === 'done' ? 'Card saved!' : cardSaved === 'error' ? 'Save failed' : 'Quick add to flashcards'}
+            disabled={!settings.authToken || cardSaved === 'saving' || usageNotePending}
             style={{
               width: '32px',
               height: '32px',
@@ -871,8 +875,8 @@ function VideoWordPopup({
           </button>
           <button
             onClick={handleOpenCardCreator}
-            title={!settings.authToken ? 'Log in to edit cards' : 'Open in card creator'}
-            disabled={!settings.authToken}
+            title={!settings.authToken ? 'Log in to edit cards' : usageNotePending ? 'Waiting for AI usage note' : 'Open in card creator'}
+            disabled={!settings.authToken || usageNotePending}
             style={{
               width: '32px',
               height: '32px',
