@@ -562,28 +562,21 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
           },
         ]}
       >
-        <Pressable
-          onPress={handleCardPress}
-          style={({ pressed }) => [
-            styles.cardFrame,
-            detailsOpen && styles.cardFrameExpanded,
-            pressed && !detailsOpen && styles.cardFramePressed,
-          ]}
-        >
-          <Text style={styles.wordText}>{activeCard.word}</Text>
-          {sourceSentence ? <Text style={styles.sentenceText}>{`"${sourceSentence}"`}</Text> : null}
-          <Text style={styles.phoneticText}>{activeCard.phonetic}</Text>
-
-          {!detailsOpen && <Text style={styles.detailsHintText}>Tap for details</Text>}
-
-          {detailsOpen && (
-            <Animated.View
-              style={[styles.detailsContent, { opacity: detailsAnim, transform: [{ translateY: detailTranslateY }] }]}
+        <Pressable style={styles.cardSectionFlipArea} onPress={handleCardPress} />
+        {detailsOpen ? (
+          <View style={[styles.cardFrame, styles.cardFrameExpanded]}>
+            <ScrollView
+              style={styles.expandedCardScroll}
+              contentContainerStyle={styles.expandedCardScrollContent}
+              showsVerticalScrollIndicator={false}
+              nestedScrollEnabled
             >
-              <ScrollView
-                style={styles.detailsScroll}
-                contentContainerStyle={styles.detailsScrollContent}
-                showsVerticalScrollIndicator={false}
+              <Text style={styles.wordText}>{activeCard.word}</Text>
+              {sourceSentence ? <Text style={styles.sentenceText}>{`"${sourceSentence}"`}</Text> : null}
+              <Text style={styles.phoneticText}>{activeCard.phonetic}</Text>
+
+              <Animated.View
+                style={[styles.detailsContent, { opacity: detailsAnim, transform: [{ translateY: detailTranslateY }] }]}
               >
                 <Text style={[styles.detailLabel, styles.detailLabelTop]}>Meaning</Text>
                 <View style={styles.translationPill}>
@@ -674,11 +667,25 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
                     <Image source={{ uri: effectiveImageUri }} style={styles.contextImage} resizeMode="cover" />
                   </View>
                 ) : null}
-
-              </ScrollView>
-            </Animated.View>
-          )}
-        </Pressable>
+              </Animated.View>
+            </ScrollView>
+          </View>
+        ) : (
+          <Pressable
+            onPress={handleCardPress}
+            style={({ pressed }) => [
+              styles.cardFrame,
+              pressed && styles.cardFramePressed,
+            ]}
+          >
+            <>
+              <Text style={styles.wordText}>{activeCard.word}</Text>
+              {sourceSentence ? <Text style={styles.sentenceText}>{`"${sourceSentence}"`}</Text> : null}
+              <Text style={styles.phoneticText}>{activeCard.phonetic}</Text>
+              <Text style={styles.detailsHintText}>Tap for details</Text>
+            </>
+          </Pressable>
+        )}
       </View>
 
       <View style={styles.bottomRow}>
@@ -772,6 +779,10 @@ const createStyles = (colors) =>
     cardSection: {
       flex: 1,
       marginTop: 20,
+      position: 'relative',
+    },
+    cardSectionFlipArea: {
+      ...StyleSheet.absoluteFillObject,
     },
     cardFrame: {
       backgroundColor: colors.card,
@@ -817,18 +828,18 @@ const createStyles = (colors) =>
       fontSize: 16,
       fontFamily: 'DMSans_600SemiBold',
     },
+    expandedCardScroll: {
+      flex: 1,
+      width: '100%',
+    },
+    expandedCardScrollContent: {
+      alignItems: 'center',
+      paddingBottom: 6,
+    },
     detailsContent: {
       marginTop: 18,
       width: '100%',
       alignItems: 'center',
-      flex: 1,
-    },
-    detailsScroll: {
-      width: '100%',
-      flex: 1,
-    },
-    detailsScrollContent: {
-      paddingBottom: 2,
     },
     translationPill: {
       flexDirection: 'row',
