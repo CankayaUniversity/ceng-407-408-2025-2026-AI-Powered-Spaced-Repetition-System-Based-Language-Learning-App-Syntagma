@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View, Pressable } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View, Pressable } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useIsFocused } from '@react-navigation/native';
@@ -9,9 +9,23 @@ import { getCache, saveCache } from '../shared/storage';
 import { flushQueues, getReviewDeltaToday } from '../shared/offline';
 import { useTheme } from '../shared/theme';
 
-const TABS = ['WEEK', 'MONTH'];
+const TABS = ['WEEK', 'MONTH', 'YEARLY'];
 const cacheStatsKey = (period) => `syntagma.cache.reviewstats.${period}`;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const MONTH_NAMES = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
 
 const todayStr = () => {
   return formatLocalDateKey(new Date());
@@ -103,6 +117,27 @@ function getDayLabel(dateStr) {
   }
 }
 
+function getApiPeriod(tab) {
+  return tab === 'YEARLY' ? 'year' : tab.toLowerCase();
+}
+
+function getDaysInMonth(year, monthIndex) {
+  return new Date(year, monthIndex + 1, 0).getDate();
+}
+
+function getReviewIntensityColor(count, maxCount, isDark) {
+  if (count <= 0) {
+    return isDark ? '#3A3631' : '#D7D0C6';
+  }
+
+  const ratio = Math.max(0.18, Math.min(1, count / Math.max(maxCount, 1)));
+  const start = isDark ? [94, 65, 43] : [232, 207, 181];
+  const end = isDark ? [225, 164, 108] : [107, 66, 38];
+  const channel = (index) => Math.round(start[index] + (end[index] - start[index]) * ratio);
+
+  return `rgb(${channel(0)}, ${channel(1)}, ${channel(2)})`;
+}
+
 function buildEmptyStats() {
   return {
     totalReviews: 0,
@@ -110,6 +145,7 @@ function buildEmptyStats() {
     longestStreakCount: 0,
     weeklyCount: 0,
     monthlyCount: 0,
+    yearlyCount: 0,
     reviewsByDay: [],
   };
 }
@@ -133,19 +169,24 @@ function applyDeltaToStats(rawStats, delta) {
     totalReviews: (rawStats.totalReviews ?? 0) + delta,
     weeklyCount: (rawStats.weeklyCount ?? 0) + delta,
     monthlyCount: (rawStats.monthlyCount ?? 0) + delta,
+    yearlyCount: (rawStats.yearlyCount ?? 0) + delta,
     reviewsByDay,
   };
 }
 
 export default function OverviewScreen() {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [activeTab, setActiveTab] = useState('WEEK');
   const [selectedBarIndex, setSelectedBarIndex] = useState(null);
+  const [selectedMonthIndex, setSelectedMonthIndex] = useState(null);
+  const [selectedDayDate, setSelectedDayDate] = useState(null);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [chartHeight, setChartHeight] = useState(150);
+  const [yearlyChartHeight, setYearlyChartHeight] = useState(150);
+  const currentYear = new Date().getFullYear();
   const netInfo = useNetInfo();
   const isOffline = netInfo.isConnected === false || netInfo.isInternetReachable === false;
 
@@ -167,7 +208,7 @@ export default function OverviewScreen() {
         setStats(normalizeStats(mergedStats));
         return;
       }
-      const rawStats = await fetchReviewStats(period.toLowerCase());
+      const rawStats = await fetchReviewStats(getApiPeriod(period));
       saveCache(cacheStatsKey(period), rawStats).catch(() => {});
       setStats(normalizeStats(rawStats));
     } catch (err) {
@@ -197,10 +238,22 @@ export default function OverviewScreen() {
   const handleTabChange = (tab) => {
     setActiveTab(tab);
     setSelectedBarIndex(null);
+    setSelectedMonthIndex(null);
+    setSelectedDayDate(null);
   };
 
+  const reviewCountsByDate = useMemo(() => {
+    const countMap = {};
+    (stats?.reviewsByDay ?? []).forEach((entry) => {
+      if (entry?.date) {
+        countMap[entry.date] = entry.count || 0;
+      }
+    });
+    return countMap;
+  }, [stats]);
+
   const dailyCounts = useMemo(() => {
-    if (activeTab !== 'WEEK') {
+    if (activeTab === 'MONTH') {
       return (stats?.reviewsByDay ?? [])
         .slice()
         .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
@@ -214,14 +267,13 @@ export default function OverviewScreen() {
         });
     }
 
+    if (activeTab === 'YEARLY') {
+      return [];
+    }
+
     // Show the last 7 days with today at the right edge, filling 0 for missing days.
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-
-    const countMap = {};
-    (stats?.reviewsByDay ?? []).forEach((entry) => {
-      countMap[entry.date] = entry.count || 0;
-    });
 
     return Array.from({ length: 7 }, (_, i) => {
       const d = new Date(today);
@@ -230,10 +282,69 @@ export default function OverviewScreen() {
       return {
         date: dateStr,
         label: getDayLabel(dateStr),
-        count: countMap[dateStr] || 0,
+        count: reviewCountsByDate[dateStr] || 0,
       };
     });
-  }, [stats, activeTab]);
+  }, [stats, activeTab, reviewCountsByDate]);
+
+  const yearlyMonths = useMemo(() => {
+    if (activeTab !== 'YEARLY') {
+      return [];
+    }
+
+    return MONTH_NAMES.map((label, index) => {
+      const monthPrefix = `${currentYear}-${String(index + 1).padStart(2, '0')}-`;
+      const total = Object.entries(reviewCountsByDate).reduce((sum, [date, count]) => {
+        return date.startsWith(monthPrefix) ? sum + count : sum;
+      }, 0);
+
+      return { index, label, shortLabel: label.slice(0, 3).toUpperCase(), total };
+    });
+  }, [activeTab, currentYear, reviewCountsByDate]);
+
+  const selectedYearlyMonth = selectedMonthIndex == null ? null : yearlyMonths[selectedMonthIndex];
+
+  const selectedMonthDays = useMemo(() => {
+    if (activeTab !== 'YEARLY' || selectedMonthIndex == null) {
+      return [];
+    }
+
+    const daysInMonth = getDaysInMonth(currentYear, selectedMonthIndex);
+    const month = String(selectedMonthIndex + 1).padStart(2, '0');
+
+    return Array.from({ length: daysInMonth }, (_, i) => {
+      const day = i + 1;
+      const date = `${currentYear}-${month}-${String(day).padStart(2, '0')}`;
+      return {
+        date,
+        day,
+        count: reviewCountsByDate[date] || 0,
+      };
+    });
+  }, [activeTab, currentYear, reviewCountsByDate, selectedMonthIndex]);
+
+  const selectedMonthMaxCount = useMemo(() => {
+    if (!selectedMonthDays.length) {
+      return 1;
+    }
+    const m = Math.max(...selectedMonthDays.map((d) => d.count));
+    return m > 0 ? m : 1;
+  }, [selectedMonthDays]);
+
+  const selectedMonthDay = useMemo(() => {
+    if (!selectedDayDate) {
+      return null;
+    }
+    return selectedMonthDays.find((day) => day.date === selectedDayDate) || null;
+  }, [selectedDayDate, selectedMonthDays]);
+
+  const yearlyMaxCount = useMemo(() => {
+    if (!yearlyMonths.length) {
+      return 1;
+    }
+    const m = Math.max(...yearlyMonths.map((month) => month.total));
+    return m > 0 ? m : 1;
+  }, [yearlyMonths]);
 
   const maxCount = useMemo(() => {
     if (!dailyCounts.length) {
@@ -250,16 +361,30 @@ export default function OverviewScreen() {
     if (activeTab === 'WEEK') {
       return formatNumber(stats.weeklyCount ?? 0);
     }
+    if (activeTab === 'YEARLY') {
+      const yearlyTotal = yearlyMonths.reduce((sum, month) => sum + month.total, 0);
+      return formatNumber(stats.yearlyCount ?? yearlyTotal);
+    }
     return formatNumber(stats.monthlyCount ?? 0);
-  }, [activeTab, stats]);
+  }, [activeTab, stats, yearlyMonths]);
 
   const selectedBarText = useMemo(() => {
+    if (activeTab === 'YEARLY') {
+      if (!selectedYearlyMonth) {
+        return 'Tap a month to see daily details';
+      }
+      if (selectedMonthDay) {
+        return `${selectedYearlyMonth.label} ${selectedMonthDay.day}: ${selectedMonthDay.count} reviews`;
+      }
+      return `${selectedYearlyMonth.label}: ${selectedYearlyMonth.total} reviews`;
+    }
+
     if (selectedBarIndex === null || !dailyCounts[selectedBarIndex]) {
       return 'Tap a bar to see details';
     }
     const item = dailyCounts[selectedBarIndex];
     return `${item.label}: ${item.count} reviews`;
-  }, [dailyCounts, selectedBarIndex]);
+  }, [activeTab, dailyCounts, selectedBarIndex, selectedMonthDay, selectedYearlyMonth]);
 
   return (
     <SafeAreaView style={styles.screen}>
@@ -300,7 +425,11 @@ export default function OverviewScreen() {
 
         <View style={styles.weeklyHeader}>
           <Text style={styles.weeklyTitle}>
-            {activeTab === 'WEEK' ? 'Weekly Progress' : 'Monthly Progress'}
+            {activeTab === 'WEEK'
+              ? 'Weekly Progress'
+              : activeTab === 'MONTH'
+                ? 'Monthly Progress'
+                : 'Yearly Progress'}
           </Text>
         </View>
 
@@ -328,6 +457,97 @@ export default function OverviewScreen() {
             <View style={styles.emptyChartWrap}>
               <ActivityIndicator size="small" color={colors.accent} />
             </View>
+          ) : activeTab === 'YEARLY' ? (
+            <ScrollView
+              style={styles.yearlyScroll}
+              contentContainerStyle={styles.yearlyContent}
+              showsVerticalScrollIndicator={false}
+            >
+              <View
+                style={styles.yearlyChartArea}
+                onLayout={(e) => setYearlyChartHeight(e.nativeEvent.layout.height)}
+              >
+                {yearlyMonths.map((month) => {
+                  const isSelected = selectedMonthIndex === month.index;
+                  const barAreaHeight = Math.max(0, yearlyChartHeight - 30);
+                  const heightPx = Math.max(4, Math.round((month.total / yearlyMaxCount) * barAreaHeight));
+                  return (
+                    <Pressable
+                      key={month.label}
+                      style={styles.yearlyBarColumn}
+                      onPress={() => {
+                        setSelectedMonthIndex(month.index);
+                        setSelectedDayDate(null);
+                      }}
+                    >
+                      <LinearGradient
+                        colors={
+                          isSelected
+                            ? [colors.accentStrong, colors.accent]
+                            : [colors.accentSoft, colors.accent]
+                        }
+                        start={{ x: 0.5, y: 0 }}
+                        end={{ x: 0.5, y: 1 }}
+                        style={[styles.yearlyBar, { height: heightPx }, isSelected && styles.yearlyBarSelected]}
+                      />
+                      <Text style={[styles.dayLabel, isSelected && styles.dayLabelSelected]}>
+                        {month.shortLabel}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              {selectedYearlyMonth ? (
+                <View style={styles.dayGridWrap}>
+                  <Text style={styles.monthDetailTitle}>
+                    {`${selectedYearlyMonth.label} ${currentYear}`}
+                  </Text>
+                  <View style={styles.dayGrid}>
+                    {selectedMonthDays.map((day) => {
+                      const isSelected = selectedDayDate === day.date;
+                      const hasReviews = day.count > 0;
+                      const intensity = getReviewIntensityColor(day.count, selectedMonthMaxCount, isDark);
+                      const textColor = isSelected && hasReviews && day.count / selectedMonthMaxCount > 0.55
+                        ? '#FFFDF9'
+                        : colors.textPrimary;
+                      return (
+                        <Pressable
+                          key={day.date}
+                          onPress={() => setSelectedDayDate(day.date)}
+                          style={[
+                            styles.dayCell,
+                            { backgroundColor: intensity },
+                            isSelected && styles.dayCellSelected,
+                          ]}
+                        >
+                          {isSelected ? (
+                            <>
+                              <Text
+                                style={[
+                                  styles.dayNumber,
+                                  { color: hasReviews ? textColor : colors.textSecondary },
+                                ]}
+                              >
+                                {day.day}
+                              </Text>
+                              <Text
+                                style={[
+                                  styles.dayCount,
+                                  { color: hasReviews ? textColor : colors.textSecondary },
+                                ]}
+                              >
+                                {day.count}
+                              </Text>
+                            </>
+                          ) : null}
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </View>
+              ) : null}
+            </ScrollView>
           ) : dailyCounts.length > 0 ? (
             <View
               style={styles.chartArea}
@@ -533,6 +753,77 @@ const createStyles = (colors) => StyleSheet.create({
     alignItems: 'flex-end',
     overflow: 'hidden',
     paddingHorizontal: 2,
+  },
+  yearlyScroll: {
+    flex: 1,
+  },
+  yearlyContent: {
+    paddingBottom: 4,
+  },
+  yearlyChartArea: {
+    height: 170,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+    overflow: 'hidden',
+    paddingHorizontal: 2,
+  },
+  yearlyBarColumn: {
+    alignItems: 'center',
+    flex: 1,
+    maxWidth: 28,
+    alignSelf: 'stretch',
+    justifyContent: 'flex-end',
+  },
+  yearlyBar: {
+    width: 14,
+    minHeight: 18,
+    borderTopLeftRadius: 7,
+    borderTopRightRadius: 7,
+  },
+  yearlyBarSelected: {
+    width: 16,
+    minHeight: 22,
+  },
+  dayGridWrap: {
+    marginTop: 16,
+    borderRadius: 16,
+    backgroundColor: colors.mutedSurface,
+    padding: 12,
+  },
+  monthDetailTitle: {
+    marginBottom: 10,
+    fontFamily: 'DMSans_600SemiBold',
+    fontSize: 16,
+    color: colors.textPrimary,
+  },
+  dayGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  dayCell: {
+    width: '12.5%',
+    minHeight: 42,
+    borderRadius: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 3,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dayCellSelected: {
+    borderWidth: 2,
+    borderColor: colors.accentStrong,
+  },
+  dayNumber: {
+    fontFamily: 'DMSans_600SemiBold',
+    fontSize: 12,
+  },
+  dayCount: {
+    marginTop: 2,
+    fontFamily: 'DMSans_400Regular',
+    fontSize: 8,
+    textAlign: 'center',
   },
   barColumn: {
     alignItems: 'center',

@@ -159,6 +159,7 @@ export async function prefetchOfflineData() {
   const statsResults = await Promise.allSettled([
     fetchReviewStats('week'),
     fetchReviewStats('month'),
+    fetchReviewStats('year'),
     fetchReviewStats('all'),
   ]);
 
@@ -192,12 +193,15 @@ export async function prefetchOfflineData() {
     await saveCache(CACHE_DAILY, dailyResult.value).catch(() => {});
   }
 
-  const [weekStats, monthStats, allStats] = statsResults;
+  const [weekStats, monthStats, yearStats, allStats] = statsResults;
   if (weekStats?.status === 'fulfilled') {
     await saveCache(cacheStatsKey('WEEK'), weekStats.value).catch(() => {});
   }
   if (monthStats?.status === 'fulfilled') {
     await saveCache(cacheStatsKey('MONTH'), monthStats.value).catch(() => {});
+  }
+  if (yearStats?.status === 'fulfilled') {
+    await saveCache(cacheStatsKey('YEARLY'), yearStats.value).catch(() => {});
   }
   if (allStats?.status === 'fulfilled') {
     await saveCache(cacheStatsKey('ALL'), allStats.value).catch(() => {});
