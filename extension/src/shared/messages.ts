@@ -74,25 +74,51 @@ export function sendMessage<T>(msg: ExtensionMessage): Promise<T> {
   return chrome.runtime.sendMessage(msg);
 }
 
+function agentDebugLog(runId: string, hypothesisId: string, location: string, message: string, data: Record<string, unknown>) {
+  // #region agent log
+  fetch('http://127.0.0.1:7270/ingest/086ae315-3e8f-43ff-9b45-c4e15a84ed69',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e8c44a'},body:JSON.stringify({sessionId:'e8c44a',runId,hypothesisId,location,message,data,timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
+}
+
 export function onMessage(
   handler: (msg: ExtensionMessage, sender: chrome.runtime.MessageSender) => unknown
 ): void {
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-    const result = handler(msg as ExtensionMessage, sender);
+    let result: unknown;
+    try {
+      result = handler(msg as ExtensionMessage, sender);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      sendResponse({ error: message });
+      return;
+    }
+
     if (result instanceof Promise) {
-      // MUST handle rejection: without .catch, sendResponse is never called
-      // when the handler throws, causing Chrome to log "The message channel
-      // closed before a response was received" for every async handler.
+      // Always send an explicit response. Chrome treats an async listener that
+      // resolves without sendResponse as a closed message channel.
       result
-        .then(sendResponse)
+        .then(response => {
+          // #region agent log
+          agentDebugLog('initial', 'H4', 'extension/src/shared/messages.ts:101', 'Async runtime message resolving', {
+            type: (msg as ExtensionMessage).type,
+            hasResponse: response != null,
+          });
+          // #endregion
+          sendResponse(response ?? { ok: true });
+        })
         .catch((err: unknown) => {
           const message = err instanceof Error ? err.message : String(err);
+          // #region agent log
+          agentDebugLog('initial', 'H4', 'extension/src/shared/messages.ts:110', 'Async runtime message rejected', {
+            type: (msg as ExtensionMessage).type,
+            message,
+          });
+          // #endregion
           sendResponse({ error: message });
         });
-      return true; // keep channel open for async response
+      return true;
     }
-    if (result !== undefined) {
-      sendResponse(result);
-    }
+
+    sendResponse(result ?? { ok: true });
   });
 }

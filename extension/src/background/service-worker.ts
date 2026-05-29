@@ -40,6 +40,12 @@ const MEDIA_URL_CACHE_KEY = 'flashcardMediaUrls';
 const SCREENSHOT_URL_CACHE_KEY = 'flashcardScreenshotUrls';
 const MEDIA_URL_REFRESH_MARGIN_MS = 30_000;
 const CARD_CREATOR_DRAFT_PREFIX = 'cardCreatorDraft:';
+
+function agentDebugLog(runId: string, hypothesisId: string, location: string, message: string, data: Record<string, unknown>) {
+  // #region agent log
+  fetch('http://127.0.0.1:7270/ingest/086ae315-3e8f-43ff-9b45-c4e15a84ed69',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e8c44a'},body:JSON.stringify({sessionId:'e8c44a',runId,hypothesisId,location,message,data,timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
+}
 const CARD_CREATOR_DEFAULT_DIMENSIONS = {
   width: 1100,
   height: 760,
@@ -689,14 +695,37 @@ onMessage(async (msg, sender) => {
     case 'EXPLAIN_WORD_WITH_AI': {
       const { word, sentence, context, level, requestId } = msg.payload;
       const tabId = sender.tab?.id;
+      // #region agent log
+      agentDebugLog('initial', 'H4', 'extension/src/background/service-worker.ts:699', 'AI explain-word message received', {
+        requestId,
+        hasTabId: tabId != null,
+        sentenceLength: sentence.length,
+        hasContext: Boolean(context),
+        level,
+      });
+      // #endregion
       if (!tabId) return;
       try {
         const data = await backendExplainWord({ word, sentence, context, level });
+        // #region agent log
+        agentDebugLog('initial', 'H4-H5', 'extension/src/background/service-worker.ts:712', 'AI explain-word backend call succeeded', {
+          requestId,
+          hasUsageNote: Boolean(data.usageNote),
+          examplesCount: Array.isArray(data.examples) ? data.examples.length : null,
+        });
+        // #endregion
         chrome.tabs.sendMessage(tabId, {
           type: 'AI_RESULT',
           payload: { requestId, result: { kind: 'explain-word', data } },
         }).catch(() => {});
       } catch (error) {
+        // #region agent log
+        agentDebugLog('initial', 'H1-H2-H3-H4', 'extension/src/background/service-worker.ts:723', 'AI explain-word backend call failed', {
+          requestId,
+          errorMessage: error instanceof Error ? error.message : String(error),
+          errorName: error instanceof Error ? error.name : typeof error,
+        });
+        // #endregion
         chrome.tabs.sendMessage(tabId, {
           type: 'AI_STREAM_ERROR',
           payload: { requestId, error: (error as Error).message },
@@ -783,6 +812,17 @@ onMessage(async (msg, sender) => {
       }
       const card = msg.payload;
       const apiBase = settings.apiBaseUrl || BACKEND_URL;
+      // #region agent log
+      agentDebugLog('initial', 'H6-H7', 'extension/src/background/service-worker.ts:798', 'Create flashcard message received', {
+        hasAuthToken: Boolean(settings.authToken),
+        hasAuthUserId: Boolean(settings.authUserId),
+        hasCustomApiBaseUrl: Boolean(settings.apiBaseUrl),
+        apiHost: (() => { try { return new URL(apiBase).host; } catch { return 'invalid-url'; } })(),
+        lemmaLength: card.lemma?.length ?? null,
+        hasUsageNote: Boolean(card.usageNote),
+        hasCollectionId: card.collectionId != null,
+      });
+      // #endregion
       const selectedCollectionId =
         card.collectionId != null
           ? Number(card.collectionId)
@@ -802,6 +842,17 @@ onMessage(async (msg, sender) => {
           body: JSON.stringify(payload),
         });
         await refreshTokenIfNeeded(res);
+        const responseText = await res.clone().text().catch(() => '');
+        // #region agent log
+        agentDebugLog('initial', 'H6-H7-H8', 'extension/src/background/service-worker.ts:821', 'Create flashcard response received', {
+          status: res.status,
+          ok: res.ok,
+          statusText: res.statusText,
+          responseType: res.type,
+          redirected: res.redirected,
+          bodyPreview: responseText.slice(0, 240),
+        });
+        // #endregion
         if (!res.ok) {
           return { ok: false, error: await getResponseError(res, `Server returned ${res.status}`) };
         }

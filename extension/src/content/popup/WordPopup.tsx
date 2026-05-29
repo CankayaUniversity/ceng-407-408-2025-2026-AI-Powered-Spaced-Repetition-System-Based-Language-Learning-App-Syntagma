@@ -8,6 +8,12 @@ import { StatusRow } from './StatusRow';
 import { PopupButtons } from './PopupButtons';
 import { CONTRACTION_EXPANSIONS } from '../video/tokenizer';
 
+function agentDebugLog(runId: string, hypothesisId: string, location: string, message: string, data: Record<string, unknown>) {
+  // #region agent log
+  fetch('http://127.0.0.1:7270/ingest/086ae315-3e8f-43ff-9b45-c4e15a84ed69',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e8c44a'},body:JSON.stringify({sessionId:'e8c44a',runId,hypothesisId,location,message,data,timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
+}
+
 const C = {
   base: '#F5F1E9',
   surface0: '#FFFFFF',
@@ -179,6 +185,7 @@ function WordPopupInner({
   const [aiResult, setAiResult] = useState<AiResultData | null>(null);
   const [aiLoading, setAiLoading] = useState<AIActionType | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
+  const usageNotePending = aiLoading === 'explain-word';
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
   const [cardSaved, setCardSaved] = useState<'idle' | 'saving' | 'done' | 'error'>('idle');
   const [screenshot] = useState<string | null>(screenshotDataUrl ?? null);
@@ -327,6 +334,15 @@ function WordPopupInner({
 
   const handleAIAction = useCallback((type: AIActionType) => {
     const reqId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    // #region agent log
+    agentDebugLog('initial', 'H0-H4', 'extension/src/content/popup/WordPopup.tsx:331', 'Word popup AI action clicked', {
+      type,
+      requestId: reqId,
+      hasAuthToken: Boolean(settings.authToken),
+      learnerLevel: settings.learnerLevel,
+      sentenceLength: sentence.length,
+    });
+    // #endregion
     requestIdRef.current = reqId;
     setAiResult(null);
     setAiError(null);
@@ -360,7 +376,7 @@ function WordPopupInner({
   }, [lemma, sentence, settings.learnerLevel]);
 
   const handleSaveCard = useCallback(async () => {
-    if (cardSaved !== 'idle') return;
+    if (cardSaved !== 'idle' || usageNotePending) return;
     setCardSaved('saving');
     try {
       let sentenceAudioDataUrl: string | undefined;
@@ -414,12 +430,12 @@ function WordPopupInner({
       setCardSaved('error');
       setTimeout(() => setCardSaved('idle'), 2000);
     }
-  }, [cardSaved, lemma, surface, sentence, lexeme, translations, aiResult, screenshot, sentenceStartMs, sentenceEndMs, handleStatusChange]);
+  }, [cardSaved, usageNotePending, lemma, surface, sentence, lexeme, translations, aiResult, screenshot, sentenceStartMs, sentenceEndMs, handleStatusChange]);
 
   const [openingCardCreator, setOpeningCardCreator] = useState(false);
 
   const handleOpenCardCreator = useCallback(async () => {
-    if (openingCardCreator) return;
+    if (openingCardCreator || usageNotePending) return;
     setOpeningCardCreator(true);
     try {
       let sentenceAudioDataUrl: string | undefined;
@@ -466,7 +482,7 @@ function WordPopupInner({
     } catch { /* best effort */ } finally {
       setOpeningCardCreator(false);
     }
-  }, [openingCardCreator, lemma, sentence, lexeme, translations, aiResult, screenshot, sentenceStartMs, sentenceEndMs]);
+  }, [openingCardCreator, usageNotePending, lemma, sentence, lexeme, translations, aiResult, screenshot, sentenceStartMs, sentenceEndMs]);
 
   const popupStyle: React.CSSProperties = {
     position: 'fixed',
@@ -533,8 +549,8 @@ function WordPopupInner({
         <div style={{ display: 'flex', gap: '6px' }}>
           <button
             onClick={handleSaveCard}
-            title={!settings.authToken ? 'Log in to save cards' : cardSaved === 'done' ? 'Card saved!' : cardSaved === 'error' ? 'Save failed' : 'Quick add to flashcards'}
-            disabled={!settings.authToken || cardSaved === 'saving'}
+            title={!settings.authToken ? 'Log in to save cards' : usageNotePending ? 'Waiting for AI usage note' : cardSaved === 'done' ? 'Card saved!' : cardSaved === 'error' ? 'Save failed' : 'Quick add to flashcards'}
+            disabled={!settings.authToken || cardSaved === 'saving' || usageNotePending}
             style={{
               width: '32px',
               height: '32px',
@@ -571,8 +587,8 @@ function WordPopupInner({
           </button>
           <button
             onClick={handleOpenCardCreator}
-            title={!settings.authToken ? 'Log in to edit cards' : 'Open in card creator'}
-            disabled={!settings.authToken}
+            title={!settings.authToken ? 'Log in to edit cards' : usageNotePending ? 'Waiting for AI usage note' : 'Open in card creator'}
+            disabled={!settings.authToken || usageNotePending}
             style={{
               width: '32px',
               height: '32px',

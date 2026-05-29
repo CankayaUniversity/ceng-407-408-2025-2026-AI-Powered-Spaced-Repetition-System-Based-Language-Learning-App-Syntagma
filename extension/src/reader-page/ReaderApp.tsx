@@ -544,6 +544,7 @@ function ReaderWordPopup({
   const [aiResult, setAiResult] = useState<AiResultData | null>(null);
   const [aiLoading, setAiLoading] = useState<AIActionType | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
+  const usageNotePending = aiLoading === 'explain-word';
   const [cardSaved, setCardSaved] = useState<'idle' | 'saving' | 'done' | 'error'>('idle');
   const [showLinks, setShowLinks] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -631,7 +632,7 @@ function ReaderWordPopup({
 
   const [cardError, setCardError] = useState<string | null>(null);
   const handleSaveCard = useCallback(async () => {
-    if (cardSaved !== 'idle') return;
+    if (cardSaved !== 'idle' || usageNotePending) return;
     setCardSaved('saving');
     setCardError(null);
     try {
@@ -661,7 +662,7 @@ function ReaderWordPopup({
       setCardSaved('error');
       setTimeout(() => setCardSaved('idle'), 3000);
     }
-  }, [cardSaved, word, surface, sentence, lexeme, translations, aiResult, bookId, bookTitle, settings, handleStatusChange]);
+  }, [cardSaved, usageNotePending, word, surface, sentence, lexeme, translations, aiResult, bookId, bookTitle, settings, handleStatusChange]);
 
   const currentCfg = STATUS_CONFIG.find(c => c.status === currentStatus) ?? STATUS_CONFIG[0];
   const popupW = 340;
@@ -778,8 +779,8 @@ function ReaderWordPopup({
         <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
           <button
             onClick={handleSaveCard}
-            title={!settings.authToken ? 'Log in to save cards' : cardSaved === 'done' ? 'Card saved!' : 'Add to flashcards'}
-            disabled={!settings.authToken || cardSaved === 'saving'}
+            title={!settings.authToken ? 'Log in to save cards' : usageNotePending ? 'Waiting for AI usage note' : cardSaved === 'done' ? 'Card saved!' : 'Add to flashcards'}
+            disabled={!settings.authToken || cardSaved === 'saving' || usageNotePending}
             style={{
               width: '32px', height: '32px', borderRadius: '16px',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -813,8 +814,8 @@ function ReaderWordPopup({
                 },
               }).catch(() => {});
             }}
-            title={!settings.authToken ? 'Log in to edit cards' : 'Open in card creator'}
-            disabled={!settings.authToken}
+            title={!settings.authToken ? 'Log in to edit cards' : usageNotePending ? 'Waiting for AI usage note' : 'Open in card creator'}
+            disabled={!settings.authToken || usageNotePending}
             style={{
               width: '32px', height: '32px', borderRadius: '16px',
               display: 'flex', alignItems: 'center', justifyContent: 'center',

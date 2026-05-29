@@ -80,4 +80,17 @@ class AuthControllerTest {
                 .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "http://localhost:8081"))
                 .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS, "true"));
     }
+
+    @Test
+    void corsPreflight_AllowsBrowserExtensionOrigin() throws Exception {
+        String origin = "chrome-extension://abcdefghijklmnopabcdefghijklmnop";
+
+        mockMvc.perform(options("/api/auth/login")
+                        .header(HttpHeaders.ORIGIN, origin)
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS, "content-type,authorization"))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, origin))
+                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS, "true"));
+    }
 }

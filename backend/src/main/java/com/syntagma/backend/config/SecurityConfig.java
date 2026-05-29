@@ -48,6 +48,9 @@ public class SecurityConfig {
                 "http://localhost:*",
                 "http://127.0.0.1:*",
                 "https://localhost:*",
+                "chrome-extension://*",
+                "moz-extension://*",
+                "ms-browser-extension://*",
                 "https://syntagma.omerhanyigit.online",
                 "https://www.syntagma.omerhanyigit.online"
         ));
