@@ -186,6 +186,9 @@ function WordPopupInner({
   const [aiLoading, setAiLoading] = useState<AIActionType | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
   const usageNotePending = aiLoading === 'explain-word';
+  const aiExampleSentence = aiResult?.kind === 'explain-word'
+    ? aiResult.data.examples?.find(example => example.trim())
+    : undefined;
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
   const [cardSaved, setCardSaved] = useState<'idle' | 'saving' | 'done' | 'error'>('idle');
   const [screenshot] = useState<string | null>(screenshotDataUrl ?? null);
@@ -411,6 +414,7 @@ function WordPopupInner({
         sourceUrl: window.location.href,
         sourceTitle: document.title,
         trMeaning: lexeme?.trMeaning ?? (translations[0] ?? ''),
+        exampleSentence: aiExampleSentence,
         usageNote: aiResult?.kind === 'explain-word' ? aiResult.data.usageNote : undefined,
         screenshotDataUrl: screenshot ?? undefined,
         sentenceAudioDataUrl,
@@ -430,7 +434,7 @@ function WordPopupInner({
       setCardSaved('error');
       setTimeout(() => setCardSaved('idle'), 2000);
     }
-  }, [cardSaved, usageNotePending, lemma, surface, sentence, lexeme, translations, aiResult, screenshot, sentenceStartMs, sentenceEndMs, handleStatusChange]);
+  }, [cardSaved, usageNotePending, lemma, surface, sentence, lexeme, translations, aiResult, aiExampleSentence, screenshot, sentenceStartMs, sentenceEndMs, handleStatusChange]);
 
   const [openingCardCreator, setOpeningCardCreator] = useState(false);
 
@@ -474,6 +478,7 @@ function WordPopupInner({
           sourceUrl: window.location.href,
           sourceTitle: document.title,
           trMeaning: lexeme?.trMeaning ?? (translations[0] ?? ''),
+          exampleSentence: aiExampleSentence,
           usageNote: aiResult?.kind === 'explain-word' ? aiResult.data.usageNote : undefined,
           screenshotDataUrl: screenshot ?? undefined,
           sentenceAudioDataUrl,
@@ -482,7 +487,7 @@ function WordPopupInner({
     } catch { /* best effort */ } finally {
       setOpeningCardCreator(false);
     }
-  }, [openingCardCreator, usageNotePending, lemma, sentence, lexeme, translations, aiResult, screenshot, sentenceStartMs, sentenceEndMs]);
+  }, [openingCardCreator, usageNotePending, lemma, sentence, lexeme, translations, aiResult, aiExampleSentence, screenshot, sentenceStartMs, sentenceEndMs]);
 
   const popupStyle: React.CSSProperties = {
     position: 'fixed',

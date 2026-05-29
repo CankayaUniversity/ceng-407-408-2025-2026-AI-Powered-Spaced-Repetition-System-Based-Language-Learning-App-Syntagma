@@ -831,7 +831,7 @@ onMessage(async (msg, sender) => {
             : null;
       const cardForRequest: FlashcardPayload = {
         ...card,
-        exampleSentence: card.exampleSentence ?? `${card.surfaceForm} - from ${card.sourceTitle || 'web'}`,
+        exampleSentence: card.exampleSentence ?? '',
         knowledgeStatus: card.knowledgeStatus ?? 'LEARNING',
       };
       const payload = buildBackendFlashcardPayload(cardForRequest, selectedCollectionId);
@@ -901,7 +901,7 @@ onMessage(async (msg, sender) => {
       const audioOp = mediaOps?.audio ?? 'keep';
       const cardForRequest: FlashcardPayload = {
         ...card,
-        exampleSentence: card.exampleSentence ?? `${card.surfaceForm} - from ${card.sourceTitle || 'web'}`,
+        exampleSentence: card.exampleSentence ?? '',
         knowledgeStatus: card.knowledgeStatus ?? 'LEARNING',
         screenshotDataUrl:
           screenshotOp === 'replace'
@@ -1331,11 +1331,11 @@ onMessage(async (msg, sender) => {
         });
         params = new URLSearchParams({ mode: 'edit', draftKey });
       } else {
-        const { panel, word, sentence, sourceUrl, sourceTitle, trMeaning, usageNote, screenshotDataUrl, sentenceAudioDataUrl } = msg.payload;
+        const { panel, word, sentence, sourceUrl, sourceTitle, trMeaning, exampleSentence, usageNote, screenshotDataUrl, sentenceAudioDataUrl } = msg.payload;
         console.log('[Syntagma] OPEN_CARD_CREATOR create — hasScreenshot:', !!screenshotDataUrl, 'hasAudio:', !!sentenceAudioDataUrl);
 
         let draftKey: string | undefined = undefined;
-        if (screenshotDataUrl || sentenceAudioDataUrl || usageNote) {
+        if (screenshotDataUrl || sentenceAudioDataUrl || exampleSentence || usageNote) {
           draftKey = `${CARD_CREATOR_DRAFT_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2)}`;
           await chrome.storage.local.set({
             [draftKey]: {
@@ -1345,6 +1345,7 @@ onMessage(async (msg, sender) => {
               sourceUrl,
               sourceTitle,
               trMeaning,
+              exampleSentence,
               usageNote,
               screenshotDataUrl,
               sentenceAudioDataUrl,
@@ -1360,6 +1361,7 @@ onMessage(async (msg, sender) => {
           sourceUrl,
           sourceTitle,
           ...(trMeaning ? { trMeaning } : {}),
+          ...(exampleSentence ? { exampleSentence } : {}),
           ...(usageNote ? { usageNote } : {}),
           ...(draftKey ? { draftKey } : {}),
         });

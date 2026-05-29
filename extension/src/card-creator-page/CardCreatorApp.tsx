@@ -85,6 +85,7 @@ export function CardCreatorApp() {
   const initialSourceUrl = params.get('sourceUrl') ?? '';
   const initialSourceTitle = params.get('sourceTitle') ?? '';
   const initialTranslation = params.get('trMeaning') ?? '';
+  const initialExampleSentence = params.get('exampleSentence') ?? '';
   const initialUsageNote = params.get('usageNote') ?? '';
 
   const [loading, setLoading] = useState(true);
@@ -106,7 +107,7 @@ export function CardCreatorApp() {
   const [search, setSearch] = useState(initialWord);
   const [targetWord, setTargetWord] = useState(initialWord);
   const [sentence, setSentence] = useState(initialSentence);
-  const [exampleSentence, setExampleSentence] = useState('');
+  const [exampleSentence, setExampleSentence] = useState(initialExampleSentence);
   const [translation, setTranslation] = useState(initialTranslation);
   const [usageNote, setUsageNote] = useState(initialUsageNote);
   const [knowledgeStatus, setKnowledgeStatus] = useState<KnowledgeStatusValue>('LEARNING');
@@ -269,6 +270,7 @@ export function CardCreatorApp() {
               setSearch(draft.surfaceForm || draft.lemma || '');
               setTargetWord(draft.surfaceForm || draft.lemma || '');
               setSentence(draft.sentence || '');
+              setExampleSentence(draft.exampleSentence || '');
               setTranslation(draft.trMeaning || '');
               setUsageNote(draft.usageNote || '');
               setSourceUrl(draft.sourceUrl || '');

@@ -82,8 +82,8 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
   const effectiveAudioUri = sentenceAudioUri || dictAudioUri;
   const effectiveImageUri = cardImageUri || fetchedImageUri;
   const sourceSentence = activeCard?.sourceSentence || activeCard?.sentence || '';
-  const exampleSentence = sourceSentence;
-  const usageSentence = activeCard?.exampleSentence || '';
+  const exampleSentence = activeCard?.exampleSentence || '';
+  const usageSentence = sourceSentence;
   const usageNote = activeCard?.usageNote || '';
   const usageTitle = activeCard?.sourceTitle || '';
   const usageUrl = activeCard?.sourceUrl || '';

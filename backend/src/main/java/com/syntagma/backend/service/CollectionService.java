@@ -84,7 +84,8 @@ public class CollectionService {
             return List.of();
         }
 
-        Set<Long> reviewableIds = getReviewableIds(userId);
+        ReviewableCandidates reviewableCandidates = getReviewableCandidates(userId);
+        Set<Long> reviewableIds = getReviewableIds(reviewableCandidates, collectionCardIds);
         List<Long> ids = collectionCardIds.stream()
                 .filter(reviewableIds::contains)
                 .toList();
@@ -159,11 +160,12 @@ public class CollectionService {
             return counts;
         }
 
-        Set<Long> reviewableIds = getReviewableIds(userId);
+        ReviewableCandidates reviewableCandidates = getReviewableCandidates(userId);
 
         for (Collection collection : collections) {
             Long collectionId = collection.getCollectionId();
             Set<Long> cardIds = getCollectionCardIds(userId, collectionId);
+            Set<Long> reviewableIds = getReviewableIds(reviewableCandidates, cardIds);
 
             int reviewableCount = 0;
             for (Long cardId : cardIds) {
@@ -177,25 +179,33 @@ public class CollectionService {
         return counts;
     }
 
-    private Set<Long> getReviewableIds(Long userId) {
+    private ReviewableCandidates getReviewableCandidates(Long userId) {
         User user = userRepository.findById(userId).orElse(null);
         int dailyNewLimit = user != null && user.getDailyNewCardLimit() != null
                 ? user.getDailyNewCardLimit()
                 : DEFAULT_DAILY_NEW_LIMIT;
 
-        Set<Long> reviewableIds = new HashSet<>();
+        Set<Long> dueIds = new HashSet<>();
         srsStateRepository.findDueCards(userId, LocalDateTime.now(), KnowledgeStatus.KNOWN)
                 .stream()
                 .map(SrsState::getFlashcard)
                 .filter(flashcard -> flashcard != null && flashcard.getFlashcardId() != null)
                 .map(Flashcard::getFlashcardId)
-                .forEach(reviewableIds::add);
+                .forEach(dueIds::add);
 
-        flashcardRepository.findNewCards(userId, KnowledgeStatus.KNOWN)
+        List<Flashcard> newCards = flashcardRepository.findNewCards(userId, KnowledgeStatus.KNOWN);
+        return new ReviewableCandidates(dueIds, newCards, Math.max(dailyNewLimit, 0));
+    }
+
+    private Set<Long> getReviewableIds(ReviewableCandidates candidates, Set<Long> collectionCardIds) {
+        Set<Long> reviewableIds = new HashSet<>(candidates.dueIds());
+
+        candidates.newCards()
                 .stream()
-                .limit(Math.max(dailyNewLimit, 0))
+                .filter(flashcard -> flashcard != null && flashcard.getFlashcardId() != null)
+                .filter(flashcard -> collectionCardIds.contains(flashcard.getFlashcardId()))
+                .limit(candidates.dailyNewLimit())
                 .map(Flashcard::getFlashcardId)
-                .filter(id -> id != null)
                 .forEach(reviewableIds::add);
 
         return reviewableIds;
@@ -247,4 +257,5 @@ public class CollectionService {
     }
 
     private record CollectionCounts(int itemsCount, int reviewableCount) {}
+    private record ReviewableCandidates(Set<Long> dueIds, List<Flashcard> newCards, int dailyNewLimit) {}
 }

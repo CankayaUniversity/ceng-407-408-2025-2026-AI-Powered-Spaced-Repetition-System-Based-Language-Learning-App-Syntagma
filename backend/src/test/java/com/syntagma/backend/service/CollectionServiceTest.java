@@ -165,4 +165,34 @@ class CollectionServiceTest {
         assertEquals(3, response.itemsCount());
         assertEquals(1, response.reviewableCount());
     }
+
+    @Test
+    void getById_AppliesNewLimitAfterCollectionFilter() {
+        User user = mockUser();
+        user.setDailyNewCardLimit(1);
+        Collection collection = mockCollection(user);
+
+        Flashcard otherCollectionNewCard = new Flashcard();
+        otherCollectionNewCard.setFlashcardId(10L);
+        otherCollectionNewCard.setUser(user);
+
+        Flashcard collectionNewCard = new Flashcard();
+        collectionNewCard.setFlashcardId(30L);
+        collectionNewCard.setUser(user);
+
+        when(collectionRepository.findById(5L)).thenReturn(Optional.of(collection));
+        when(collectionItemRepository.findByCollectionId(5L)).thenReturn(List.of());
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        when(srsStateRepository.findDueCards(eq(1L), any(LocalDateTime.class), any()))
+                .thenReturn(List.of());
+        when(flashcardRepository.findNewCards(eq(1L), any()))
+                .thenReturn(List.of(otherCollectionNewCard, collectionNewCard));
+        when(collectionItemRepository.findFlashcardIdsByCollectionId(5L)).thenReturn(List.of());
+        when(flashcardRepository.findIdsByUserIdAndCollectionId(1L, 5L)).thenReturn(List.of(30L));
+
+        CollectionResponse response = collectionService.getById(1L, 5L);
+
+        assertEquals(1, response.itemsCount());
+        assertEquals(1, response.reviewableCount());
+    }
 }
