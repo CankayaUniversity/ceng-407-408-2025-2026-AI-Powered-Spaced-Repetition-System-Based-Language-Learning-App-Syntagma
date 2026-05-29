@@ -15,6 +15,8 @@ public interface FlashcardRepository extends JpaRepository<Flashcard, Long> {
 
     List<Flashcard> findByUser_UserId(Long userId);
 
+    List<Flashcard> findByUser_UserIdAndFlashcardIdIn(Long userId, List<Long> flashcardIds);
+
     Page<Flashcard> findByUser_UserIdAndKnowledgeStatus(Long userId, KnowledgeStatus status, Pageable pageable);
 
     @Query("SELECT f FROM Flashcard f WHERE f.user.userId = :userId AND " +

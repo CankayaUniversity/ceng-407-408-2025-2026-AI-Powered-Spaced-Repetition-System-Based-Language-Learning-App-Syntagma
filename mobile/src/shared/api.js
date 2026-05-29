@@ -78,6 +78,10 @@ export async function fetchCollectionById(collectionId) {
   return apiRequest(`/api/collections/${collectionId}`);
 }
 
+export async function fetchCollectionReviewableCards(collectionId) {
+  return apiRequest(`/api/collections/${collectionId}/reviewable-cards`);
+}
+
 export async function fetchCurrentUser() {
   return apiRequest('/api/users/me');
 }
@@ -125,6 +129,17 @@ export async function fetchVocabularyPage(page = 0, size = 50, status = 'ALL', s
   }
 
   return apiRequest(`/api/vocabulary?${params.toString()}`);
+}
+
+export async function fetchKnownVocabularyCount() {
+  const data = await fetchVocabularyPage(0, 1, 'KNOWN');
+  if (Number.isFinite(data?.totalElements)) {
+    return data.totalElements;
+  }
+  if (Array.isArray(data?.content)) {
+    return data.content.length;
+  }
+  return 0;
 }
 
 export async function fetchDueCards(limit = 20) {

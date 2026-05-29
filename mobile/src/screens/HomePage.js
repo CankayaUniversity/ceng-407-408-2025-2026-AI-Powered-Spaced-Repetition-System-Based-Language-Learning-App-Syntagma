@@ -14,24 +14,23 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useNetInfo } from '@react-native-community/netinfo';
 import {
   fetchAllFlashcards,
-  fetchCollectionById,
+  fetchCollectionReviewableCards,
   fetchCollections,
   fetchDailyCards,
-  fetchAllWordKnowledge,
+  fetchKnownVocabularyCount,
 } from '../shared/api';
 import { getBadgeState, getCache, saveCache, saveBadgeState } from '../shared/storage';
 import { flushQueues, getReviewedIdsToday } from '../shared/offline';
 import { computeCefrState, getCefrMedal } from '../shared/badges';
-import { computeKnownWordsStats } from '../shared/known-words';
 import { useTheme } from '../shared/theme';
 
 const CACHE_COLLECTIONS = 'syntagma.cache.collections';
 const cacheCollectionKey = (id) => `syntagma.cache.collection.${id}`;
 const CACHE_DAILY = 'syntagma.cache.daily';
 const CACHE_ALL_FLASHCARDS = 'syntagma.cache.flashcards.all.v1';
-const CACHE_WORD_KNOWLEDGE = 'syntagma.cache.wordknowledge.all.v1';
 const OFFLINE_EMPTY_TITLE = 'Offline moddasin';
 const OFFLINE_EMPTY_SUBTITLE = 'Internet gelince koleksiyonlar senkronize olacak.';
+const NO_DUE_CARDS_MESSAGE = 'No cards are due in this collection today.';
 
 export default function HomePage({ navigation }) {
   const { colors, isDark } = useTheme();
@@ -118,38 +117,10 @@ export default function HomePage({ navigation }) {
 
         try {
           if (isOffline) {
-            const cachedFlashcards = await getCache(CACHE_ALL_FLASHCARDS).catch(() => []);
-            const cachedKnowledge = await getCache(CACHE_WORD_KNOWLEDGE).catch(() => []);
-            const fcArr = Array.isArray(cachedFlashcards) ? cachedFlashcards : [];
-            if (fcArr.length > 0 || (cachedKnowledge?.length ?? 0) > 0) {
-              const { knownCount } = computeKnownWordsStats(fcArr, Array.isArray(cachedKnowledge) ? cachedKnowledge : []);
-              if (isMounted) {
-                setBadgeState(computeCefrState(knownCount));
-              }
-            }
             return;
           }
 
-          const [flashcardsResult, knowledgeResult] = await Promise.allSettled([
-            fetchAllFlashcards(),
-            fetchAllWordKnowledge(),
-          ]);
-
-          const flashcards = flashcardsResult.status === 'fulfilled' ? flashcardsResult.value : [];
-          const knowledge = knowledgeResult.status === 'fulfilled' ? knowledgeResult.value : [];
-
-          if (flashcardsResult.status === 'fulfilled') {
-            saveCache(CACHE_ALL_FLASHCARDS, flashcards).catch(() => {});
-          }
-          if (knowledgeResult.status === 'fulfilled') {
-            saveCache(CACHE_WORD_KNOWLEDGE, knowledge).catch(() => {});
-          }
-
-          if (flashcardsResult.status === 'rejected' && knowledgeResult.status === 'rejected') {
-            throw flashcardsResult.reason || knowledgeResult.reason || new Error('Failed to load vocabulary.');
-          }
-
-          const { knownCount } = computeKnownWordsStats(flashcards, knowledge);
+          const knownCount = await fetchKnownVocabularyCount();
           if (isMounted) {
             await saveBadgeState({ knownWords: knownCount });
             setBadgeState(computeCefrState(knownCount));
@@ -183,18 +154,18 @@ export default function HomePage({ navigation }) {
       }
     }
 
-    let filtered = cards;
-
-    if (dailyCards !== null) {
-      const idSet = new Set(
-        dailyCards
-          .map((entry) => entry?.flashcardId)
-          .filter((id) => id != null)
-          .map((id) => Number(id))
-          .filter((id) => Number.isFinite(id))
-      );
-      filtered = idSet.size ? cards.filter((card) => idSet.has(Number(card.flashcardId))) : [];
+    if (dailyCards === null) {
+      return [];
     }
+
+    const idSet = new Set(
+      dailyCards
+        .map((entry) => entry?.flashcardId)
+        .filter((id) => id != null)
+        .map((id) => Number(id))
+        .filter((id) => Number.isFinite(id))
+    );
+    let filtered = idSet.size ? cards.filter((card) => idSet.has(Number(card.flashcardId))) : [];
 
     const reviewedIds = await getReviewedIdsToday().catch(() => []);
     if (reviewedIds.length > 0) {
@@ -273,15 +244,25 @@ export default function HomePage({ navigation }) {
       setStartingId(collectionId);
       setError('');
 
+      if (Number(collection.reviewableCount ?? 0) <= 0) {
+        setError(NO_DUE_CARDS_MESSAGE);
+        setStartingId(null);
+        return;
+      }
+
       if (isOffline) {
         const cachedCards = await loadCachedCollectionCards(collectionId);
         if (Array.isArray(cachedCards) && cachedCards.length > 0) {
           const filteredCards = await filterCardsForToday(cachedCards);
-          navigation.navigate('FlashcardReview', {
-            cards: filteredCards,
-            collectionId,
-            collectionName: collection.name || 'Collection',
-          });
+          if (filteredCards.length > 0) {
+            navigation.navigate('FlashcardReview', {
+              cards: filteredCards,
+              collectionId,
+              collectionName: collection.name || 'Collection',
+            });
+          } else {
+            setError(NO_DUE_CARDS_MESSAGE);
+          }
         } else {
           setError(OFFLINE_EMPTY_SUBTITLE);
         }
@@ -290,58 +271,31 @@ export default function HomePage({ navigation }) {
       }
 
       try {
-        const details = await fetchCollectionById(collectionId);
-        const items = Array.isArray(details?.items) ? details.items : [];
-        const mappedItems = items.map((item) => {
-          const sentence = item.exampleSentence || item.sourceSentence || item.sentence || '';
-          return {
-            flashcardId: item.flashcardId ?? item.id,
-            word: item.lemma || item.word || 'Unknown',
-            phonetic: item.phonetic || '',
-            sentence,
-            exampleSentence: item.exampleSentence || '',
-            sourceSentence: item.sourceSentence || item.sentence || '',
-            translation: item.translation || item.trMeaning || '',
-            sentenceTranslation: item.sentenceTranslation || '',
-            sourceTitle: item.sourceTitle || '',
-            sourceUrl: item.sourceUrl || '',
-            videoTimestamp: item.videoTimestamp ?? null,
-            audioUrl: item.audioUrl || '',
-            sentenceAudioDataUrl: item.sentenceAudioDataUrl || '',
-            englishPronunciationUri: item.englishPronunciationUri || '',
-            turkishPronunciationUri: item.turkishPronunciationUri || '',
-            imageUri: item.imageUri || item.imageUrl || item.screenshotDataUrl || '',
-          };
-        });
+        const reviewableItems = await fetchCollectionReviewableCards(collectionId);
+        const reviewableCards = mapFlashcardsToCards(Array.isArray(reviewableItems) ? reviewableItems : []);
 
-        let cards = mappedItems;
-
-        if (!cards.length) {
-          const allFlashcards = await fetchAllFlashcards();
-          saveCache(CACHE_ALL_FLASHCARDS, allFlashcards).catch(() => {});
-          const filtered = filterFlashcardsByCollection(allFlashcards, collectionId);
-
-          cards = mapFlashcardsToCards(filtered);
+        if (reviewableCards.length > 0) {
+          navigation.navigate('FlashcardReview', {
+            cards: reviewableCards,
+            collectionId,
+            collectionName: collection.name || 'Collection',
+          });
+        } else {
+          setError(NO_DUE_CARDS_MESSAGE);
         }
-
-        saveCache(cacheCollectionKey(collectionId), cards).catch(() => {});
-
-        const filteredCards = await filterCardsForToday(cards);
-
-        navigation.navigate('FlashcardReview', {
-          cards: filteredCards,
-          collectionId,
-          collectionName: collection.name || details?.name || 'Collection',
-        });
       } catch (err) {
         const cachedCards = await loadCachedCollectionCards(collectionId);
         if (Array.isArray(cachedCards) && cachedCards.length > 0) {
           const filteredCards = await filterCardsForToday(cachedCards);
-          navigation.navigate('FlashcardReview', {
-            cards: filteredCards,
-            collectionId,
-            collectionName: collection.name || 'Collection',
-          });
+          if (filteredCards.length > 0) {
+            navigation.navigate('FlashcardReview', {
+              cards: filteredCards,
+              collectionId,
+              collectionName: collection.name || 'Collection',
+            });
+          } else {
+            setError(NO_DUE_CARDS_MESSAGE);
+          }
         } else {
           setError(err?.message || 'Collection could not be loaded.');
         }
@@ -349,7 +303,7 @@ export default function HomePage({ navigation }) {
         setStartingId(null);
       }
     },
-    [filterCardsForToday, isOffline, loadCachedCollectionCards, mapFlashcardsToCards, navigation, filterFlashcardsByCollection]
+    [filterCardsForToday, isOffline, loadCachedCollectionCards, mapFlashcardsToCards, navigation]
   );
 
   const renderCollectionCard = ({ item }) => {
@@ -362,6 +316,7 @@ export default function HomePage({ navigation }) {
     const reviewableCount = Number.isFinite(Number(item.reviewableCount))
       ? Number(item.reviewableCount)
       : 0;
+    const hasDueCards = reviewableCount > 0;
     const initial = (item.name || 'C').trim().slice(0, 1).toUpperCase();
     const isStarting = startingId === (item.collectionId ?? item.id);
 
@@ -376,14 +331,16 @@ export default function HomePage({ navigation }) {
         <Text style={styles.collectionDueCount}>{`${reviewableCount} due today`}</Text>
 
         <Pressable
-          style={styles.startButton}
+          style={[styles.startButton, !hasDueCards && styles.startButtonDisabled]}
           onPress={() => handleStart(item)}
-          disabled={isStarting}
+          disabled={isStarting || !hasDueCards}
         >
           {isStarting ? (
             <ActivityIndicator size="small" color={colors.accent} />
           ) : (
-            <Text style={styles.startButtonText}>Start</Text>
+            <Text style={[styles.startButtonText, !hasDueCards && styles.startButtonTextDisabled]}>
+              {hasDueCards ? 'Start' : 'No due cards'}
+            </Text>
           )}
         </Pressable>
       </View>
@@ -617,10 +574,16 @@ const createStyles = (colors) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  startButtonDisabled: {
+    backgroundColor: colors.mutedSurface,
+  },
   startButtonText: {
     color: colors.accent,
     fontSize: 14,
     fontFamily: 'DMSans_600SemiBold',
+  },
+  startButtonTextDisabled: {
+    color: colors.textMuted,
   },
   emptyState: {
     marginTop: 10,

@@ -3,6 +3,7 @@ package com.syntagma.backend.service;
 import com.syntagma.backend.dto.request.CollectionCreateRequest;
 import com.syntagma.backend.dto.response.CollectionItemResponse;
 import com.syntagma.backend.dto.response.CollectionResponse;
+import com.syntagma.backend.dto.response.FlashcardResponse;
 import com.syntagma.backend.entity.Collection;
 import com.syntagma.backend.entity.CollectionItem;
 import com.syntagma.backend.entity.Flashcard;
@@ -27,6 +28,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -72,6 +74,28 @@ public class CollectionService {
                 )).toList();
         Map<Long, CollectionCounts> counts = buildCounts(userId, List.of(collection));
         return toResponse(collection, itemDtos, counts.get(collectionId));
+    }
+
+    public List<FlashcardResponse> getReviewableCards(Long userId, Long collectionId) {
+        findOwnedCollection(userId, collectionId);
+
+        Set<Long> collectionCardIds = getCollectionCardIds(userId, collectionId);
+        if (collectionCardIds.isEmpty()) {
+            return List.of();
+        }
+
+        Set<Long> reviewableIds = getReviewableIds(userId);
+        List<Long> ids = collectionCardIds.stream()
+                .filter(reviewableIds::contains)
+                .toList();
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+
+        return flashcardRepository.findByUser_UserIdAndFlashcardIdIn(userId, ids)
+                .stream()
+                .map(this::toFlashcardResponse)
+                .toList();
     }
 
     @Transactional
@@ -135,6 +159,25 @@ public class CollectionService {
             return counts;
         }
 
+        Set<Long> reviewableIds = getReviewableIds(userId);
+
+        for (Collection collection : collections) {
+            Long collectionId = collection.getCollectionId();
+            Set<Long> cardIds = getCollectionCardIds(userId, collectionId);
+
+            int reviewableCount = 0;
+            for (Long cardId : cardIds) {
+                if (reviewableIds.contains(cardId)) {
+                    reviewableCount++;
+                }
+            }
+            counts.put(collectionId, new CollectionCounts(cardIds.size(), reviewableCount));
+        }
+
+        return counts;
+    }
+
+    private Set<Long> getReviewableIds(Long userId) {
         User user = userRepository.findById(userId).orElse(null);
         int dailyNewLimit = user != null && user.getDailyNewCardLimit() != null
                 ? user.getDailyNewCardLimit()
@@ -155,21 +198,13 @@ public class CollectionService {
                 .filter(id -> id != null)
                 .forEach(reviewableIds::add);
 
-        for (Collection collection : collections) {
-            Long collectionId = collection.getCollectionId();
-            Set<Long> cardIds = new HashSet<>(collectionItemRepository.findFlashcardIdsByCollectionId(collectionId));
-            cardIds.addAll(flashcardRepository.findIdsByUserIdAndCollectionId(userId, collectionId));
+        return reviewableIds;
+    }
 
-            int reviewableCount = 0;
-            for (Long cardId : cardIds) {
-                if (reviewableIds.contains(cardId)) {
-                    reviewableCount++;
-                }
-            }
-            counts.put(collectionId, new CollectionCounts(cardIds.size(), reviewableCount));
-        }
-
-        return counts;
+    private Set<Long> getCollectionCardIds(Long userId, Long collectionId) {
+        Set<Long> cardIds = new HashSet<>(collectionItemRepository.findFlashcardIdsByCollectionId(collectionId));
+        cardIds.addAll(flashcardRepository.findIdsByUserIdAndCollectionId(userId, collectionId));
+        return cardIds;
     }
 
     private CollectionResponse toResponse(Collection c, List<CollectionItemResponse> items) {
@@ -186,6 +221,27 @@ public class CollectionService {
                 items,
                 safeCounts.itemsCount(),
                 safeCounts.reviewableCount()
+        );
+    }
+
+    private FlashcardResponse toFlashcardResponse(Flashcard flashcard) {
+        List<Long> collectionIds = collectionItemRepository.findCollectionIdsByFlashcardId(flashcard.getFlashcardId())
+                .stream()
+                .distinct()
+                .collect(Collectors.toList());
+
+        return new FlashcardResponse(
+                flashcard.getFlashcardId(),
+                flashcard.getUser().getUserId(),
+                flashcard.getLemma(),
+                flashcard.getTranslation(),
+                flashcard.getSourceSentence(),
+                flashcard.getExampleSentence(),
+                flashcard.getCollection() != null ? flashcard.getCollection().getCollectionId() : null,
+                flashcard.getKnowledgeStatus(),
+                collectionIds,
+                flashcard.getCreatedAt(),
+                flashcard.getUpdatedAt()
         );
     }
 

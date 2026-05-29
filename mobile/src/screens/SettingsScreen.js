@@ -16,15 +16,13 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Notifications from 'expo-notifications';
 import {
-  fetchAllFlashcards,
-  fetchAllWordKnowledge,
   fetchCurrentUser,
+  fetchKnownVocabularyCount,
   fetchReviewStats,
 } from '../shared/api';
 import {
   getAuth,
   getBadgeState,
-  getCache,
   getLastStudyCount,
   getNotificationPreference,
   getReminderHour,
@@ -34,14 +32,10 @@ import {
   saveLastStudyCount,
   saveNotificationPreference,
   saveReminderHour,
-  saveCache,
 } from '../shared/storage';
 import { computeCefrState, getCefrMedal } from '../shared/badges';
-import { computeKnownWordsStats } from '../shared/known-words';
 import { useTheme } from '../shared/theme';
 
-const CACHE_ALL_FLASHCARDS = 'syntagma.cache.flashcards.all.v1';
-const CACHE_WORD_KNOWLEDGE = 'syntagma.cache.wordknowledge.all.v1';
 const DEFAULT_DAILY_COUNT = 10;
 
 // ── Small reusable components ──────────────────────────────────────
@@ -273,42 +267,13 @@ export default function SettingsScreen({ navigation }) {
       }
 
       try {
-        const [flashcardsResult, knowledgeResult] = await Promise.allSettled([
-          fetchAllFlashcards(),
-          fetchAllWordKnowledge(),
-        ]);
-
-        const flashcards = flashcardsResult.status === 'fulfilled' ? flashcardsResult.value : [];
-        const knowledge = knowledgeResult.status === 'fulfilled' ? knowledgeResult.value : [];
-
-        if (flashcardsResult.status === 'fulfilled') {
-          saveCache(CACHE_ALL_FLASHCARDS, flashcards).catch(() => {});
-        }
-        if (knowledgeResult.status === 'fulfilled') {
-          saveCache(CACHE_WORD_KNOWLEDGE, knowledge).catch(() => {});
-        }
-
-        if (flashcardsResult.status === 'rejected' && knowledgeResult.status === 'rejected') {
-          throw flashcardsResult.reason || knowledgeResult.reason || new Error('Failed to load vocabulary.');
-        }
-
-        const { knownCount } = computeKnownWordsStats(flashcards, knowledge);
+        const knownCount = await fetchKnownVocabularyCount();
         if (isMounted) {
           await saveBadgeState({ knownWords: knownCount });
           setBadgeState(computeCefrState(knownCount));
         }
       } catch (err) {
-        const cachedFlashcards = await getCache(CACHE_ALL_FLASHCARDS).catch(() => []);
-        const cachedKnowledge = await getCache(CACHE_WORD_KNOWLEDGE).catch(() => []);
-        if ((cachedFlashcards?.length ?? 0) > 0 || (cachedKnowledge?.length ?? 0) > 0) {
-          const { knownCount } = computeKnownWordsStats(
-            Array.isArray(cachedFlashcards) ? cachedFlashcards : [],
-            Array.isArray(cachedKnowledge) ? cachedKnowledge : []
-          );
-          if (isMounted) {
-            setBadgeState(computeCefrState(knownCount));
-          }
-        }
+        // Keep the cached badge already shown above.
       }
     };
 

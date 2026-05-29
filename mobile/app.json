@@ -20,12 +20,7 @@
         }
       ]
     ],
-    "extra": {
-      "eas": {
-        "projectId": "68a50f57-65a2-4916-a224-6a798b5abae9"
-      }
-    },
-    "owner": "alpylmz4",
+    "owner": "omerhanyigit",
     "android": {
       "package": "com.alpylmz4.syntagma",
       "adaptiveIcon": {
@@ -35,6 +30,11 @@
       "notification": {
         "icon": "./assets/maskot.jpg",
         "color": "#8B6508"
+      }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "8cfaba0b-ced2-43d7-8047-1f30806c0a2d"
       }
     }
   }

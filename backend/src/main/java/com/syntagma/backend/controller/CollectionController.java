@@ -5,6 +5,7 @@ import com.syntagma.backend.dto.request.CollectionItemRequest;
 import com.syntagma.backend.dto.response.ApiResponse;
 import com.syntagma.backend.dto.response.CollectionItemResponse;
 import com.syntagma.backend.dto.response.CollectionResponse;
+import com.syntagma.backend.dto.response.FlashcardResponse;
 import com.syntagma.backend.service.CollectionService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -14,6 +15,8 @@ import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/collections")
@@ -43,6 +46,14 @@ public class CollectionController {
             @RequestHeader("X-User-Id") Long userId,
             @PathVariable Long collectionId) {
         CollectionResponse response = collectionService.getById(userId, collectionId);
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
+    @GetMapping("/{collectionId}/reviewable-cards")
+    public ResponseEntity<ApiResponse<List<FlashcardResponse>>> getReviewableCards(
+            @RequestHeader("X-User-Id") Long userId,
+            @PathVariable Long collectionId) {
+        List<FlashcardResponse> response = collectionService.getReviewableCards(userId, collectionId);
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 
