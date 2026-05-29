@@ -263,6 +263,7 @@ public class AiService {
 
         String system = "Generate exactly ONE short English example sentence (max 15 words) for a Turkish-speaking English learner. "
                 + "The sentence MUST use the given word in the same sense as the original sentence (if provided). "
+                + "The sentence MUST be newly written and MUST NOT copy or closely paraphrase the original sentence. "
                 + "Keep it simple, natural, and appropriate for the learner's level. "
                 + "Return JSON only (no markdown). "
                 + "JSON schema: {\"exampleSentence\":\"...\"}";

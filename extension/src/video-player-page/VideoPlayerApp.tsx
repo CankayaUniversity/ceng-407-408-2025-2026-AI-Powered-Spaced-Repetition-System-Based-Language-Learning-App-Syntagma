@@ -547,9 +547,6 @@ function VideoWordPopup({
   const [aiLoading, setAiLoading] = useState<AIActionType | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
   const usageNotePending = aiLoading === 'explain-word';
-  const aiExampleSentence = aiResult?.kind === 'explain-word'
-    ? aiResult.data.examples?.find(example => example.trim())
-    : undefined;
   const popupRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
@@ -737,7 +734,6 @@ function VideoWordPopup({
         sourceUrl: `syntagma-video://${videoName}`,
         sourceTitle: videoName || 'Video',
         trMeaning: lexeme?.trMeaning ?? (translations[0] ?? ''),
-        exampleSentence: aiExampleSentence,
         usageNote: aiResult?.kind === 'explain-word' ? aiResult.data.usageNote : undefined,
         createdAt: Date.now(),
         deckName: settings.activeCollectionName || 'Syntagma',
@@ -757,7 +753,7 @@ function VideoWordPopup({
       setCardSaved('error');
       setTimeout(() => setCardSaved('idle'), 3000);
     }
-  }, [cardSaved, usageNotePending, word, surface, sentence, popup.startMs, popup.endMs, lexeme, translations, aiResult, aiExampleSentence, videoName, settings, handleStatusChange, captureAudio]);
+  }, [cardSaved, usageNotePending, word, surface, sentence, popup.startMs, popup.endMs, lexeme, translations, aiResult, videoName, settings, handleStatusChange, captureAudio]);
 
   const handleOpenCardCreator = useCallback(async () => {
     if (usageNotePending) return;
@@ -790,13 +786,12 @@ function VideoWordPopup({
         sourceUrl: `syntagma-video://${videoName}`,
         sourceTitle: videoName || 'Video',
         trMeaning: lexeme?.trMeaning ?? (translations[0] ?? ''),
-        exampleSentence: aiExampleSentence,
         usageNote: aiResult?.kind === 'explain-word' ? aiResult.data.usageNote : undefined,
         screenshotDataUrl,
         sentenceAudioDataUrl,
       },
     }).catch(() => {});
-  }, [usageNotePending, word, sentence, popup.startMs, popup.endMs, videoName, lexeme, translations, aiResult, aiExampleSentence, videoRef, captureAudio]);
+  }, [usageNotePending, word, sentence, popup.startMs, popup.endMs, videoName, lexeme, translations, aiResult, videoRef, captureAudio]);
 
   return (
     <div ref={popupRef} style={{

@@ -545,9 +545,6 @@ function ReaderWordPopup({
   const [aiLoading, setAiLoading] = useState<AIActionType | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
   const usageNotePending = aiLoading === 'explain-word';
-  const aiExampleSentence = aiResult?.kind === 'explain-word'
-    ? aiResult.data.examples?.find(example => example.trim())
-    : undefined;
   const [cardSaved, setCardSaved] = useState<'idle' | 'saving' | 'done' | 'error'>('idle');
   const [showLinks, setShowLinks] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -647,7 +644,6 @@ function ReaderWordPopup({
         sourceUrl: `syntagma-reader://${bookId}`,
         sourceTitle: bookTitle,
         trMeaning: lexeme?.trMeaning ?? (translations[0] ?? ''),
-        exampleSentence: aiExampleSentence,
         usageNote: aiResult?.kind === 'explain-word' ? aiResult.data.usageNote : undefined,
         createdAt: Date.now(),
         deckName: settings.activeCollectionName || 'Syntagma',
@@ -666,7 +662,7 @@ function ReaderWordPopup({
       setCardSaved('error');
       setTimeout(() => setCardSaved('idle'), 3000);
     }
-  }, [cardSaved, usageNotePending, word, surface, sentence, lexeme, translations, aiResult, aiExampleSentence, bookId, bookTitle, settings, handleStatusChange]);
+  }, [cardSaved, usageNotePending, word, surface, sentence, lexeme, translations, aiResult, bookId, bookTitle, settings, handleStatusChange]);
 
   const currentCfg = STATUS_CONFIG.find(c => c.status === currentStatus) ?? STATUS_CONFIG[0];
   const popupW = 340;
@@ -814,7 +810,6 @@ function ReaderWordPopup({
                   sourceUrl: `syntagma-reader://${bookId}`,
                   sourceTitle: bookTitle,
                   trMeaning: lexeme?.trMeaning ?? (translations[0] ?? ''),
-                  exampleSentence: aiExampleSentence,
                   usageNote: aiResult?.kind === 'explain-word' ? aiResult.data.usageNote : undefined,
                 },
               }).catch(() => {});

@@ -83,7 +83,6 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
   const effectiveImageUri = cardImageUri || fetchedImageUri;
   const sourceSentence = activeCard?.sourceSentence || activeCard?.sentence || '';
   const exampleSentence = activeCard?.exampleSentence || '';
-  const usageSentence = sourceSentence;
   const usageNote = activeCard?.usageNote || '';
   const usageTitle = activeCard?.sourceTitle || '';
   const usageUrl = activeCard?.sourceUrl || '';
@@ -610,11 +609,10 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
                   </View>
                 ) : null}
 
-                {usageSentence || usageMeta ? (
+                {usageMeta ? (
                   <View style={styles.detailBlock}>
                     <Text style={styles.detailLabel}>Source</Text>
-                    {usageSentence ? <Text style={styles.detailText}>{usageSentence}</Text> : null}
-                    {usageMeta ? <Text style={styles.detailMeta}>{usageMeta}</Text> : null}
+                    <Text style={styles.detailMeta}>{usageMeta}</Text>
                   </View>
                 ) : null}
 

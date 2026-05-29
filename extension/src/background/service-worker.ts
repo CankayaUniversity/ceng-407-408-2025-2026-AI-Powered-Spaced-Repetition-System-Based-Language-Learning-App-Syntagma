@@ -16,7 +16,7 @@ import {
   explainSentence as backendExplainSentence,
   generateExampleSentence as backendGenerateExample,
 } from '../shared/backend-ai';
-import type { FlashcardPayload, LexemeEntry } from '../shared/types';
+import type { FlashcardPayload, LexemeEntry, UserSettings } from '../shared/types';
 import {
   buildBackendFlashcardPayload,
   mapBackendFlashcard,
@@ -118,6 +118,77 @@ function withDeckName(card: FlashcardPayload): FlashcardPayload {
   const fallbackId = card.collectionId ?? card.collectionIds?.[0];
   const fallbackDeckName = fallbackId != null ? `Collection #${fallbackId}` : 'Syntagma';
   return { ...card, deckName: card.deckName || fallbackDeckName };
+}
+
+function hasText(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function normalizeGeneratedSentence(value: string): string {
+  return value
+    .trim()
+    .replace(/^["'“”‘’]+|["'“”‘’]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+}
+
+function isUsableGeneratedExample(example: string | undefined, sourceSentence: string): example is string {
+  if (!hasText(example)) return false;
+  if (!hasText(sourceSentence)) return true;
+  return normalizeGeneratedSentence(example) !== normalizeGeneratedSentence(sourceSentence);
+}
+
+async function enrichFlashcardWithAiFields(
+  card: FlashcardPayload,
+  settings: UserSettings,
+  options: { requireGeneratedFields?: boolean } = {}
+): Promise<FlashcardPayload> {
+  const word = (card.lemma || card.surfaceForm || '').trim();
+  const sentence = (card.sentence || '').trim();
+  const needsExampleSentence = !hasText(card.exampleSentence);
+  const needsUsageNote = !hasText(card.usageNote);
+
+  if (!settings.authToken || !word || (!needsExampleSentence && !needsUsageNote)) {
+    return card;
+  }
+
+  const [exampleResult, usageResult] = await Promise.all([
+    needsExampleSentence
+      ? backendGenerateExample({
+          word,
+          sentence: sentence || undefined,
+          level: settings.learnerLevel,
+        })
+      : Promise.resolve(null),
+    needsUsageNote
+      ? backendExplainWord({
+          word,
+          sentence,
+          level: settings.learnerLevel,
+        })
+      : Promise.resolve(null),
+  ]);
+
+  const enriched = {
+    ...card,
+    exampleSentence: needsExampleSentence && isUsableGeneratedExample(exampleResult?.exampleSentence, sentence)
+      ? exampleResult.exampleSentence.trim()
+      : card.exampleSentence,
+    usageNote: needsUsageNote && hasText(usageResult?.usageNote)
+      ? usageResult.usageNote.trim()
+      : card.usageNote,
+  };
+
+  if (options.requireGeneratedFields) {
+    if (needsExampleSentence && !hasText(enriched.exampleSentence)) {
+      throw new Error('Could not generate a new AI example sentence.');
+    }
+    if (needsUsageNote && !hasText(enriched.usageNote)) {
+      throw new Error('Could not generate an AI usage note.');
+    }
+  }
+
+  return enriched;
 }
 
 async function upsertFlashcardInLocalCache(settings: Awaited<ReturnType<typeof getSettings>>, card: FlashcardPayload): Promise<void> {
@@ -805,37 +876,49 @@ onMessage(async (msg, sender) => {
       }
     }
 
+    case 'ENRICH_FLASHCARD': {
+      const settings = await getSettings();
+      try {
+        const card = await enrichFlashcardWithAiFields(msg.payload, settings, { requireGeneratedFields: true });
+        return { ok: true, card };
+      } catch (error) {
+        console.warn('[Syntagma] Flashcard AI enrichment failed:', error);
+        return { ok: false, error: (error as Error).message };
+      }
+    }
+
     case 'CREATE_FLASHCARD': {
       const settings = await getSettings();
       if (!settings.authToken) {
         return { ok: false, error: 'Not logged in' };
       }
-      const card = msg.payload;
       const apiBase = settings.apiBaseUrl || BACKEND_URL;
-      // #region agent log
-      agentDebugLog('initial', 'H6-H7', 'extension/src/background/service-worker.ts:798', 'Create flashcard message received', {
-        hasAuthToken: Boolean(settings.authToken),
-        hasAuthUserId: Boolean(settings.authUserId),
-        hasCustomApiBaseUrl: Boolean(settings.apiBaseUrl),
-        apiHost: (() => { try { return new URL(apiBase).host; } catch { return 'invalid-url'; } })(),
-        lemmaLength: card.lemma?.length ?? null,
-        hasUsageNote: Boolean(card.usageNote),
-        hasCollectionId: card.collectionId != null,
-      });
-      // #endregion
-      const selectedCollectionId =
-        card.collectionId != null
-          ? Number(card.collectionId)
-          : settings.activeCollectionId != null
-            ? Number(settings.activeCollectionId)
-            : null;
-      const cardForRequest: FlashcardPayload = {
-        ...card,
-        exampleSentence: card.exampleSentence ?? '',
-        knowledgeStatus: card.knowledgeStatus ?? 'LEARNING',
-      };
-      const payload = buildBackendFlashcardPayload(cardForRequest, selectedCollectionId);
       try {
+        const card = await enrichFlashcardWithAiFields(msg.payload, settings, { requireGeneratedFields: true });
+        // #region agent log
+        agentDebugLog('initial', 'H6-H7', 'extension/src/background/service-worker.ts:798', 'Create flashcard message received', {
+          hasAuthToken: Boolean(settings.authToken),
+          hasAuthUserId: Boolean(settings.authUserId),
+          hasCustomApiBaseUrl: Boolean(settings.apiBaseUrl),
+          apiHost: (() => { try { return new URL(apiBase).host; } catch { return 'invalid-url'; } })(),
+          lemmaLength: card.lemma?.length ?? null,
+          hasUsageNote: Boolean(card.usageNote),
+          hasCollectionId: card.collectionId != null,
+        });
+        // #endregion
+        const selectedCollectionId =
+          card.collectionId != null
+            ? Number(card.collectionId)
+            : settings.activeCollectionId != null
+              ? Number(settings.activeCollectionId)
+              : null;
+        const cardForRequest: FlashcardPayload = {
+          ...card,
+          exampleSentence: card.exampleSentence ?? '',
+          usageNote: card.usageNote ?? '',
+          knowledgeStatus: card.knowledgeStatus ?? 'LEARNING',
+        };
+        const payload = buildBackendFlashcardPayload(cardForRequest, selectedCollectionId);
         const res = await fetch(`${apiBase}/api/flashcards`, {
           method: 'POST',
           headers: getAuthHeaders(settings),
@@ -1332,37 +1415,43 @@ onMessage(async (msg, sender) => {
         params = new URLSearchParams({ mode: 'edit', draftKey });
       } else {
         const { panel, word, sentence, sourceUrl, sourceTitle, trMeaning, exampleSentence, usageNote, screenshotDataUrl, sentenceAudioDataUrl } = msg.payload;
+        const settings = await getSettings();
+        const draftCard = await enrichFlashcardWithAiFields({
+          id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          lemma: word.trim().toLowerCase(),
+          surfaceForm: word,
+          sentence,
+          sourceUrl,
+          sourceTitle,
+          trMeaning: trMeaning ?? '',
+          exampleSentence,
+          usageNote,
+          createdAt: Date.now(),
+          deckName: settings.activeCollectionName || settings.ankiDeckName || 'Syntagma',
+          tags: ['syntagma', 'workspace-creator'],
+          screenshotDataUrl,
+          sentenceAudioDataUrl,
+        }, settings);
         console.log('[Syntagma] OPEN_CARD_CREATOR create — hasScreenshot:', !!screenshotDataUrl, 'hasAudio:', !!sentenceAudioDataUrl);
 
         let draftKey: string | undefined = undefined;
-        if (screenshotDataUrl || sentenceAudioDataUrl || exampleSentence || usageNote) {
+        if (draftCard.screenshotDataUrl || draftCard.sentenceAudioDataUrl || draftCard.exampleSentence || draftCard.usageNote) {
           draftKey = `${CARD_CREATOR_DRAFT_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2)}`;
           await chrome.storage.local.set({
-            [draftKey]: {
-              lemma: word,
-              surfaceForm: word,
-              sentence,
-              sourceUrl,
-              sourceTitle,
-              trMeaning,
-              exampleSentence,
-              usageNote,
-              screenshotDataUrl,
-              sentenceAudioDataUrl,
-            }
+            [draftKey]: draftCard,
           });
         }
         
         params = new URLSearchParams({
           mode: 'create',
           panel: panel ?? 'dictionary',
-          word,
-          sentence,
-          sourceUrl,
-          sourceTitle,
-          ...(trMeaning ? { trMeaning } : {}),
-          ...(exampleSentence ? { exampleSentence } : {}),
-          ...(usageNote ? { usageNote } : {}),
+          word: draftCard.surfaceForm,
+          sentence: draftCard.sentence,
+          sourceUrl: draftCard.sourceUrl,
+          sourceTitle: draftCard.sourceTitle,
+          ...(draftCard.trMeaning ? { trMeaning: draftCard.trMeaning } : {}),
+          ...(draftCard.exampleSentence ? { exampleSentence: draftCard.exampleSentence } : {}),
+          ...(draftCard.usageNote ? { usageNote: draftCard.usageNote } : {}),
           ...(draftKey ? { draftKey } : {}),
         });
       }

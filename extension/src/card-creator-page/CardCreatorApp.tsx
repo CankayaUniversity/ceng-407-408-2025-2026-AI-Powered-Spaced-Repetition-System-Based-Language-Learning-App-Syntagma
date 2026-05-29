@@ -404,7 +404,7 @@ export function CardCreatorApp() {
     setSaveMsg(null);
 
     const normalizedWord = targetWord.trim();
-    const card: FlashcardPayload = {
+    let card: FlashcardPayload = {
       id: editingCard?.id ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       lemma: normalizedWord.toLowerCase(),
       surfaceForm: normalizedWord,
@@ -449,6 +449,24 @@ export function CardCreatorApp() {
         }
         setSaveMsg({ text: _('ws.flashcardUpdated'), ok: true });
       } else {
+        if (!card.exampleSentence?.trim() || !card.usageNote?.trim()) {
+          const enriched = await sendMessage<{ ok: boolean; card?: FlashcardPayload; error?: string }>({
+            type: 'ENRICH_FLASHCARD',
+            payload: card,
+          });
+          if (!enriched.ok) throw new Error(enriched.error ?? 'Could not generate AI fields');
+          if (enriched.card) {
+            card = {
+              ...card,
+              ...enriched.card,
+              id: card.id,
+              createdAt: card.createdAt,
+              updatedAt: Date.now(),
+            };
+            setExampleSentence(card.exampleSentence || '');
+            setUsageNote(card.usageNote || '');
+          }
+        }
         const result = await sendMessage<{ ok: boolean; card?: FlashcardPayload; error?: string }>({
           type: 'CREATE_FLASHCARD',
           payload: card,

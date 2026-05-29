@@ -109,11 +109,19 @@ describe('CardCreatorApp workspace', () => {
     window.history.pushState({}, '', '/card-creator.html?mode=create&word=hello&sentence=hello%20world&sourceUrl=https://example.com&sourceTitle=Example');
     setupChromeStorage({ flashcards_1: [], lexemes_1: {} });
 
-    sendMessageMock.mockImplementation(async (msg: { type: string }) => {
+    sendMessageMock.mockImplementation(async (msg: { type: string; payload?: FlashcardPayload }) => {
       if (msg.type === 'GET_SETTINGS') return buildSettings();
       if (msg.type === 'FETCH_COLLECTIONS') return { ok: true, collections: [{ collectionId: 3, name: 'Deck 3' }] };
       if (msg.type === 'FETCH_FLASHCARDS') return { ok: true, cards: [] };
       if (msg.type === 'LOOKUP_DICTIONARY') return { translations: ['merhaba'] };
+      if (msg.type === 'ENRICH_FLASHCARD') return {
+        ok: true,
+        card: {
+          ...msg.payload,
+          exampleSentence: 'Generated example sentence.',
+          usageNote: 'Generated usage note.',
+        },
+      };
       if (msg.type === 'CREATE_FLASHCARD') return { ok: true };
       return { ok: true };
     });
@@ -130,6 +138,8 @@ describe('CardCreatorApp workspace', () => {
         payload: expect.objectContaining({
           lemma: 'hello',
           trMeaning: 'Merhaba',
+          exampleSentence: 'Generated example sentence.',
+          usageNote: 'Generated usage note.',
         }),
       }));
     });
