@@ -1,12 +1,14 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
   Modal,
   Pressable,
+  RefreshControl,
   StatusBar,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -14,13 +16,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { useNetInfo } from '@react-native-community/netinfo';
 import { useTheme } from '../shared/theme';
-import { fetchAllFlashcards, fetchAllWordKnowledge, updateWordKnowledge } from '../shared/api';
+import { fetchVocabularyPage, updateWordKnowledge } from '../shared/api';
 import { getCache, saveCache } from '../shared/storage';
 import { enqueueWordKnowledge } from '../shared/offline';
 
-const CACHE_LIBRARY = 'syntagma.cache.wordlibrary.v1';
-const CACHE_FLASHCARDS = 'syntagma.cache.flashcards.all.v1';
-const CACHE_WORD_KNOWLEDGE = 'syntagma.cache.wordknowledge.all.v1';
+const PAGE_SIZE = 50;
 const OFFLINE_EMPTY_TITLE = 'Offline moddasin';
 const OFFLINE_EMPTY_SUBTITLE = 'Internet gelince kelimeler senkronize olacak.';
 
@@ -32,64 +32,26 @@ const STATUS_CONFIG = {
   IGNORED: { label: 'Ignored', icon: 'eye-off', color: '#6C757D', textColor: '#FFFFFF' },
 };
 
-const VALID_STATUSES = new Set(['KNOWN', 'LEARNING', 'UNKNOWN', 'IGNORED']);
-
 const normalizeLemma = (value) =>
   typeof value === 'string' ? value.trim().toLowerCase() : '';
 
-const normalizeStatus = (value) => {
-  if (typeof value !== 'string') {
-    return null;
-  }
-  const upper = value.trim().toUpperCase();
-  return VALID_STATUSES.has(upper) ? upper : null;
-};
+const normalizeSearch = (value) =>
+  typeof value === 'string' ? value.trim().toLowerCase() : '';
 
-const mergeWordSources = (flashcards, knowledge) => {
-  const wkMap = new Map();
-  for (const item of knowledge) {
-    const lemmaValue = item?.lemma ?? item?.word;
-    const lemmaKey = normalizeLemma(lemmaValue);
-    if (!lemmaKey) {
-      continue;
-    }
+const vocabularyCacheKey = (filter, search, page) =>
+  `syntagma.cache.vocabulary.${filter}.${normalizeSearch(search) || 'all'}.${page}.v1`;
 
-    const status = normalizeStatus(item?.status) || 'LEARNING';
-    wkMap.set(lemmaKey, {
-      lemma: String(lemmaValue || lemmaKey).trim() || lemmaKey,
-      lemmaKey,
-      status,
-      updatedAt: item?.updatedAt ?? null,
-    });
-  }
-
-  const merged = new Map();
-  for (const card of flashcards) {
-    const lemmaValue = card?.lemma ?? card?.word;
-    const lemmaKey = normalizeLemma(lemmaValue);
-    if (!lemmaKey) {
-      continue;
-    }
-
-    const wkEntry = wkMap.get(lemmaKey);
-    const status = wkEntry?.status || normalizeStatus(card?.knowledgeStatus) || 'LEARNING';
-    merged.set(lemmaKey, {
-      lemma: wkEntry?.lemma || String(lemmaValue || lemmaKey).trim() || lemmaKey,
-      lemmaKey,
-      status,
-      updatedAt: wkEntry?.updatedAt ?? card?.updatedAt ?? card?.createdAt ?? null,
-    });
-  }
-
-  for (const [lemmaKey, wkEntry] of wkMap.entries()) {
-    if (!merged.has(lemmaKey)) {
-      merged.set(lemmaKey, wkEntry);
-    }
-  }
-
-  return Array.from(merged.values()).sort((a, b) =>
-    a.lemma.localeCompare(b.lemma, 'tr-TR', { sensitivity: 'base' })
-  );
+const readVocabularyPage = (data) => {
+  const content = Array.isArray(data?.content)
+    ? data.content
+    : Array.isArray(data)
+      ? data
+      : [];
+  return {
+    content,
+    last: data?.last === true || content.length < PAGE_SIZE,
+    totalElements: Number.isFinite(data?.totalElements) ? data.totalElements : null,
+  };
 };
 
 export default function FlashcardLibraryScreen() {
@@ -97,8 +59,14 @@ export default function FlashcardLibraryScreen() {
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [allWords, setAllWords] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [totalElements, setTotalElements] = useState(null);
   const [error, setError] = useState('');
   const [activeFilter, setActiveFilter] = useState('ALL');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [statusModalVisible, setStatusModalVisible] = useState(false);
   const [selectedWord, setSelectedWord] = useState(null);
   const [updatingLemmaKey, setUpdatingLemmaKey] = useState(null);
@@ -106,80 +74,118 @@ export default function FlashcardLibraryScreen() {
   const netInfo = useNetInfo();
   const isOffline = netInfo.isConnected === false || netInfo.isInternetReachable === false;
 
-  const loadWords = useCallback(async () => {
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      setDebouncedSearch(searchQuery.trim());
+    }, 300);
+
+    return () => clearTimeout(timeoutId);
+  }, [searchQuery]);
+
+  const applyPage = useCallback((pageNumber, pageData) => {
+    setAllWords((prev) => {
+      if (pageNumber === 0) {
+        return pageData.content;
+      }
+
+      const merged = new Map(prev.map((word) => [word.lemmaKey, word]));
+      for (const word of pageData.content) {
+        merged.set(word.lemmaKey, word);
+      }
+      return Array.from(merged.values());
+    });
+    setHasMore(!pageData.last);
+    setTotalElements(pageData.totalElements);
+  }, []);
+
+  const loadWordsPage = useCallback(async (pageNumber = 0, { refresh = false, append = false } = {}) => {
+    const cacheKey = vocabularyCacheKey(activeFilter, debouncedSearch, pageNumber);
+
     try {
-      setLoading(true);
+      if (append) {
+        setLoadingMore(true);
+      } else if (refresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
       setError('');
       setOfflineEmpty(false);
 
+      const cached = await getCache(cacheKey).catch(() => null);
+      if (pageNumber === 0 && cached && !refresh) {
+        applyPage(0, readVocabularyPage(cached));
+      }
+
       if (isOffline) {
-        const cached = await getCache(CACHE_LIBRARY).catch(() => null);
         if (cached) {
-          setAllWords(Array.isArray(cached) ? cached : []);
-          return;
+          applyPage(pageNumber, readVocabularyPage(cached));
+        } else if (pageNumber === 0) {
+          setAllWords([]);
+          setHasMore(false);
+          setTotalElements(null);
+          setOfflineEmpty(true);
         }
-
-        const cachedFlashcards = await getCache(CACHE_FLASHCARDS).catch(() => []);
-        const cachedKnowledge = await getCache(CACHE_WORD_KNOWLEDGE).catch(() => []);
-        if ((cachedFlashcards?.length ?? 0) > 0 || (cachedKnowledge?.length ?? 0) > 0) {
-          const merged = mergeWordSources(
-            Array.isArray(cachedFlashcards) ? cachedFlashcards : [],
-            Array.isArray(cachedKnowledge) ? cachedKnowledge : []
-          );
-          setAllWords(merged);
-          saveCache(CACHE_LIBRARY, merged).catch(() => {});
-          return;
-        }
-
-        setAllWords([]);
-        setOfflineEmpty(true);
         return;
       }
-      const [flashcardsResult, knowledgeResult] = await Promise.allSettled([
-        fetchAllFlashcards(),
-        fetchAllWordKnowledge(),
-      ]);
 
-      const flashcards = flashcardsResult.status === 'fulfilled' ? flashcardsResult.value : [];
-      const knowledge = knowledgeResult.status === 'fulfilled' ? knowledgeResult.value : [];
-
-      if (flashcardsResult.status === 'fulfilled') {
-        saveCache(CACHE_FLASHCARDS, flashcards).catch(() => {});
-      }
-      if (knowledgeResult.status === 'fulfilled') {
-        saveCache(CACHE_WORD_KNOWLEDGE, knowledge).catch(() => {});
-      }
-
-      if (flashcardsResult.status === 'rejected' && knowledgeResult.status === 'rejected') {
-        throw flashcardsResult.reason || knowledgeResult.reason || new Error('Failed to load vocabulary.');
-      }
-
-      const merged = mergeWordSources(flashcards, knowledge);
-      setAllWords(merged);
-      saveCache(CACHE_LIBRARY, merged).catch(() => {});
+      const data = await fetchVocabularyPage(pageNumber, PAGE_SIZE, activeFilter, debouncedSearch);
+      const pageData = readVocabularyPage(data);
+      applyPage(pageNumber, pageData);
+      saveCache(cacheKey, data).catch(() => {});
     } catch (err) {
-      const cached = await getCache(CACHE_LIBRARY).catch(() => null);
+      const cached = await getCache(cacheKey).catch(() => null);
       if (cached) {
-        setAllWords(Array.isArray(cached) ? cached : []);
+        applyPage(pageNumber, readVocabularyPage(cached));
         setError('');
       } else {
         setError(err?.message || 'Could not load vocabulary.');
-        setAllWords([]);
+        if (pageNumber === 0) {
+          setAllWords([]);
+          setHasMore(false);
+          setTotalElements(null);
+        }
       }
     } finally {
       setLoading(false);
+      setLoadingMore(false);
+      setRefreshing(false);
     }
-  }, [isOffline]);
+  }, [activeFilter, applyPage, debouncedSearch, isOffline]);
 
   useFocusEffect(
     useCallback(() => {
-      loadWords();
-    }, [loadWords])
+      loadWordsPage(0);
+    }, [loadWordsPage])
   );
 
   const handleFilterChange = (filter) => {
+    if (filter === activeFilter) {
+      return;
+    }
     setActiveFilter(filter);
+    setAllWords([]);
+    setHasMore(false);
+    setTotalElements(null);
   };
+
+  const handleRefresh = useCallback(() => {
+    loadWordsPage(0, { refresh: true });
+  }, [loadWordsPage]);
+
+  const handleLoadMore = useCallback(() => {
+    if (loading || loadingMore || !hasMore) {
+      return;
+    }
+    const nextPage = Math.floor(allWords.length / PAGE_SIZE);
+    loadWordsPage(nextPage, { append: true });
+  }, [allWords.length, hasMore, loadWordsPage, loading, loadingMore]);
+
+  useEffect(() => {
+    setAllWords([]);
+    setHasMore(false);
+    setTotalElements(null);
+  }, [debouncedSearch]);
 
   const handleOpenStatusPicker = (word) => {
     setSelectedWord(word);
@@ -205,25 +211,32 @@ export default function FlashcardLibraryScreen() {
     }
 
     setAllWords((prev) => {
-      const updated = prev.map((w) =>
-        w.lemmaKey === lemmaKey
-          ? { ...w, status: newStatus, updatedAt: new Date().toISOString() }
-          : w
-      );
-      saveCache(CACHE_LIBRARY, updated).catch(() => {});
+      const nextWord = { ...selectedWord, status: newStatus, updatedAt: new Date().toISOString() };
+      const updated = prev
+        .map((w) => (w.lemmaKey === lemmaKey ? nextWord : w))
+        .filter((w) => activeFilter === 'ALL' || w.status === activeFilter);
+
+      const pageIndex = Math.max(0, Math.floor(prev.findIndex((w) => w.lemmaKey === lemmaKey) / PAGE_SIZE));
+      const cacheKey = vocabularyCacheKey(activeFilter, debouncedSearch, pageIndex);
+      getCache(cacheKey)
+        .then((cached) => {
+          if (!cached?.content) return;
+          const content = cached.content
+            .map((w) => (w.lemmaKey === lemmaKey ? nextWord : w))
+            .filter((w) => activeFilter === 'ALL' || w.status === activeFilter);
+          saveCache(cacheKey, { ...cached, content }).catch(() => {});
+        })
+        .catch(() => {});
       return updated;
     });
 
     setUpdatingLemmaKey(null);
     setSelectedWord(null);
-  }, [selectedWord]);
+  }, [activeFilter, debouncedSearch, selectedWord]);
 
   const filteredWords = useMemo(() => {
-    if (activeFilter === 'ALL') {
-      return allWords;
-    }
-    return allWords.filter((word) => word.status === activeFilter);
-  }, [allWords, activeFilter]);
+    return allWords;
+  }, [allWords]);
 
   const renderFilterChip = (filter) => {
     const isActive = filter === activeFilter;
@@ -328,10 +341,28 @@ export default function FlashcardLibraryScreen() {
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Vocabulary</Text>
         <Text style={styles.headerSubtitle}>
-          {activeFilter === 'ALL'
-            ? `${allWords.length} words tracked`
-            : `${filteredWords.length} of ${allWords.length} words`}
+          {totalElements != null
+            ? `${totalElements} words tracked`
+            : `${filteredWords.length}${hasMore ? '+' : ''} words tracked`}
         </Text>
+      </View>
+
+      <View style={styles.searchWrap}>
+        <Ionicons name="search-outline" size={18} color={colors.textMuted} />
+        <TextInput
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          placeholder="Search vocabulary"
+          placeholderTextColor={colors.textMuted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          style={styles.searchInput}
+        />
+        {searchQuery ? (
+          <Pressable onPress={() => setSearchQuery('')} hitSlop={8}>
+            <Ionicons name="close-circle" size={18} color={colors.textMuted} />
+          </Pressable>
+        ) : null}
       </View>
 
       {/* Filter chips */}
@@ -341,7 +372,7 @@ export default function FlashcardLibraryScreen() {
 
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
-      {loading ? (
+      {loading && !filteredWords.length ? (
         <View style={styles.loadingWrap}>
           <ActivityIndicator size="large" color={colors.accent} />
           <Text style={styles.loadingText}>Loading vocabulary...</Text>
@@ -353,6 +384,23 @@ export default function FlashcardLibraryScreen() {
           renderItem={renderWordItem}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={handleRefresh}
+              tintColor={colors.accent}
+              colors={[colors.accent]}
+            />
+          }
+          onEndReached={handleLoadMore}
+          onEndReachedThreshold={0.35}
+          ListFooterComponent={
+            loadingMore ? (
+              <View style={styles.footerLoading}>
+                <ActivityIndicator size="small" color={colors.accent} />
+              </View>
+            ) : null
+          }
           ListEmptyComponent={
             <View style={styles.emptyWrap}>
               <Ionicons name="book-outline" size={48} color={colors.textMuted} />
@@ -399,6 +447,26 @@ const createStyles = (colors) => StyleSheet.create({
     gap: 8,
     marginBottom: 14,
   },
+  searchWrap: {
+    marginHorizontal: 22,
+    marginBottom: 12,
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderRadius: 14,
+    backgroundColor: colors.card,
+    borderWidth: 0.5,
+    borderColor: colors.border,
+    paddingHorizontal: 12,
+  },
+  searchInput: {
+    flex: 1,
+    color: colors.textPrimary,
+    fontSize: 14,
+    fontFamily: 'DMSans_400Regular',
+    paddingVertical: 10,
+  },
   filterChip: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -443,6 +511,10 @@ const createStyles = (colors) => StyleSheet.create({
   listContent: {
     paddingHorizontal: 22,
     paddingBottom: 20,
+  },
+  footerLoading: {
+    paddingVertical: 16,
+    alignItems: 'center',
   },
   wordCard: {
     flexDirection: 'row',

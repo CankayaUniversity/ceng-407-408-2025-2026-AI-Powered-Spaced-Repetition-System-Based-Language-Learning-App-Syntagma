@@ -113,6 +113,20 @@ export async function fetchWordKnowledgePage(page = 0, size = 100, status = null
   return apiRequest(`/api/word-knowledge?${params.toString()}`);
 }
 
+export async function fetchVocabularyPage(page = 0, size = 50, status = 'ALL', search = '') {
+  const params = new URLSearchParams({
+    page: String(page),
+    size: String(size),
+    status: status || 'ALL',
+  });
+
+  if (search && search.trim()) {
+    params.set('search', search.trim());
+  }
+
+  return apiRequest(`/api/vocabulary?${params.toString()}`);
+}
+
 export async function fetchDueCards(limit = 20) {
   return apiRequest(`/api/srs/due?limit=${limit}`);
 }

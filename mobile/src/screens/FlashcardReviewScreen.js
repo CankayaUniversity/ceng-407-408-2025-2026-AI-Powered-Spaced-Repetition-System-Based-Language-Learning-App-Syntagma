@@ -69,6 +69,7 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
   const [fetchedImageUri, setFetchedImageUri] = useState('');
   const [dictAudioUri, setDictAudioUri] = useState('');
   const soundRef = useRef(null);
+  const autoplayedCardRef = useRef(null);
 
   const detailsAnim = useRef(new Animated.Value(0)).current;
   const cards = sessionCards.length ? sessionCards : rawCards;
@@ -77,7 +78,8 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
     activeCard?.sentenceAudioDataUrl || activeCard?.audioUrl || activeCard?.audioUri || '';
   const cardImageUri =
     activeCard?.imageUri || activeCard?.imageUrl || activeCard?.screenshotDataUrl || '';
-  const effectiveAudioUri = cardAudioUri || fetchedAudioUri || dictAudioUri;
+  const sentenceAudioUri = cardAudioUri || fetchedAudioUri;
+  const effectiveAudioUri = sentenceAudioUri || dictAudioUri;
   const effectiveImageUri = cardImageUri || fetchedImageUri;
   const exampleSentence = activeCard?.exampleSentence || activeCard?.sentence || '';
   const usageSentence = activeCard?.sourceSentence || '';
@@ -223,19 +225,15 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
     );
   }, []);
 
-  const handleCardAudio = useCallback(async () => {
-    if (!effectiveAudioUri) {
-      return;
+  const playAudioUri = useCallback(async (uri) => {
+    if (!uri) {
+      return false;
     }
 
-    if (audioStatus.isPlaying || audioStatus.isLoading) {
-      await stopCardAudio();
-      return;
-    }
-
+    await stopCardAudio();
     setAudioStatus({ isPlaying: false, isLoading: true });
 
-    const createSound = async (uri) => {
+    try {
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: false,
         playsInSilentModeIOS: true,
@@ -249,24 +247,36 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
         if (status.didJustFinish) { stopCardAudio(); return; }
         setAudioStatus((prev) => ({ ...prev, isPlaying: status.isPlaying, isLoading: false }));
       });
-    };
+      return true;
+    } catch {
+      setAudioStatus({ isPlaying: false, isLoading: false });
+      return false;
+    }
+  }, [stopCardAudio]);
+
+  const handleCardAudio = useCallback(async () => {
+    if (!effectiveAudioUri) {
+      return;
+    }
+
+    if (audioStatus.isPlaying || audioStatus.isLoading) {
+      await stopCardAudio();
+      return;
+    }
 
     try {
-      await createSound(effectiveAudioUri);
-    } catch {
-      // Primary URI failed (e.g. unplayable YouTube/expired URL) — retry with dict audio
-      if (dictAudioUri && dictAudioUri !== effectiveAudioUri) {
-        try {
-          await createSound(dictAudioUri);
-          setFetchedAudioUri(dictAudioUri);
-        } catch {
-          setAudioStatus({ isPlaying: false, isLoading: false });
-        }
-      } else {
-        setAudioStatus({ isPlaying: false, isLoading: false });
+      const played = await playAudioUri(effectiveAudioUri);
+      if (played) {
+        return;
       }
+    } catch {
+      // Fall through to the dictionary fallback below.
     }
-  }, [audioStatus.isLoading, audioStatus.isPlaying, effectiveAudioUri, dictAudioUri, stopCardAudio]);
+
+    if (dictAudioUri && dictAudioUri !== effectiveAudioUri) {
+      await playAudioUri(dictAudioUri);
+    }
+  }, [audioStatus.isLoading, audioStatus.isPlaying, dictAudioUri, effectiveAudioUri, playAudioUri, stopCardAudio]);
 
   const advanceToNextCard = useCallback(() => {
     const isLastCard = currentIndex >= cards.length - 1;
@@ -345,8 +355,23 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
   );
 
   useEffect(() => {
+    autoplayedCardRef.current = null;
     stopCardAudio();
   }, [currentIndex, stopCardAudio]);
+
+  useEffect(() => {
+    if (!detailsOpen || !sentenceAudioUri) {
+      return;
+    }
+
+    const autoplayKey = String(activeCard?.flashcardId ?? `${currentIndex}:${activeCard?.word ?? ''}`);
+    if (autoplayedCardRef.current === autoplayKey) {
+      return;
+    }
+
+    autoplayedCardRef.current = autoplayKey;
+    playAudioUri(sentenceAudioUri);
+  }, [activeCard?.flashcardId, activeCard?.word, currentIndex, detailsOpen, playAudioUri, sentenceAudioUri]);
 
   useEffect(() => () => {
     stopCardAudio();
@@ -389,7 +414,7 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
         if (cancelled) return;
 
         if (!Array.isArray(mediaList)) {
-          if (!cardAudioUri && word) fetchDictAudio(word, cancelled, setFetchedAudioUri);
+          if (!cardAudioUri && word) fetchDictAudio(word, cancelled, setDictAudioUri);
           return;
         }
 
@@ -401,11 +426,11 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
             fetchMediaDownloadUrl(audioAsset.mediaId)
               .then((res) => {
                 if (!cancelled && res?.downloadUrl) setFetchedAudioUri(res.downloadUrl);
-                else if (!cancelled && word) fetchDictAudio(word, cancelled, setFetchedAudioUri);
+                else if (!cancelled && word) fetchDictAudio(word, cancelled, setDictAudioUri);
               })
-              .catch(() => { if (!cancelled && word) fetchDictAudio(word, cancelled, setFetchedAudioUri); });
+              .catch(() => { if (!cancelled && word) fetchDictAudio(word, cancelled, setDictAudioUri); });
           } else if (word) {
-            fetchDictAudio(word, cancelled, setFetchedAudioUri);
+            fetchDictAudio(word, cancelled, setDictAudioUri);
           }
         }
 
@@ -414,9 +439,9 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
             .then((res) => { if (!cancelled && res?.downloadUrl) setFetchedImageUri(res.downloadUrl); })
             .catch(() => {});
         }
-      })
+    })
       .catch(() => {
-        if (!cancelled && !cardAudioUri && word) fetchDictAudio(word, cancelled, setFetchedAudioUri);
+        if (!cancelled && !cardAudioUri && word) fetchDictAudio(word, cancelled, setDictAudioUri);
       });
 
     return () => { cancelled = true; };

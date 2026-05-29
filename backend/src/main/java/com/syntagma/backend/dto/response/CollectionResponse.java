@@ -8,5 +8,7 @@ public record CollectionResponse(
         Long userId,
         String name,
         LocalDateTime createdAt,
-        List<CollectionItemResponse> items
+        List<CollectionItemResponse> items,
+        int itemsCount,
+        int reviewableCount
 ) {}

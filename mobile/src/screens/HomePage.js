@@ -42,31 +42,8 @@ export default function HomePage({ navigation }) {
   const [startingId, setStartingId] = useState(null);
   const [badgeState, setBadgeState] = useState(null);
   const [offlineEmpty, setOfflineEmpty] = useState(false);
-  const [collectionCounts, setCollectionCounts] = useState({});
   const netInfo = useNetInfo();
   const isOffline = netInfo.isConnected === false || netInfo.isInternetReachable === false;
-
-  const fetchCountsForCollections = useCallback(async (colList) => {
-    if (!colList.length) return;
-    try {
-      const allFlashcards = await fetchAllFlashcards();
-      saveCache(CACHE_ALL_FLASHCARDS, allFlashcards).catch(() => {});
-      const counts = {};
-      for (const col of colList) {
-        const id = Number(col.collectionId ?? col.id);
-        if (!Number.isFinite(id)) continue;
-        counts[id] = allFlashcards.filter((card) => {
-          const cardIds = Array.isArray(card?.collectionIds) ? card.collectionIds : [];
-          const allIds = [...cardIds];
-          if (card?.collectionId != null) allIds.push(card.collectionId);
-          return allIds.some((cid) => Number(cid) === id);
-        }).length;
-      }
-      setCollectionCounts(counts);
-    } catch {
-      // non-critical
-    }
-  }, []);
 
   const loadCollections = useCallback(async () => {
     if (!isOffline) {
@@ -88,7 +65,16 @@ export default function HomePage({ navigation }) {
             const colCache = await getCache(cacheCollectionKey(id)).catch(() => null);
             if (Array.isArray(colCache)) offlineCounts[id] = colCache.length;
           }
-          if (Object.keys(offlineCounts).length > 0) setCollectionCounts(offlineCounts);
+          if (Object.keys(offlineCounts).length > 0) {
+            setCollections((prev) =>
+              prev.map((col) => {
+                const id = Number(col.collectionId ?? col.id);
+                return Number.isFinite(id) && offlineCounts[id] != null
+                  ? { ...col, itemsCount: col.itemsCount ?? offlineCounts[id] }
+                  : col;
+              })
+            );
+          }
         } else {
           setCollections([]);
           setOfflineEmpty(true);
@@ -105,13 +91,11 @@ export default function HomePage({ navigation }) {
             : [];
       setCollections(list);
       saveCache(CACHE_COLLECTIONS, list).catch(() => {});
-      fetchCountsForCollections(list);
     } catch (err) {
       const cached = await getCache(CACHE_COLLECTIONS).catch(() => null);
       if (cached) {
         setCollections(cached);
         setError('');
-        fetchCountsForCollections(cached);
       } else {
         setError(err?.message || 'Collections could not be loaded.');
         setCollections([]);
@@ -373,8 +357,11 @@ export default function HomePage({ navigation }) {
     const itemCount = Array.isArray(item.items) && item.items.length > 0
       ? item.items.length
       : collectionId != null
-        ? (collectionCounts[Number(collectionId)] ?? item.itemsCount ?? 0)
+        ? (item.itemsCount ?? 0)
         : (item.itemsCount ?? 0);
+    const reviewableCount = Number.isFinite(Number(item.reviewableCount))
+      ? Number(item.reviewableCount)
+      : 0;
     const initial = (item.name || 'C').trim().slice(0, 1).toUpperCase();
     const isStarting = startingId === (item.collectionId ?? item.id);
 
@@ -386,6 +373,7 @@ export default function HomePage({ navigation }) {
 
         <Text style={styles.languageName}>{item.name || 'Untitled Collection'}</Text>
         <Text style={styles.collectionCount}>{`${itemCount} cards`}</Text>
+        <Text style={styles.collectionDueCount}>{`${reviewableCount} due today`}</Text>
 
         <Pressable
           style={styles.startButton}
@@ -408,7 +396,6 @@ export default function HomePage({ navigation }) {
 
       <FlatList
         data={collections}
-        extraData={collectionCounts}
         keyExtractor={(item) => String(item.collectionId ?? item.id ?? item.name)}
         renderItem={renderCollectionCard}
         numColumns={2}
@@ -611,10 +598,16 @@ const createStyles = (colors) => StyleSheet.create({
   },
   collectionCount: {
     marginTop: -6,
-    marginBottom: 12,
+    marginBottom: 4,
     color: colors.textSecondary,
     fontSize: 12,
     fontFamily: 'DMSans_400Regular',
+  },
+  collectionDueCount: {
+    marginBottom: 12,
+    color: colors.accent,
+    fontSize: 12,
+    fontFamily: 'DMSans_600SemiBold',
   },
   startButton: {
     width: '100%',
