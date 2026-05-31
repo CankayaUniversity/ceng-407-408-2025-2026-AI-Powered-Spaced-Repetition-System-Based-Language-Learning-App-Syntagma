@@ -15,6 +15,7 @@ import SessionSummaryScreen from './src/screens/SessionSummaryScreen';
 import { ThemeProvider } from './src/shared/theme';
 import { clearSession, getAuth } from './src/shared/storage';
 import { fetchCurrentUser } from './src/shared/api';
+import { resolveInitialRouteFromAuthError } from './src/shared/startup-auth';
 
 const AppStack = createNativeStackNavigator();
 
@@ -55,11 +56,12 @@ export default function App() {
           setInitialRoute('MainTabs');
         }
       } catch (err) {
-        if (err?.status === 401 || err?.status === 403) {
+        const route = resolveInitialRouteFromAuthError(true, err?.status);
+        if (route === 'Login' && (err?.status === 401 || err?.status === 403)) {
           await clearSession().catch(() => {});
         }
         if (isMounted) {
-          setInitialRoute('Login');
+          setInitialRoute(route);
         }
       } finally {
         if (isMounted) {

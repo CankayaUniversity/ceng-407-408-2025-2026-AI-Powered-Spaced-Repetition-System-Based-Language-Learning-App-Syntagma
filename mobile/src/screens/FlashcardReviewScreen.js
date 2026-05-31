@@ -24,7 +24,7 @@ import {
   saveCarryover,
 } from '../shared/storage';
 import { fetchFlashcardMedia, fetchMediaDownloadUrl, getDeviceTimeZone, submitReview, updateWordKnowledge } from '../shared/api';
-import { bumpDelta, enqueueReview, enqueueWordKnowledge, markCardReviewed } from '../shared/offline';
+import { bumpDelta, enqueueReview, enqueueWordKnowledge, recordCardReviewedLocally } from '../shared/offline';
 import { useTheme } from '../shared/theme';
 
 const DEFAULT_CARDS = [];
@@ -100,6 +100,7 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
     : `${originalCardsLeft} CARDS LEFT`;
   const cardHorizontalPadding = Math.max(16, Math.min(28, Math.round(width * 0.07)));
   const collectionName = route?.params?.collectionName;
+  const collectionId = route?.params?.collectionId;
   const todayKey = new Date().toISOString().slice(0, 10);
 
   useEffect(() => {
@@ -362,7 +363,7 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
   }, [cards.length, currentIndex, navigation, rawCards, resetDetails, targetCount]);
 
   const handleAnswer = useCallback(
-    (rating) => {
+    async (rating) => {
       const reviewHandler = onReview || routeOnReview;
       if (typeof reviewHandler === 'function') {
         reviewHandler(rating);
@@ -379,9 +380,9 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
           clientTimestamp,
           clientTimeZone: getDeviceTimeZone(),
         };
+        await recordCardReviewedLocally(activeCard, collectionId).catch(() => {});
         submitReview(review)
           .then((response) => {
-            markCardReviewed(review.flashcardId);
             if ((response?.updatedSrsState?.scheduledDays ?? 0) >= 25 && lemma) {
               updateWordKnowledge(lemma, 'KNOWN').catch(() =>
                 enqueueWordKnowledge(lemma, 'KNOWN').catch(() => {})
@@ -391,14 +392,13 @@ export default function FlashcardReviewScreen({ route, navigation, onReview, onP
           .catch(async () => {
             await enqueueReview(review, lemma);
             await bumpDelta();
-            await markCardReviewed(review.flashcardId);
           });
       }
 
       const cardToRequeue = rating === Rating.Again ? activeCard : null;
       advanceToNextCard(cardToRequeue);
     },
-    [activeCard, onReview, routeOnReview, advanceToNextCard, todayKey]
+    [activeCard, advanceToNextCard, collectionId, onReview, routeOnReview]
   );
 
   const handlePronunciation = useCallback(

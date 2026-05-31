@@ -4,6 +4,7 @@
   "description": "",
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
+    "test": "node --test src/shared/offline-cache.test.cjs src/shared/startup-auth.test.cjs src/shared/pagination.test.cjs",
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",

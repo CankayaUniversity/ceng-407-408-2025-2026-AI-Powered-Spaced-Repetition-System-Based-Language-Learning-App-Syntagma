@@ -1,14 +1,16 @@
 import {
   fetchAllFlashcards,
+  fetchAllVocabulary,
   fetchAllWordKnowledge,
+  fetchCollectionReviewableCards,
   fetchCollections,
-  fetchDailyCards,
   fetchReviewStats,
   submitReview,
   updateWordKnowledge,
 } from './api';
 import {
   appendToQueue,
+  getCache,
   getQueue,
   shiftQueue,
   getReviewDelta,
@@ -18,15 +20,25 @@ import {
   saveCache,
   clearAllReviewDeltas,
 } from './storage';
+import {
+  CACHE_COLLECTIONS,
+  CACHE_FLASHCARDS,
+  CACHE_VOCABULARY,
+  CACHE_WORD_KNOWLEDGE,
+  buildCollectionMap,
+  buildVocabularyItems,
+  cacheCollectionKey,
+  cacheCollectionReviewableIdsKey,
+  cacheStatsKey,
+  extractFlashcardIds,
+  getCardCollectionIds,
+  mapFlashcardsToCards,
+  normalizeCollections,
+  removeReviewableId,
+} from './offline-cache';
 
 const QUEUE_REVIEWS = 'syntagma.queue.reviews';
 const QUEUE_WORDKNOWLEDGE = 'syntagma.queue.wordknowledge';
-const CACHE_COLLECTIONS = 'syntagma.cache.collections';
-const CACHE_FLASHCARDS = 'syntagma.cache.flashcards.all.v1';
-const CACHE_WORD_KNOWLEDGE = 'syntagma.cache.wordknowledge.all.v1';
-const CACHE_DAILY = 'syntagma.cache.daily';
-const cacheCollectionKey = (id) => `syntagma.cache.collection.${id}`;
-const cacheStatsKey = (period) => `syntagma.cache.reviewstats.${period}`;
 
 function todayStr() {
   const today = new Date();
@@ -82,78 +94,12 @@ export async function flushQueues() {
   };
 }
 
-const normalizeCollections = (data) =>
-  Array.isArray(data)
-    ? data
-    : Array.isArray(data?.content)
-      ? data.content
-      : Array.isArray(data?.collections)
-        ? data.collections
-        : [];
-
-const mapFlashcardsToCards = (items) =>
-  items.map((item) => {
-    const sentence = item.sourceSentence || item.sentence || '';
-    return {
-      flashcardId: item.flashcardId ?? item.id,
-      word: item.lemma || item.word || 'Unknown',
-      phonetic: item.phonetic || '',
-      sentence,
-      exampleSentence: item.exampleSentence || '',
-      sourceSentence: item.sourceSentence || item.sentence || '',
-      translation: item.translation || item.trMeaning || '',
-      usageNote: item.usageNote || '',
-      sentenceTranslation: item.sentenceTranslation || '',
-      sourceTitle: item.sourceTitle || '',
-      sourceUrl: item.sourceUrl || '',
-      videoTimestamp: item.videoTimestamp ?? null,
-      audioUrl: item.audioUrl || '',
-      sentenceAudioDataUrl: item.sentenceAudioDataUrl || '',
-      englishPronunciationUri: item.englishPronunciationUri || '',
-      turkishPronunciationUri: item.turkishPronunciationUri || '',
-      imageUri: item.imageUri || item.imageUrl || item.screenshotDataUrl || '',
-    };
-  });
-
-const getCardCollectionIds = (card) => {
-  const ids = Array.isArray(card?.collectionIds) ? card.collectionIds : [];
-  const allIds = ids.slice();
-  if (card?.collectionId != null) {
-    allIds.push(card.collectionId);
-  }
-  return allIds.map((id) => Number(id)).filter((id) => Number.isFinite(id));
-};
-
-const buildCollectionMap = (flashcards, collections) => {
-  const map = new Map();
-  if (Array.isArray(collections)) {
-    for (const col of collections) {
-      const id = Number(col?.collectionId ?? col?.id);
-      if (Number.isFinite(id)) {
-        map.set(id, []);
-      }
-    }
-  }
-
-  for (const card of flashcards) {
-    const ids = getCardCollectionIds(card);
-    for (const id of ids) {
-      if (!map.has(id)) {
-        map.set(id, []);
-      }
-      map.get(id).push(card);
-    }
-  }
-
-  return map;
-};
-
 export async function prefetchOfflineData() {
-  const [collectionsResult, flashcardsResult, knowledgeResult, dailyResult] = await Promise.allSettled([
+  const [collectionsResult, flashcardsResult, knowledgeResult, vocabularyResult] = await Promise.allSettled([
     fetchCollections(),
     fetchAllFlashcards(),
     fetchAllWordKnowledge(),
-    fetchDailyCards(),
+    fetchAllVocabulary(),
   ]);
 
   const statsResults = await Promise.allSettled([
@@ -171,26 +117,60 @@ export async function prefetchOfflineData() {
     await saveCache(CACHE_COLLECTIONS, collections).catch(() => {});
   }
 
-  if (flashcardsResult.status === 'fulfilled') {
-    const flashcards = Array.isArray(flashcardsResult.value) ? flashcardsResult.value : [];
+  const flashcards = flashcardsResult.status === 'fulfilled' && Array.isArray(flashcardsResult.value)
+    ? flashcardsResult.value
+    : null;
+  const knowledge = knowledgeResult.status === 'fulfilled' && Array.isArray(knowledgeResult.value)
+    ? knowledgeResult.value
+    : null;
+  const vocabulary = vocabularyResult.status === 'fulfilled' && Array.isArray(vocabularyResult.value)
+    ? vocabularyResult.value
+    : null;
+
+  if (flashcards) {
     await saveCache(CACHE_FLASHCARDS, flashcards).catch(() => {});
 
-    if (flashcards.length) {
-      const collectionMap = buildCollectionMap(flashcards, collections);
-      const saveTasks = Array.from(collectionMap.entries()).map(([id, cards]) =>
-        saveCache(cacheCollectionKey(id), mapFlashcardsToCards(cards)).catch(() => {})
-      );
-      await Promise.all(saveTasks);
-    }
+    const collectionMap = buildCollectionMap(flashcards, collections);
+    const saveTasks = Array.from(collectionMap.entries()).map(([id, cards]) =>
+      saveCache(cacheCollectionKey(id), mapFlashcardsToCards(cards)).catch(() => {})
+    );
+    await Promise.all(saveTasks);
   }
 
-  if (knowledgeResult.status === 'fulfilled') {
-    const knowledge = Array.isArray(knowledgeResult.value) ? knowledgeResult.value : [];
+  if (collections) {
+    const reviewableTasks = collections.map(async (col) => {
+      const id = Number(col?.collectionId ?? col?.id);
+      if (!Number.isFinite(id)) {
+        return;
+      }
+
+      try {
+        const reviewable = await fetchCollectionReviewableCards(id);
+        await saveCache(
+          cacheCollectionReviewableIdsKey(id),
+          extractFlashcardIds(reviewable)
+        ).catch(() => {});
+      } catch {
+        // Best effort cache refresh; stale cached ids can still be used offline.
+      }
+    });
+    await Promise.all(reviewableTasks);
+  }
+
+  if (knowledge) {
     await saveCache(CACHE_WORD_KNOWLEDGE, knowledge).catch(() => {});
   }
 
-  if (dailyResult.status === 'fulfilled') {
-    await saveCache(CACHE_DAILY, dailyResult.value).catch(() => {});
+  if (vocabulary) {
+    await saveCache(CACHE_VOCABULARY, vocabulary).catch(() => {});
+  } else if (flashcards || knowledge) {
+    const existingVocabulary = await getCache(CACHE_VOCABULARY).catch(() => null);
+    if (!Array.isArray(existingVocabulary) || existingVocabulary.length === 0) {
+      const cachedFlashcards = flashcards || await getCache(CACHE_FLASHCARDS).catch(() => []);
+      const cachedKnowledge = knowledge || await getCache(CACHE_WORD_KNOWLEDGE).catch(() => []);
+      const derivedVocabulary = buildVocabularyItems(cachedFlashcards || [], cachedKnowledge || []);
+      await saveCache(CACHE_VOCABULARY, derivedVocabulary).catch(() => {});
+    }
   }
 
   const [weekStats, monthStats, yearStats, allStats] = statsResults;
@@ -222,4 +202,33 @@ export async function getReviewedIdsToday() {
 
 export async function markCardReviewed(cardId) {
   await addReviewedId(todayStr(), cardId);
+}
+
+export async function recordCardReviewedLocally(card, collectionId = null) {
+  const cardId = card?.flashcardId ?? card?.id;
+  if (cardId == null) {
+    return;
+  }
+
+  await markCardReviewed(cardId);
+
+  const ids = new Set();
+  const numericCollectionId = Number(collectionId);
+  if (Number.isFinite(numericCollectionId)) {
+    ids.add(numericCollectionId);
+  }
+
+  for (const id of getCardCollectionIds(card)) {
+    ids.add(id);
+  }
+
+  await Promise.all(Array.from(ids).map(async (id) => {
+    const key = cacheCollectionReviewableIdsKey(id);
+    const reviewableIds = await getCache(key).catch(() => null);
+    if (!Array.isArray(reviewableIds)) {
+      return;
+    }
+
+    await saveCache(key, removeReviewableId(reviewableIds, cardId)).catch(() => {});
+  }));
 }

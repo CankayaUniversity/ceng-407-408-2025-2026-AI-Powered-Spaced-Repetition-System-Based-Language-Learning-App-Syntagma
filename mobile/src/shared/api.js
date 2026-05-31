@@ -1,4 +1,5 @@
 import { getAuth, saveAuth, updateAuthToken } from './storage';
+import { collectPagedContent } from './pagination';
 
 const API_BASE_URL = 'https://syntagma.omerhanyigit.online';
 
@@ -153,6 +154,13 @@ export async function fetchVocabularyPage(page = 0, size = 50, status = 'ALL', s
   }
 
   return apiRequest(`/api/vocabulary?${params.toString()}`);
+}
+
+export async function fetchAllVocabulary({ pageSize = 500, maxPages = 100 } = {}) {
+  return collectPagedContent(
+    (page) => fetchVocabularyPage(page, pageSize, 'ALL', ''),
+    { maxPages }
+  );
 }
 
 export async function fetchKnownVocabularyCount() {

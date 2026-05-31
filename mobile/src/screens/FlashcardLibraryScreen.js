@@ -16,9 +16,18 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { useNetInfo } from '@react-native-community/netinfo';
 import { useTheme } from '../shared/theme';
-import { fetchVocabularyPage, updateWordKnowledge } from '../shared/api';
+import { fetchAllVocabulary, fetchVocabularyPage, updateWordKnowledge } from '../shared/api';
 import { getCache, saveCache } from '../shared/storage';
 import { enqueueWordKnowledge } from '../shared/offline';
+import {
+  CACHE_VOCABULARY,
+  CACHE_WORD_KNOWLEDGE,
+  normalizeLemma,
+  paginateVocabularyItems,
+  readVocabularyPage,
+  updateVocabularyStatus,
+  vocabularyPageCacheKey,
+} from '../shared/offline-cache';
 
 const PAGE_SIZE = 50;
 const OFFLINE_EMPTY_TITLE = 'Offline moddasin';
@@ -30,28 +39,6 @@ const STATUS_CONFIG = {
   KNOWN: { label: 'Known', icon: 'checkmark-circle', color: '#2D6A4F', textColor: '#FFFFFF' },
   LEARNING: { label: 'Learning', icon: 'school', color: '#E9A820', textColor: '#FFFFFF' },
   IGNORED: { label: 'Ignored', icon: 'eye-off', color: '#6C757D', textColor: '#FFFFFF' },
-};
-
-const normalizeLemma = (value) =>
-  typeof value === 'string' ? value.trim().toLowerCase() : '';
-
-const normalizeSearch = (value) =>
-  typeof value === 'string' ? value.trim().toLowerCase() : '';
-
-const vocabularyCacheKey = (filter, search, page) =>
-  `syntagma.cache.vocabulary.${filter}.${normalizeSearch(search) || 'all'}.${page}.v1`;
-
-const readVocabularyPage = (data) => {
-  const content = Array.isArray(data?.content)
-    ? data.content
-    : Array.isArray(data)
-      ? data
-      : [];
-  return {
-    content,
-    last: data?.last === true || content.length < PAGE_SIZE,
-    totalElements: Number.isFinite(data?.totalElements) ? data.totalElements : null,
-  };
 };
 
 export default function FlashcardLibraryScreen() {
@@ -73,6 +60,17 @@ export default function FlashcardLibraryScreen() {
   const [offlineEmpty, setOfflineEmpty] = useState(false);
   const netInfo = useNetInfo();
   const isOffline = netInfo.isConnected === false || netInfo.isInternetReachable === false;
+
+  const refreshFullVocabularyCache = useCallback(async () => {
+    if (isOffline) {
+      return;
+    }
+
+    const vocabulary = await fetchAllVocabulary();
+    if (Array.isArray(vocabulary)) {
+      await saveCache(CACHE_VOCABULARY, vocabulary);
+    }
+  }, [isOffline]);
 
   useEffect(() => {
     const timeoutId = setTimeout(() => {
@@ -99,7 +97,7 @@ export default function FlashcardLibraryScreen() {
   }, []);
 
   const loadWordsPage = useCallback(async (pageNumber = 0, { refresh = false, append = false } = {}) => {
-    const cacheKey = vocabularyCacheKey(activeFilter, debouncedSearch, pageNumber);
+    const cacheKey = vocabularyPageCacheKey(activeFilter, debouncedSearch, pageNumber);
 
     try {
       if (append) {
@@ -114,12 +112,18 @@ export default function FlashcardLibraryScreen() {
 
       const cached = await getCache(cacheKey).catch(() => null);
       if (pageNumber === 0 && cached && !refresh) {
-        applyPage(0, readVocabularyPage(cached));
+        applyPage(0, readVocabularyPage(cached, PAGE_SIZE));
       }
 
       if (isOffline) {
-        if (cached) {
-          applyPage(pageNumber, readVocabularyPage(cached));
+        const fullVocabulary = await getCache(CACHE_VOCABULARY).catch(() => null);
+        if (Array.isArray(fullVocabulary)) {
+          applyPage(
+            pageNumber,
+            paginateVocabularyItems(fullVocabulary, pageNumber, PAGE_SIZE, activeFilter, debouncedSearch)
+          );
+        } else if (cached) {
+          applyPage(pageNumber, readVocabularyPage(cached, PAGE_SIZE));
         } else if (pageNumber === 0) {
           setAllWords([]);
           setHasMore(false);
@@ -130,13 +134,16 @@ export default function FlashcardLibraryScreen() {
       }
 
       const data = await fetchVocabularyPage(pageNumber, PAGE_SIZE, activeFilter, debouncedSearch);
-      const pageData = readVocabularyPage(data);
+      const pageData = readVocabularyPage(data, PAGE_SIZE);
       applyPage(pageNumber, pageData);
       saveCache(cacheKey, data).catch(() => {});
+      if (pageNumber === 0 && refresh) {
+        refreshFullVocabularyCache().catch(() => {});
+      }
     } catch (err) {
       const cached = await getCache(cacheKey).catch(() => null);
       if (cached) {
-        applyPage(pageNumber, readVocabularyPage(cached));
+        applyPage(pageNumber, readVocabularyPage(cached, PAGE_SIZE));
         setError('');
       } else {
         setError(err?.message || 'Could not load vocabulary.');
@@ -151,7 +158,7 @@ export default function FlashcardLibraryScreen() {
       setLoadingMore(false);
       setRefreshing(false);
     }
-  }, [activeFilter, applyPage, debouncedSearch, isOffline]);
+  }, [activeFilter, applyPage, debouncedSearch, isOffline, refreshFullVocabularyCache]);
 
   useFocusEffect(
     useCallback(() => {
@@ -205,19 +212,23 @@ export default function FlashcardLibraryScreen() {
     setUpdatingLemmaKey(lemmaKey);
 
     try {
+      if (isOffline) {
+        throw new Error('Offline');
+      }
       await updateWordKnowledge(lemmaKey, newStatus);
     } catch {
       enqueueWordKnowledge(lemmaKey, newStatus).catch(() => {});
     }
 
+    const nextWord = { ...selectedWord, lemmaKey, status: newStatus, updatedAt: new Date().toISOString() };
+
     setAllWords((prev) => {
-      const nextWord = { ...selectedWord, status: newStatus, updatedAt: new Date().toISOString() };
       const updated = prev
         .map((w) => (w.lemmaKey === lemmaKey ? nextWord : w))
         .filter((w) => activeFilter === 'ALL' || w.status === activeFilter);
 
       const pageIndex = Math.max(0, Math.floor(prev.findIndex((w) => w.lemmaKey === lemmaKey) / PAGE_SIZE));
-      const cacheKey = vocabularyCacheKey(activeFilter, debouncedSearch, pageIndex);
+      const cacheKey = vocabularyPageCacheKey(activeFilter, debouncedSearch, pageIndex);
       getCache(cacheKey)
         .then((cached) => {
           if (!cached?.content) return;
@@ -230,9 +241,28 @@ export default function FlashcardLibraryScreen() {
       return updated;
     });
 
+    getCache(CACHE_VOCABULARY)
+      .then((cached) => {
+        if (!Array.isArray(cached)) return;
+        saveCache(CACHE_VOCABULARY, updateVocabularyStatus(cached, lemmaKey, newStatus)).catch(() => {});
+      })
+      .catch(() => {});
+
+    getCache(CACHE_WORD_KNOWLEDGE)
+      .then((cached) => {
+        const knowledge = Array.isArray(cached) ? cached : [];
+        const index = knowledge.findIndex((item) => normalizeLemma(item?.lemma) === lemmaKey);
+        const nextItem = { lemma: nextWord.lemma || lemmaKey, status: newStatus, updatedAt: nextWord.updatedAt };
+        const nextKnowledge = index >= 0
+          ? knowledge.map((item, itemIndex) => (itemIndex === index ? { ...item, ...nextItem } : item))
+          : [...knowledge, nextItem];
+        saveCache(CACHE_WORD_KNOWLEDGE, nextKnowledge).catch(() => {});
+      })
+      .catch(() => {});
+
     setUpdatingLemmaKey(null);
     setSelectedWord(null);
-  }, [activeFilter, debouncedSearch, selectedWord]);
+  }, [activeFilter, debouncedSearch, isOffline, selectedWord]);
 
   const filteredWords = useMemo(() => {
     return allWords;

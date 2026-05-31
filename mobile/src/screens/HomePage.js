@@ -13,24 +13,32 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { useNetInfo } from '@react-native-community/netinfo';
 import {
-  fetchAllFlashcards,
   fetchCollectionReviewableCards,
   fetchCollections,
-  fetchDailyCards,
   fetchKnownVocabularyCount,
 } from '../shared/api';
 import { getBadgeState, getCache, saveCache, saveBadgeState } from '../shared/storage';
 import { flushQueues, getReviewedIdsToday } from '../shared/offline';
+import {
+  CACHE_COLLECTIONS,
+  CACHE_FLASHCARDS,
+  applyOfflineCollectionCounts,
+  applyLocalReviewableCountOverlay,
+  cacheCollectionKey,
+  cacheCollectionReviewableIdsKey,
+  extractFlashcardIds,
+  filterReviewableCards,
+  getCardCollectionIds,
+  mapFlashcardsToCards,
+  normalizeCollections,
+} from '../shared/offline-cache';
 import { computeCefrState, getCefrMedal } from '../shared/badges';
 import { useTheme } from '../shared/theme';
 
-const CACHE_COLLECTIONS = 'syntagma.cache.collections';
-const cacheCollectionKey = (id) => `syntagma.cache.collection.${id}`;
-const CACHE_DAILY = 'syntagma.cache.daily';
-const CACHE_ALL_FLASHCARDS = 'syntagma.cache.flashcards.all.v1';
 const OFFLINE_EMPTY_TITLE = 'Offline moddasin';
 const OFFLINE_EMPTY_SUBTITLE = 'Internet gelince koleksiyonlar senkronize olacak.';
 const NO_DUE_CARDS_MESSAGE = 'No cards are due in this collection today.';
+const OFFLINE_SYNC_REQUIRED_MESSAGE = 'No offline due data yet. Go online once to sync due cards.';
 
 export default function HomePage({ navigation }) {
   const { colors, isDark } = useTheme();
@@ -44,10 +52,30 @@ export default function HomePage({ navigation }) {
   const netInfo = useNetInfo();
   const isOffline = netInfo.isConnected === false || netInfo.isInternetReachable === false;
 
-  const loadCollections = useCallback(async () => {
-    if (!isOffline) {
-      flushQueues().catch(() => {});
+  const filterFlashcardsByCollection = useCallback((flashcards, collectionId) => {
+    return (Array.isArray(flashcards) ? flashcards : []).filter((card) =>
+      getCardCollectionIds(card).some((id) => Number(id) === Number(collectionId))
+    );
+  }, []);
+
+  const loadCachedCollectionCards = useCallback(async (collectionId) => {
+    const cachedCards = await getCache(cacheCollectionKey(collectionId)).catch(() => null);
+    if (Array.isArray(cachedCards)) {
+      return cachedCards;
     }
+
+    const cachedFlashcards = await getCache(CACHE_FLASHCARDS).catch(() => null);
+    if (Array.isArray(cachedFlashcards) && cachedFlashcards.length > 0) {
+      const filtered = filterFlashcardsByCollection(cachedFlashcards, collectionId);
+      if (filtered.length > 0) {
+        return mapFlashcardsToCards(filtered);
+      }
+    }
+
+    return [];
+  }, [filterFlashcardsByCollection]);
+
+  const loadCollections = useCallback(async () => {
     try {
       setLoading(true);
       setError('');
@@ -56,39 +84,62 @@ export default function HomePage({ navigation }) {
       if (isOffline) {
         const cached = await getCache(CACHE_COLLECTIONS).catch(() => null);
         if (cached) {
-          setCollections(cached);
-          const offlineCounts = {};
-          for (const col of cached) {
+          const collectionCardsById = {};
+          const collectionReviewableIdsById = {};
+          await Promise.all(cached.map(async (col) => {
             const id = Number(col.collectionId ?? col.id);
-            if (!Number.isFinite(id)) continue;
-            const colCache = await getCache(cacheCollectionKey(id)).catch(() => null);
-            if (Array.isArray(colCache)) offlineCounts[id] = colCache.length;
-          }
-          if (Object.keys(offlineCounts).length > 0) {
-            setCollections((prev) =>
-              prev.map((col) => {
-                const id = Number(col.collectionId ?? col.id);
-                return Number.isFinite(id) && offlineCounts[id] != null
-                  ? { ...col, itemsCount: col.itemsCount ?? offlineCounts[id] }
-                  : col;
-              })
-            );
-          }
+            if (!Number.isFinite(id)) return;
+            const cards = await loadCachedCollectionCards(id);
+            if (Array.isArray(cards)) {
+              collectionCardsById[id] = cards;
+            }
+            const reviewableIds = await getCache(cacheCollectionReviewableIdsKey(id)).catch(() => null);
+            if (Array.isArray(reviewableIds)) {
+              collectionReviewableIdsById[id] = reviewableIds;
+            }
+          }));
+
+          const reviewedIds = await getReviewedIdsToday().catch(() => []);
+          setCollections(
+            applyOfflineCollectionCounts(
+              cached,
+              collectionCardsById,
+              collectionReviewableIdsById,
+              reviewedIds
+            )
+          );
         } else {
           setCollections([]);
           setOfflineEmpty(true);
         }
         return;
       }
+      await flushQueues().catch(() => {});
       const data = await fetchCollections();
-      const list = Array.isArray(data)
-        ? data
-        : Array.isArray(data?.content)
-          ? data.content
-          : Array.isArray(data?.collections)
-            ? data.collections
-            : [];
-      setCollections(list);
+      const list = normalizeCollections(data);
+      const collectionCardsById = {};
+      const collectionReviewableIdsById = {};
+      await Promise.all(list.map(async (col) => {
+        const id = Number(col.collectionId ?? col.id);
+        if (!Number.isFinite(id)) return;
+        const cards = await loadCachedCollectionCards(id);
+        if (Array.isArray(cards)) {
+          collectionCardsById[id] = cards;
+        }
+        const reviewableIds = await getCache(cacheCollectionReviewableIdsKey(id)).catch(() => null);
+        if (Array.isArray(reviewableIds)) {
+          collectionReviewableIdsById[id] = reviewableIds;
+        }
+      }));
+      const reviewedIds = await getReviewedIdsToday().catch(() => []);
+      setCollections(
+        applyLocalReviewableCountOverlay(
+          list,
+          collectionCardsById,
+          collectionReviewableIdsById,
+          reviewedIds
+        )
+      );
       saveCache(CACHE_COLLECTIONS, list).catch(() => {});
     } catch (err) {
       const cached = await getCache(CACHE_COLLECTIONS).catch(() => null);
@@ -102,7 +153,7 @@ export default function HomePage({ navigation }) {
     } finally {
       setLoading(false);
     }
-  }, [isOffline]);
+  }, [isOffline, loadCachedCollectionCards]);
 
   useFocusEffect(
     useCallback(() => {
@@ -134,102 +185,20 @@ export default function HomePage({ navigation }) {
     }, [loadCollections])
   );
 
-  const filterCardsForToday = useCallback(async (cards) => {
+  const filterCardsForCollection = useCallback(async (cards, collectionId, onlineReviewableIds = null) => {
     if (!cards.length) {
       return cards;
     }
 
-    let dailyCards = null;
-
-    try {
-      const daily = await fetchDailyCards();
-      if (Array.isArray(daily?.cards)) {
-        dailyCards = daily.cards;
-        saveCache(CACHE_DAILY, daily).catch(() => {});
-      }
-    } catch {
-      const cached = await getCache(CACHE_DAILY).catch(() => null);
-      if (Array.isArray(cached?.cards)) {
-        dailyCards = cached.cards;
-      }
+    let reviewableIds = Array.isArray(onlineReviewableIds) ? onlineReviewableIds : null;
+    if (!reviewableIds) {
+      const cached = await getCache(cacheCollectionReviewableIdsKey(collectionId)).catch(() => null);
+      reviewableIds = Array.isArray(cached) ? cached : [];
     }
-
-    if (dailyCards === null) {
-      return [];
-    }
-
-    const idSet = new Set(
-      dailyCards
-        .map((entry) => entry?.flashcardId)
-        .filter((id) => id != null)
-        .map((id) => Number(id))
-        .filter((id) => Number.isFinite(id))
-    );
-    let filtered = idSet.size ? cards.filter((card) => idSet.has(Number(card.flashcardId))) : [];
 
     const reviewedIds = await getReviewedIdsToday().catch(() => []);
-    if (reviewedIds.length > 0) {
-      const reviewedSet = new Set(reviewedIds.map(String));
-      filtered = filtered.filter(
-        (c) => !reviewedSet.has(String(c.flashcardId ?? c.id))
-      );
-    }
-
-    return filtered;
+    return filterReviewableCards(cards, reviewableIds, reviewedIds);
   }, []);
-
-  const filterFlashcardsByCollection = useCallback((flashcards, collectionId) => {
-    return flashcards.filter((card) => {
-      const ids = Array.isArray(card?.collectionIds) ? card.collectionIds : [];
-      const allIds = ids.slice();
-      if (card?.collectionId != null) {
-        allIds.push(card.collectionId);
-      }
-      return allIds.some((id) => Number(id) === Number(collectionId));
-    });
-  }, []);
-
-  const mapFlashcardsToCards = useCallback((items) => {
-    return items.map((item) => {
-      const sentence = item.sourceSentence || item.sentence || '';
-      return {
-        flashcardId: item.flashcardId ?? item.id,
-        word: item.lemma || item.word || 'Unknown',
-        phonetic: item.phonetic || '',
-        sentence,
-        exampleSentence: item.exampleSentence || '',
-        sourceSentence: item.sourceSentence || item.sentence || '',
-        translation: item.translation || item.trMeaning || '',
-        usageNote: item.usageNote || '',
-        sentenceTranslation: item.sentenceTranslation || '',
-        sourceTitle: item.sourceTitle || '',
-        sourceUrl: item.sourceUrl || '',
-        videoTimestamp: item.videoTimestamp ?? null,
-        audioUrl: item.audioUrl || '',
-        sentenceAudioDataUrl: item.sentenceAudioDataUrl || '',
-        englishPronunciationUri: item.englishPronunciationUri || '',
-        turkishPronunciationUri: item.turkishPronunciationUri || '',
-        imageUri: item.imageUri || item.imageUrl || item.screenshotDataUrl || '',
-      };
-    });
-  }, []);
-
-  const loadCachedCollectionCards = useCallback(async (collectionId) => {
-    const cachedCards = await getCache(cacheCollectionKey(collectionId)).catch(() => null);
-    if (Array.isArray(cachedCards) && cachedCards.length > 0) {
-      return cachedCards;
-    }
-
-    const cachedFlashcards = await getCache(CACHE_ALL_FLASHCARDS).catch(() => null);
-    if (Array.isArray(cachedFlashcards) && cachedFlashcards.length > 0) {
-      const filtered = filterFlashcardsByCollection(cachedFlashcards, collectionId);
-      if (filtered.length > 0) {
-        return mapFlashcardsToCards(filtered);
-      }
-    }
-
-    return null;
-  }, [filterFlashcardsByCollection, mapFlashcardsToCards]);
 
   const handleStart = useCallback(
     async (collection) => {
@@ -245,16 +214,10 @@ export default function HomePage({ navigation }) {
       setStartingId(collectionId);
       setError('');
 
-      if (Number(collection.reviewableCount ?? 0) <= 0) {
-        setError(NO_DUE_CARDS_MESSAGE);
-        setStartingId(null);
-        return;
-      }
-
       if (isOffline) {
         const cachedCards = await loadCachedCollectionCards(collectionId);
         if (Array.isArray(cachedCards) && cachedCards.length > 0) {
-          const filteredCards = await filterCardsForToday(cachedCards);
+          const filteredCards = await filterCardsForCollection(cachedCards, collectionId);
           if (filteredCards.length > 0) {
             navigation.navigate('FlashcardReview', {
               cards: filteredCards,
@@ -262,7 +225,8 @@ export default function HomePage({ navigation }) {
               collectionName: collection.name || 'Collection',
             });
           } else {
-            setError(NO_DUE_CARDS_MESSAGE);
+            const reviewableIds = await getCache(cacheCollectionReviewableIdsKey(collectionId)).catch(() => null);
+            setError(Array.isArray(reviewableIds) ? NO_DUE_CARDS_MESSAGE : OFFLINE_SYNC_REQUIRED_MESSAGE);
           }
         } else {
           setError(OFFLINE_EMPTY_SUBTITLE);
@@ -271,9 +235,18 @@ export default function HomePage({ navigation }) {
         return;
       }
 
+      if (Number(collection.reviewableCount ?? 0) <= 0) {
+        setError(NO_DUE_CARDS_MESSAGE);
+        setStartingId(null);
+        return;
+      }
+
       try {
         const reviewableItems = await fetchCollectionReviewableCards(collectionId);
-        const reviewableCards = mapFlashcardsToCards(Array.isArray(reviewableItems) ? reviewableItems : []);
+        const reviewableItemsList = Array.isArray(reviewableItems) ? reviewableItems : [];
+        const reviewableIds = extractFlashcardIds(reviewableItemsList);
+        saveCache(cacheCollectionReviewableIdsKey(collectionId), reviewableIds).catch(() => {});
+        const reviewableCards = mapFlashcardsToCards(reviewableItemsList);
 
         if (reviewableCards.length > 0) {
           navigation.navigate('FlashcardReview', {
@@ -287,7 +260,7 @@ export default function HomePage({ navigation }) {
       } catch (err) {
         const cachedCards = await loadCachedCollectionCards(collectionId);
         if (Array.isArray(cachedCards) && cachedCards.length > 0) {
-          const filteredCards = await filterCardsForToday(cachedCards);
+          const filteredCards = await filterCardsForCollection(cachedCards, collectionId);
           if (filteredCards.length > 0) {
             navigation.navigate('FlashcardReview', {
               cards: filteredCards,
@@ -295,7 +268,8 @@ export default function HomePage({ navigation }) {
               collectionName: collection.name || 'Collection',
             });
           } else {
-            setError(NO_DUE_CARDS_MESSAGE);
+            const reviewableIds = await getCache(cacheCollectionReviewableIdsKey(collectionId)).catch(() => null);
+            setError(Array.isArray(reviewableIds) ? NO_DUE_CARDS_MESSAGE : OFFLINE_SYNC_REQUIRED_MESSAGE);
           }
         } else {
           setError(err?.message || 'Collection could not be loaded.');
@@ -304,7 +278,7 @@ export default function HomePage({ navigation }) {
         setStartingId(null);
       }
     },
-    [filterCardsForToday, isOffline, loadCachedCollectionCards, mapFlashcardsToCards, navigation]
+    [filterCardsForCollection, isOffline, loadCachedCollectionCards, navigation]
   );
 
   const renderCollectionCard = ({ item }) => {
